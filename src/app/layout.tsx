@@ -6,14 +6,65 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
 
 export const metadata: Metadata = {
-  title: "Glintbase Agent Readiness Scanner — Check if AI agents can use your docs",
+  metadataBase: new URL("https://scan.glintbase.xyz"),
+  title: {
+    default: "Glintbase Scanner — AI Agent Readiness Audit",
+    template: "%s — Glintbase",
+  },
   description:
-    "Free public tool. Scan any documentation URL and get an instant Agent Readiness Score with copy-paste fix prompts for Cursor, Claude Code, and GitHub Copilot.",
+    "Analyze whether AI agents like Cursor, Claude Code, and Copilot can reliably understand and use your product documentation. Infrastructure for AI-agent-ready repositories.",
+  keywords: [
+    "AI agent readiness",
+    "documentation scanner",
+    "MCP compatibility",
+    "llms.txt",
+    "developer documentation audit",
+    "Cursor",
+    "Claude Code",
+    "Copilot",
+    "AI infrastructure",
+    "Glintbase",
+    "agent-ready docs",
+    "semantic structure",
+    "API discoverability",
+  ],
+  authors: [{ name: "Glintbase", url: "https://glintbase.xyz" }],
+  creator: "Glintbase",
+  publisher: "Glintbase",
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-video-preview": -1,
+      "max-image-preview": "large",
+      "max-snippet": -1,
+    },
+  },
   openGraph: {
-    title: "Glintbase Agent Readiness Scanner",
-    description: "Check if AI agents can actually use your product's documentation.",
-    url: "https://glintbase.xyz/scan",
-    siteName: "Glintbase",
+    type: "website",
+    locale: "en_US",
+    siteName: "Glintbase Scanner",
+    title: "Glintbase Scanner — AI Agent Readiness Audit",
+    description:
+      "Analyze whether AI agents like Cursor, Claude Code, and Copilot can reliably understand and use your product documentation.",
+    url: "https://scan.glintbase.xyz",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Glintbase Scanner — AI Agent Readiness Audit",
+    description:
+      "Analyze whether AI agents like Cursor, Claude Code, and Copilot can reliably understand and use your product documentation.",
+    creator: "@glintbase",
+    site: "@glintbase",
+  },
+  alternates: {
+    canonical: "https://scan.glintbase.xyz",
+  },
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
   },
 };
 
