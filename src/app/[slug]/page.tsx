@@ -2,46 +2,28 @@ import type { Metadata } from "next";
 import ResultsReport from "@/components/scanner/ResultsReport";
 import Link from "next/link";
 import { Search } from "lucide-react";
-import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { getScanBySlug, deriveCompany } from "@/lib/resolveSlug";
 
 export const dynamic = 'force-dynamic';
 
-// ─── Helper: derive company name from URL ─────────────────────────────────
-function deriveCompany(rawUrl: string): string {
-  let hostname = rawUrl;
-  try {
-    hostname = new URL(rawUrl).hostname;
-  } catch {
-    hostname = rawUrl.replace(/^https?:\/\//i, '').split('/')[0];
-  }
-  hostname = hostname.toLowerCase().replace(/^www\./i, '');
-  let company = hostname.split('.')[0];
-  if (['docs', 'www', 'developer', 'dev', 'api'].includes(company)) {
-    company = hostname.split('.')[1] || company;
-  }
-  return company.charAt(0).toUpperCase() + company.slice(1);
-}
-
-// ─── Helper: derive score band label ──────────────────────────────────────
 function scoreBand(score: number): string {
   if (score >= 76) return 'Agent-Native';
   if (score >= 41) return 'AI-Friendly';
   return 'Legacy Docs';
 }
 
-// ─── Dynamic SEO metadata ─────────────────────────────────────────────────
-export async function generateMetadata({ params }: { params: { id: string } }): Promise<Metadata> {
-  const supabase = createServerSupabaseClient();
-  const { data } = await supabase
-    .from('public_scans')
-    .select('url, score')
-    .eq('id', params.id)
-    .single();
+export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+  // Prevent catching system files or assets
+  if (['favicon.ico', 'robots.txt', 'sitemap.xml', 'icon.svg', 'leaderboard', 'api'].includes(params.slug)) {
+    return {};
+  }
+
+  const data = await getScanBySlug(params.slug);
 
   if (!data) {
     return {
-      title: 'Scan Not Found',
-      description: 'This scan report could not be found.',
+      title: 'Scan Not Found / Invalid Domain — Glintbase',
+      description: 'The requested AI agent readiness audit could not be found.',
     };
   }
 
@@ -54,7 +36,7 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
     openGraph: {
       title: `${company} Agent Readiness Audit — Glintbase`,
       description: `${company} scored ${data.score}/100 for AI Agent Readiness. Analyze MCP support, semantic structure, documentation discoverability, and retrieval compatibility.`,
-      url: `https://scan.glintbase.xyz/scan/${params.id}`,
+      url: `https://scan.glintbase.xyz/${params.slug}`,
       siteName: 'Glintbase Scanner',
       type: 'article',
     },
@@ -66,43 +48,25 @@ export async function generateMetadata({ params }: { params: { id: string } }): 
       site: '@glintbase',
     },
     alternates: {
-      canonical: `https://scan.glintbase.xyz/scan/${params.id}`,
+      canonical: `https://scan.glintbase.xyz/${params.slug}`,
     },
   };
 }
 
-// ─── Page Component ───────────────────────────────────────────────────────
-export default async function PublicScanPage({ params }: { params: { id: string } }) {
-  let score = 0;
-  let checks: any[] = [];
-  let error = null;
-  let url = '';
-
-  try {
-    const supabase = createServerSupabaseClient();
-    const { data, error: dbError } = await supabase
-      .from('public_scans')
-      .select('*')
-      .eq('id', params.id)
-      .single();
-
-    if (dbError || !data) {
-      error = "Scan not found";
-    } else {
-      score = data.score;
-      checks = data.checks;
-      url = data.url;
-    }
-  } catch (err: any) {
-    error = err.message;
+export default async function DynamicSlugScanPage({ params }: { params: { slug: string } }) {
+  // Prevent matching static or layout assets
+  if (['favicon.ico', 'robots.txt', 'sitemap.xml', 'icon.svg'].includes(params.slug)) {
+    return null;
   }
 
-  if (error) {
+  const data = await getScanBySlug(params.slug);
+
+  if (!data) {
     return (
       <main className="flex-1 flex flex-col items-center pt-32 pb-12 px-4 w-full">
         <div className="w-full max-w-3xl text-center space-y-6">
-          <h1 className="text-3xl font-black text-white uppercase tracking-tight">Scan Not Found</h1>
-          <p className="text-white/40">The scan report with ID <code className="text-white/60 font-mono">{params.id}</code> could not be found.</p>
+          <h1 className="text-3xl font-black text-white uppercase tracking-tight">Scan Not Found / Invalid Domain</h1>
+          <p className="text-white/40">No active readiness audit found for slug: <code className="text-white/60 font-mono">{params.slug}</code>.</p>
           <Link 
             href="/"
             className="inline-flex items-center gap-2 bg-[#FF4500] text-white px-6 py-3 rounded-lg hover:bg-[#FF4500]/90 transition-all font-bold uppercase tracking-wider text-xs"
@@ -114,7 +78,10 @@ export default async function PublicScanPage({ params }: { params: { id: string 
     );
   }
 
-  const company = deriveCompany(url);
+  const company = deriveCompany(data.url);
+  const score = data.score;
+  const checks = data.checks;
+  const url = data.url;
 
   // JSON-LD Structured Data
   const jsonLd = {
@@ -142,7 +109,7 @@ export default async function PublicScanPage({ params }: { params: { id: string 
       {
         '@type': 'TechArticle',
         headline: `${company} AI Agent Readiness Audit`,
-        url: `https://scan.glintbase.xyz/scan/${params.id}`,
+        url: `https://scan.glintbase.xyz/${params.slug}`,
         description: `${company} scored ${score}/100 for AI Agent Readiness.`,
         author: {
           '@type': 'Organization',
@@ -167,7 +134,7 @@ export default async function PublicScanPage({ params }: { params: { id: string 
       <div className="w-full max-w-3xl mb-8 flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-black text-white uppercase tracking-tight mb-2">Scan Results: {url}</h1>
-          <p className="text-white/40 font-mono text-xs">ID: {params.id}</p>
+          <p className="text-white/40 font-mono text-xs">Vanity URL: scan.glintbase.xyz/{params.slug}</p>
         </div>
         <div className="flex items-center gap-6">
           <Link 
@@ -186,7 +153,7 @@ export default async function PublicScanPage({ params }: { params: { id: string 
         </div>
       </div>
 
-      <ResultsReport score={score} checks={checks} scanId={params.id} url={url} />
+      <ResultsReport score={score} checks={checks} scanId={data.id} url={url} />
     </main>
   );
 }

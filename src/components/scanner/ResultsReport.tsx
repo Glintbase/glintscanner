@@ -17,7 +17,22 @@ function getScoreLabel(score: number) {
   return { label: 'Legacy Docs (Invisible)', color: 'text-danger', border: 'border-danger', glow: 'shadow-[0_0_60px_rgba(239,68,68,0.3)]' };
 }
 
-export default function ResultsReport({ score, checks, scanId }: { score: number; checks: any[]; scanId?: string }) {
+function deriveCompany(rawUrl: string): string {
+  let hostname = rawUrl;
+  try {
+    hostname = new URL(rawUrl).hostname;
+  } catch {
+    hostname = rawUrl.replace(/^https?:\/\//i, '').split('/')[0];
+  }
+  hostname = hostname.toLowerCase().replace(/^www\./i, '');
+  let company = hostname.split('.')[0];
+  if (['docs', 'www', 'developer', 'dev', 'api'].includes(company)) {
+    company = hostname.split('.')[1] || company;
+  }
+  return company.charAt(0).toUpperCase() + company.slice(1);
+}
+
+export default function ResultsReport({ score, checks, scanId, url }: { score: number; checks: any[]; scanId?: string; url?: string }) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeModal, setActiveModal] = useState<'problems' | 'fixes' | null>(null);
   const { label, color, border, glow } = getScoreLabel(score);
@@ -28,19 +43,110 @@ export default function ResultsReport({ score, checks, scanId }: { score: number
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const shareUrl = scanId ? `https://scan.glintbase.xyz/scan/${scanId}` : 'https://scan.glintbase.xyz';
+  const companySlug = url ? deriveCompany(url).toLowerCase() : '';
+  const shareUrl = companySlug
+    ? `https://scan.glintbase.xyz/${companySlug}-scan`
+    : (scanId ? `https://scan.glintbase.xyz/scan/${scanId}` : 'https://scan.glintbase.xyz');
+
   const tweetText = `Just ran an AI Agent Readiness Audit via @glintbase 🤖\n\nScore: ${score}/100 — ${label}\n\nCan Cursor, Claude Code, and Copilot understand your documentation?\nScan yours here:`;
   const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}&url=${encodeURIComponent(shareUrl)}`;
   const linkedinUrl = `https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`;
   const [linkCopied, setLinkCopied] = useState(false);
+  const [reportCopied, setReportCopied] = useState(false);
+
+  const generateMarkdownReport = () => {
+    let report = `# AI Agent Readiness Report\n\n`;
+    report += `**Repository / Documentation URL:** ${url || 'Scanned URL'}\n`;
+    report += `**Agent Readiness Score:** ${score}/100\n`;
+    report += `**Scan ID:** ${scanId || 'N/A'}\n\n`;
+    report += `---\n\n`;
+    report += `## 📊 Category Breakdown\n\n`;
+
+    checks.forEach(check => {
+      const meta = CATEGORY_LABELS[check.category] || { label: check.category };
+      report += `- **${meta.label}**: ${check.score} / ${check.maxScore}\n`;
+    });
+
+    report += `\n---\n\n`;
+    report += `## 🚨 Detected Problems (Audit Summary)\n\n`;
+
+    let hasProblems = false;
+    checks.forEach(check => {
+      const failedChecks = check.results?.filter((r: any) => !r.passed) || [];
+      const hasCategoryIssue = check.score < check.maxScore && (!check.results || failedChecks.length > 0 || check.warning || check.fix);
+
+      if (hasCategoryIssue) {
+        hasProblems = true;
+        const meta = CATEGORY_LABELS[check.category] || { label: check.category, icon: '📊' };
+        report += `### ${meta.icon} ${meta.label} (Deducted: ${check.maxScore - check.score} pts)\n`;
+
+        if (check.results) {
+          failedChecks.forEach((r: any) => {
+            report += `- **Issue:** ${r.label}\n`;
+            report += `  **Details:** AI agent parser flagged incomplete states or missing files.\n`;
+          });
+        } else {
+          report += `- **Issue:** General category optimization required.\n`;
+        }
+        report += `\n`;
+      }
+    });
+
+    if (!hasProblems) {
+      report += `No problems detected! Your repository is 100% Agent-Native. 🎉\n\n`;
+    }
+
+    report += `---\n\n`;
+    report += `## 🛠️ Actionable Implementation & Fix Prompts for Your AI Agent\n\n`;
+    report += `*You can copy and paste the prompts below directly into your AI coding assistant (such as Cursor, Claude Code, or Copilot) to automatically generate or fix these files.*\n\n`;
+
+    let hasFixes = false;
+    checks.forEach(check => {
+      const failedChecks = check.results?.filter((r: any) => !r.passed && r.fix) || [];
+      const hasCategoryFix = check.score < check.maxScore && (failedChecks.length > 0 || check.fix);
+
+      if (hasCategoryFix) {
+        hasFixes = true;
+        const meta = CATEGORY_LABELS[check.category] || { label: check.category, icon: '📊' };
+        report += `### ${meta.icon} ${meta.label} Remedies\n\n`;
+
+        if (check.fix && !check.results) {
+          report += `#### General Remedy Prompt:\n`;
+          report += `\`\`\`text\n${check.fix}\n\`\`\`\n\n`;
+        }
+
+        failedChecks.forEach((r: any) => {
+          report += `#### Fix Prompt for: ${r.label}\n`;
+          report += `\`\`\`text\n${r.fix}\n\`\`\`\n\n`;
+        });
+      }
+    });
+
+    if (!hasFixes) {
+      report += `All audits passed. No implementation remedies required.\n\n`;
+    }
+
+    report += `*Report generated by [Glintbase Scanner](https://scan.glintbase.xyz) - Infrastructure for AI-agent-ready repositories and documentation.*`;
+
+    return report;
+  };
+
+  const handleCopyMarkdownReport = () => {
+    const reportText = generateMarkdownReport();
+    navigator.clipboard.writeText(reportText);
+    setReportCopied(true);
+    setTimeout(() => setReportCopied(false), 2500);
+  };
+
 
   return (
-    <div className="w-full animate-fade-in">
-      <motion.div
-      initial={{ opacity: 0, y: 24 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-3xl mx-auto mt-10 space-y-6"
-    >
+    <>
+      <div className="w-full animate-fade-in">
+        <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="w-full max-w-3xl mx-auto mt-10 space-y-6"
+      >
       {/* ── Overall Score Card ─────────────────────────────── */}
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
@@ -133,6 +239,16 @@ export default function ResultsReport({ score, checks, scanId }: { score: number
           <span className="absolute right-4 transform translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all font-mono">→</span>
         </button>
       </div>
+
+      {/* ── Copy Agent-Ready Report ──────────────────────── */}
+      <button
+        onClick={handleCopyMarkdownReport}
+        className="w-full group relative overflow-hidden bg-gradient-to-br from-[#FF4500]/10 to-[#0F172A] hover:from-[#FF4500]/20 border border-[#FF4500]/20 hover:border-[#FF4500]/40 text-[#FF4500] hover:text-white font-black text-xs uppercase tracking-[0.25em] py-4 px-6 rounded-xl transition-all shadow-[0_0_20px_rgba(255,69,0,0.05)] hover:shadow-[0_0_30px_rgba(255,69,0,0.15)] flex items-center justify-center gap-3 cursor-pointer mt-4"
+      >
+        <span className="text-sm">📋</span>
+        {reportCopied ? 'Report Copied to Clipboard!' : 'Copy Agent-Ready Markdown Report'}
+        <span className="absolute right-4 transform translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100 transition-all font-mono">→</span>
+      </button>
 
       {/* ── Category Bars ─────────────────────────────────── */}
       <div className="bg-[#0F172A] border border-white/5 rounded-2xl p-6 space-y-5">
@@ -277,9 +393,10 @@ export default function ResultsReport({ score, checks, scanId }: { score: number
 
       {/* ── README Badge Embed Card ──────────────────────── */}
     </motion.div>
+  </div>
 
-    {/* ── Overlay Popups ─────────────────────────────────── */}
-    <AnimatePresence>
+  {/* ── Overlay Popups ─────────────────────────────────── */}
+  <AnimatePresence>
       {activeModal && (
         <motion.div
           initial={{ opacity: 0 }}
@@ -462,6 +579,6 @@ export default function ResultsReport({ score, checks, scanId }: { score: number
         </motion.div>
       )}
     </AnimatePresence>
-    </div>
+    </>
   );
 }

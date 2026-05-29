@@ -514,7 +514,7 @@ export default function Home() {
         {/* ── Results ─────────────────────────────────────── */}
         {scanComplete && checks.length > 0 && (
           <>
-            <ResultsReport score={score} checks={checks} scanId={scanId || undefined} />
+            <ResultsReport score={score} checks={checks} scanId={scanId || undefined} url={normalizeUrl(rawInput)} />
             <WaitlistCTA />
           </>
         )}
