@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   
   // 1. THIS IS THE VERIFICATION KEY MERGED PERFECTLY INSIDE YOUR METADATA OBJECT
   verification: {
-    google: "FuwkZGg4rWDRQLqPv7TBAdIsXx8AZt5eQ2T0PW1dO4s", 
+    google: "k0DX8PtCSHYedje9IPPug8EIPeS_ETRAdRjtGIYm-3g", 
   },
 
   robots: {
