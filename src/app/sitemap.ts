@@ -3,7 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { deriveCompany } from '@/lib/resolveSlug';
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = 'https://scan.glintbase.xyz';
+  const baseUrl = 'https://scan.glintbase.dev';
 
   // Static routes
   const staticRoutes: MetadataRoute.Sitemap = [
