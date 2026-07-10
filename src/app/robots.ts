@@ -1,7 +1,7 @@
 import { MetadataRoute } from 'next';
 
 export default function robots(): MetadataRoute.Robots {
-  const baseUrl = 'https://scan.glintbase.xyz';
+  const baseUrl = 'https://scan.glintbase.dev';
 
   return {
     rules: [
