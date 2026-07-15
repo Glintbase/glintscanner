@@ -76,7 +76,7 @@ export const metadata: Metadata = {
     canonical: "https://scan.glintbase.dev",
   },
   icons: {
-    icon: "/icon.svg",
+    icon: "/favicon.ico",
     apple: "/icon.svg",
   },
 };
