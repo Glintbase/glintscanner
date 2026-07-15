@@ -46,6 +46,10 @@ export async function getScanBySlug(slug: string) {
   }
 
   noStore();
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn('getScanBySlug: Missing SUPABASE_SERVICE_ROLE_KEY, database lookup skipped.');
+    return null;
+  }
   const supabase = createAdminSupabaseClient();
 
   // Fast path: company_slug column (Phase 5)
