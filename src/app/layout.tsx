@@ -76,8 +76,8 @@ export const metadata: Metadata = {
     canonical: "https://scan.glintbase.dev",
   },
   icons: {
-    icon: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
+    icon: "/icon.svg",
+    apple: "/icon.svg",
   },
 };
 
