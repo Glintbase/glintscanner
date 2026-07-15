@@ -1,6 +1,7 @@
 import { Search, Trophy } from "lucide-react";
 import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import LeaderboardClient from "./LeaderboardClient";
 
 export const dynamic = 'force-dynamic';
 
@@ -69,14 +70,14 @@ export default async function Leaderboard() {
   const isEmpty = leaderboardData.length === 0;
 
   return (
-    <main className="flex-1 flex flex-col items-center pt-32 pb-20 px-4 max-w-4xl mx-auto w-full">
-      <div className="flex flex-col items-center text-center mb-12">
-        <Trophy size={48} className="text-[#FF4500] drop-shadow-[0_0_20px_rgba(255,69,0,0.4)] mb-6" />
+    <main className="flex-1 flex flex-col items-center pt-32 pb-20 px-4 w-full">
+      <div className="flex flex-col items-center text-center mb-6">
+        <Trophy size={48} className="text-[#FF3300] drop-shadow-[0_0_20px_rgba(255,51,0,0.4)] mb-6" />
         <h1 className="text-4xl md:text-5xl font-black uppercase tracking-tight mb-4 text-white">
           Agent Readiness Leaderboard
         </h1>
         <p className="text-sm md:text-base text-white/40 max-w-2xl leading-relaxed">
-          The top developer documentation sites, ranked by how easily AI coding agents can discover, parse, and implement against them.
+          The top developer ecosystems, ranked by how easily AI coding agents can discover, parse, and implement against them.
           Rankings are powered by real scans — updated live.
         </p>
         {!isEmpty && (
@@ -86,77 +87,25 @@ export default async function Leaderboard() {
         )}
       </div>
 
-      <div className="w-full bg-[#0F172A] border border-white/5 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.3)] overflow-hidden">
-        {isEmpty ? (
-          <div className="flex flex-col items-center justify-center py-24 px-8 text-center">
-            <Trophy size={40} className="text-white/10 mb-4" />
-            <p className="text-white/40 font-mono text-sm mb-2">No scans yet</p>
-            <p className="text-white/20 text-xs max-w-xs">
-              Be the first to scan a documentation site. Results will appear here in real time.
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#020617] border-b border-white/5 text-white/40 uppercase text-[10px] tracking-widest font-mono">
-                  <th className="py-4 px-6 font-bold">Rank</th>
-                  <th className="py-4 px-6 font-bold">Company / Product</th>
-                  <th className="py-4 px-6 font-bold text-right">Readiness Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leaderboardData.map((item, index) => (
-                  <tr
-                    key={item.id ?? item.url + '-' + index}
-                    className="border-b border-white/5 last:border-b-0 hover:bg-white/[0.02] transition-colors"
-                  >
-                    <td className="py-4 px-6">
-                      <span className={`font-mono text-base ${index < 3 ? 'text-[#FF4500] font-black' : 'text-white/30'}`}>
-                        #{item.rank}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <div className="flex flex-col">
-                        {item.id ? (
-                          <Link
-                            href={`/scan/${item.id}`}
-                            className="font-bold text-white text-base hover:text-[#FF4500] transition-colors uppercase tracking-wide"
-                          >
-                            {item.company}
-                          </Link>
-                        ) : (
-                          <span className="font-bold text-white text-base uppercase tracking-wide">{item.company}</span>
-                        )}
-                        <span className="text-xs text-white/30 font-mono">
-                          {item.url.replace(/^https?:\/\//i, '')}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-4 px-6 text-right">
-                      <span className={`text-2xl font-black font-mono ${
-                        item.score >= 90 ? 'text-success' :
-                        item.score >= 70 ? 'text-[#22D3EE]' :
-                        item.score >= 50 ? 'text-warning' : 'text-danger'
-                      }`}>
-                        {item.score}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {isEmpty ? (
+        <div className="w-full max-w-md bg-surface-900 border border-white/5 rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.3)] overflow-hidden flex flex-col items-center justify-center py-24 px-8 text-center mt-12">
+          <Trophy size={40} className="text-white/10 mb-4" />
+          <p className="text-white/40 font-mono text-sm mb-2">No scans yet</p>
+          <p className="text-white/20 text-xs max-w-xs">
+            Be the first to scan a documentation site. Results will appear here in real time.
+          </p>
+        </div>
+      ) : (
+        <LeaderboardClient initialData={leaderboardData} />
+      )}
 
-      <div className="mt-12 text-center">
+      <div className="mt-16 text-center">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 bg-[#FF4500] text-white font-black text-xs uppercase tracking-[0.2em] px-8 py-4 rounded-xl shadow-[0_0_30px_rgba(255,69,0,0.3)] hover:shadow-[0_0_40px_rgba(255,69,0,0.5)] hover:bg-[#FF4500]/90 transition-all"
+          className="inline-flex items-center gap-2 bg-[#FF3300] text-white font-black text-xs uppercase tracking-[0.25em] px-8 py-4 rounded-xl shadow-[0_0_30px_rgba(255,51,0,0.3)] hover:shadow-[0_0_40px_rgba(255,51,0,0.5)] hover:bg-[#FF3300]/90 transition-all"
         >
           <Search size={14} />
-          Scan Your Docs
+          Scan Your Ecosystem
         </Link>
       </div>
     </main>

@@ -3,13 +3,182 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: #020617;
-    --foreground: #F1F5F9;
+  body {
+    @apply bg-black text-[#F1F5F9] antialiased selection:bg-[#FF3300]/30 selection:text-white;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    transition: background-color 0.3s ease, color 0.3s ease;
   }
 
+  /* ── Cream light body override ── */
+  html[data-theme="cream"] body {
+    background-color: #F5EFE3 !important;
+    color: #2C1E0F !important;
+  }
+}
+
+@layer utilities {
+  .glow-brand {
+    box-shadow: 0 0 20px -5px rgba(255, 51, 0, 0.4);
+  }
+
+  /* Make low-opacity white text fills 15-25% brighter on dark bg */
+  .text-white\/10 { color: rgba(255, 255, 255, 0.32) !important; }
+  .text-white\/15 { color: rgba(255, 255, 255, 0.38) !important; }
+  .text-white\/20 { color: rgba(255, 255, 255, 0.45) !important; }
+  .text-white\/25 { color: rgba(255, 255, 255, 0.50) !important; }
+  .text-white\/30 { color: rgba(255, 255, 255, 0.58) !important; }
+  .text-white\/35 { color: rgba(255, 255, 255, 0.65) !important; }
+  .text-white\/40 { color: rgba(255, 255, 255, 0.72) !important; }
+  .text-white\/50 { color: rgba(255, 255, 255, 0.82) !important; }
+  .text-white\/60 { color: rgba(255, 255, 255, 0.90) !important; }
+  .text-white\/70 { color: rgba(255, 255, 255, 0.95) !important; }
+  .text-white\/80 { color: rgba(255, 255, 255, 0.98) !important; }
+
+  .glow-violet {
+    box-shadow: 0 0 20px -5px rgba(139, 92, 246, 0.3);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 20px -5px rgba(34, 211, 238, 0.3);
+  }
+
+  .bg-radial-gradient {
+    background-image: radial-gradient(circle at center, transparent 0%, rgba(0,0,0,0.8) 70%, #000000 100%);
+  }
+
+  /* Premium Glintbase-style card glow and borders */
+  .glint-card {
+    border: 1px solid rgba(255, 51, 0, 0.16) !important;
+    box-shadow: 0 0 22px -5px rgba(255, 51, 0, 0.14), inset 0 0 10px -2px rgba(255, 51, 0, 0.04) !important;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  }
+  .glint-card:hover {
+    border: 1px solid rgba(255, 51, 0, 0.32) !important;
+    box-shadow: 0 0 28px -2px rgba(255, 51, 0, 0.22), inset 0 0 14px -1px rgba(255, 51, 0, 0.08) !important;
+  }
+
+  /* Hide scrollbar utility */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+}
+
+/* Global scrollbar hiding for slick dashboard interface */
+::-webkit-scrollbar {
+  display: none;
+}
+html, body, *, scrollable {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ── Cream light theme ────────────────────────────────────────────── */
+html[data-theme="cream"] {
+  --cream-bg:      #F5EFE3;
+  --cream-card:    #EDE6D8;
+  --cream-border:  rgba(140, 100, 50, 0.18);
+  --cream-text:    #2C1E0F;
+  --cream-muted:   #7A6040;
+  --cream-accent:  #FF3300;
+}
+
+/* surface backgrounds */
+html[data-theme="cream"] .bg-black,
+html[data-theme="cream"] [class*="bg-black"] {
+  background-color: var(--cream-bg) !important;
+}
+
+/* card surfaces */
+html[data-theme="cream"] .border-white\/5,
+html[data-theme="cream"] [class*="border-white"] {
+  border-color: var(--cream-border) !important;
+}
+
+/* primary text */
+html[data-theme="cream"] .text-white,
+html[data-theme="cream"] h1, html[data-theme="cream"] h2,
+html[data-theme="cream"] h3, html[data-theme="cream"] h4 {
+  color: var(--cream-text) !important;
+}
+
+/* muted helper text */
+html[data-theme="cream"] .text-white\/10,
+html[data-theme="cream"] .text-white\/15,
+html[data-theme="cream"] .text-white\/20,
+html[data-theme="cream"] .text-white\/25,
+html[data-theme="cream"] .text-white\/30 { color: rgba(100, 70, 30, 0.55) !important; }
+html[data-theme="cream"] .text-white\/35,
+html[data-theme="cream"] .text-white\/40 { color: rgba(80, 50, 20, 0.7)  !important; }
+html[data-theme="cream"] .text-white\/50,
+html[data-theme="cream"] .text-white\/60 { color: rgba(60, 35, 10, 0.82) !important; }
+html[data-theme="cream"] .text-white\/70,
+html[data-theme="cream"] .text-white\/80,
+html[data-theme="cream"] .text-white\/90 { color: var(--cream-text)       !important; }
+
+/* card inner backgrounds */
+html[data-theme="cream"] [class*="bg-white\/"] {
+  background-color: rgba(200, 170, 120, 0.12) !important;
+}
+
+/* glint-card in cream mode: warm amber glow */
+html[data-theme="cream"] .glint-card {
+  background-color: var(--cream-card) !important;
+  border: 1px solid rgba(200, 140, 60, 0.25) !important;
+  box-shadow: 0 0 20px -6px rgba(200, 140, 60, 0.18) !important;
+}
+html[data-theme="cream"] .glint-card:hover {
+  border: 1px solid rgba(200, 140, 60, 0.45) !important;
+  box-shadow: 0 0 28px -2px rgba(200, 140, 60, 0.28) !important;
+}
+
+/* keep brand accent colours readable in cream mode */
+html[data-theme="cream"] .text-\[\#FF3300\]  { color: #CC2200 !important; }
+html[data-theme="cream"] .text-\[\#22D3EE\]  { color: #0891b2 !important; }
+html[data-theme="cream"] .text-\[\#8B5CF6\]  { color: #6d28d9 !important; }
+
+/* Navbar top bar in cream mode */
+html[data-theme="cream"] nav,
+html[data-theme="cream"] header {
+  background-color: #EDE6D8 !important;
+  border-color: rgba(140, 100, 50, 0.18) !important;
+}
+
+/* Input fields */
+html[data-theme="cream"] input {
+  background-color: rgba(200, 170, 120, 0.1) !important;
+  color: var(--cream-text) !important;
+}
+html[data-theme="cream"] input::placeholder {
+  color: rgba(100, 70, 30, 0.45) !important;
+}
+
+@media print {
   body {
-    background-color: var(--background);
-    color: var(--foreground);
+    background-color: white !important;
+    background-image: none !important;
+    color: #0f172a !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .page-break {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+  .page-break-after {
+    page-break-after: always !important;
+    break-after: page !important;
+  }
+  
+  @page {
+    size: A4;
+    margin: 15mm;
   }
 }

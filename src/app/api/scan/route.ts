@@ -1,21 +1,38 @@
-import { checkContext } from '@/lib/scanner/checkContext';
-import { checkCode } from '@/lib/scanner/checkCode';
-import { checkMachine } from '@/lib/scanner/checkMachine';
-import { checkTooling } from '@/lib/scanner/checkTooling';
-import { supabase } from '@/lib/supabase/client';
+import { runScan } from '@/lib/scanner/core';
+import { validateScanRequest } from '@/lib/scanner/v2/scanRequest';
+import { scanLog } from '@/lib/scanner/v2/scanLogger';
+import { deriveCompanySlug } from '@/lib/scanner/shared';
+import { createAdminSupabaseClient } from '@/lib/supabase/service';
+import { randomUUID } from 'crypto';
 
-export const runtime = 'edge';
-
-function calculateScore(checks: any[]) {
-  return checks.reduce((total, check) => total + (check.score || 0), 0);
-}
+export const runtime = 'nodejs';
+/** Vercel / platform timeout budget (seconds) */
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  const { url } = await req.json();
-
-  if (!url) {
-    return new Response(JSON.stringify({ error: 'URL is required' }), { status: 400 });
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body', code: 'INVALID_URL' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
+
+  const validated = validateScanRequest(body);
+  if (!validated.ok || !validated.data) {
+    return new Response(
+      JSON.stringify({ error: validated.error, code: validated.code || 'INVALID_URL' }),
+      { status: validated.status, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const { url, enabledSurfaces, profile } = validated.data;
+  const scanId = randomUUID();
+  const companySlug = deriveCompanySlug(url);
+
+  scanLog('info', 'scan_started', { scanId, url, profile, companySlug });
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -24,129 +41,216 @@ export async function POST(req: Request) {
       };
 
       try {
-        // Step 0: DNS & Reachability Validation
-        const isLocal = url.includes('localhost') || url.includes('127.0.0.1');
-        if (!isLocal) {
-          send({ type: 'progress', check: 'validation', status: 'running' });
-          let reachable = false;
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-          try {
-            await fetch(url, {
-              method: 'HEAD',
-              signal: controller.signal,
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; Glintscanner/1.0)'
-              }
-            });
-            reachable = true;
-          } catch (headErr) {
-            // Some servers block HEAD. Fallback to GET.
-            const getController = new AbortController();
-            const getTimeoutId = setTimeout(() => getController.abort(), 6000);
-            try {
-              await fetch(url, {
-                method: 'GET',
-                signal: getController.signal,
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (compatible; Glintscanner/1.0)'
-                }
-              });
-              reachable = true;
-            } catch (getErr: any) {
-              reachable = false;
-            } finally {
-              clearTimeout(getTimeoutId);
-            }
-          } finally {
-            clearTimeout(timeoutId);
-          }
-
-          if (!reachable) {
-            throw new Error(`Invalid domain. Please make sure the domain is valid and reachable.`);
-          }
-          send({ type: 'progress', check: 'validation', status: 'done' });
-        }
-
-        // Step 1: Firecrawl extraction
-        send({ type: 'progress', check: 'extraction', status: 'running' });
-        
-        let markdown = '';
-        if (process.env.FIRECRAWL_API_KEY) {
-          const response = await fetch('https://api.firecrawl.dev/v1/scrape', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${process.env.FIRECRAWL_API_KEY}`
+        const result = await runScan(
+          { url, options: { enabledSurfaces, profile } },
+          {
+            onProgress: (log) => {
+              send(log);
             },
-            body: JSON.stringify({ url, formats: ['markdown'] })
-          });
-
-          const scrapeResult = await response.json();
-          if (scrapeResult.success && scrapeResult.data) {
-            markdown = scrapeResult.data.markdown || '';
-          } else {
-             send({ type: 'warning', message: 'Extraction failed: ' + (scrapeResult.error || 'Unknown error') });
           }
-        } else {
-          send({ type: 'warning', message: 'FIRECRAWL_API_KEY not set, using mock extraction.' });
-          markdown = `# Mock Extraction for ${url}\n\n## Setup\n\`\`\`bash\nnpm install example\n\`\`\``;
-        }
-        
-        send({ type: 'progress', check: 'extraction', status: 'done' });
+        );
 
-        // Step 2: All checks in parallel
-        send({ type: 'progress', check: 'analysis', status: 'running' });
+        let savedId: string | null = null;
 
-        const [context, code, machine, agent] = await Promise.all([
-          checkContext(url, markdown).then(r => { send({ type: 'check', ...r }); return r; }),
-          checkCode(markdown).then(r => { send({ type: 'check', ...r }); return r; }),
-          checkMachine(url).then(r => { send({ type: 'check', ...r }); return r; }),
-          checkTooling(url, markdown).then(r => { send({ type: 'check', ...r }); return r; })
-        ]);
+        if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+          try {
+            const supabaseAdmin = createAdminSupabaseClient();
 
-        const checksData = [context, code, machine, agent];
-        const score = calculateScore(checksData);
-        
-        let savedId = null;
-        try {
-          if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_URL !== 'https://mock.supabase.co') {
-            const { data, error: dbError } = await supabase
+            const { error: softErr } = await supabaseAdmin
               .from('public_scans')
-              .insert([{ url, score, checks: checksData }])
+              .update({ is_latest: false })
+              .eq('company_slug', companySlug)
+              .eq('is_latest', true);
+
+            if (softErr && !/is_latest|company_slug|column/i.test(softErr.message)) {
+              scanLog('warn', 'soft_history_update_failed', { scanId, error: softErr.message });
+            }
+            if (softErr && /column/i.test(softErr.message || '')) {
+              await supabaseAdmin.from('public_scans').update({ is_latest: false }).eq('url', url);
+            }
+
+            const checksPayload = {
+              surfaces: result.surfaces,
+              pages: result.pages,
+              framework: result.framework,
+              graph: null,
+              journeys: result.journeys,
+              dimensions: result.dimensions,
+              score_version: result.score_version,
+              meta: {
+                duration_ms: result.duration_ms,
+                score_version: result.score_version,
+                discovery_score: result.discovery_score,
+                scan_id: scanId,
+                status: 'complete',
+                company_slug: companySlug,
+              },
+            };
+
+            const insertRow: Record<string, unknown> = {
+              url: result.url,
+              score: result.score,
+              checks: checksPayload,
+              score_version: result.score_version,
+              dimension_scores: Object.fromEntries(
+                result.dimensions.map((d) => [d.name, d.score])
+              ),
+              duration_ms: result.duration_ms,
+              company_slug: companySlug,
+              is_latest: true,
+              status: 'complete',
+            };
+
+            let { data, error: dbError } = await supabaseAdmin
+              .from('public_scans')
+              .insert([insertRow])
               .select('id')
               .single();
 
+            if (
+              dbError &&
+              /column|score_version|company_slug|is_latest|status|dimension/i.test(dbError.message)
+            ) {
+              const attempts = [
+                {
+                  url: result.url,
+                  score: result.score,
+                  checks: checksPayload,
+                  score_version: result.score_version,
+                  company_slug: companySlug,
+                  is_latest: true,
+                },
+                {
+                  url: result.url,
+                  score: result.score,
+                  checks: checksPayload,
+                  company_slug: companySlug,
+                },
+                { url: result.url, score: result.score, checks: checksPayload },
+              ];
+              for (const row of attempts) {
+                const res = await supabaseAdmin.from('public_scans').insert([row]).select('id').single();
+                if (!res.error && res.data) {
+                  data = res.data;
+                  dbError = null;
+                  break;
+                }
+                dbError = res.error;
+              }
+
+              if (dbError) {
+                await supabaseAdmin.from('public_scans').delete().eq('url', url);
+                const res = await supabaseAdmin
+                  .from('public_scans')
+                  .insert([{ url: result.url, score: result.score, checks: checksPayload }])
+                  .select('id')
+                  .single();
+                data = res.data;
+                dbError = res.error;
+              }
+            }
+
             if (dbError) {
-              console.error('Database insertion error:', dbError.message);
+              scanLog('error', 'db_insert_failed', { scanId, error: dbError.message });
             } else if (data) {
               savedId = data.id;
+              const g = result.graph;
+
+              if (g.relationalNodes && g.relationalNodes.length > 0) {
+                const nodeRows = g.relationalNodes.map((n: any) => ({
+                  scan_id: savedId,
+                  node_id: n.id,
+                  type: n.type || 'page',
+                  source_url: n.source_url || result.url,
+                  source_strategy: n.source_strategy || 'generic',
+                  title: n.title || '',
+                  properties: n.properties || {},
+                  content_hash: n.content_hash || null,
+                  confidence: n.confidence ?? 1.0,
+                  extracted_at: n.extracted_at || new Date().toISOString(),
+                  synthetic:
+                    n.properties?.synthetic === true || n.properties?.autoGenerated === true || false,
+                  evidence: n.properties?.evidence || null,
+                }));
+                let { error: nodeErr } = await supabaseAdmin.from('scan_nodes').insert(nodeRows);
+                if (nodeErr && /synthetic|evidence|column/i.test(nodeErr.message)) {
+                  const slim = nodeRows.map(({ synthetic, evidence, ...rest }: any) => rest);
+                  const retry = await supabaseAdmin.from('scan_nodes').insert(slim);
+                  nodeErr = retry.error;
+                }
+                if (nodeErr) scanLog('error', 'nodes_insert_failed', { scanId, error: nodeErr.message });
+              }
+
+              if (g.relationalEdges && g.relationalEdges.length > 0) {
+                const edgeRows = g.relationalEdges.map((e: any) => ({
+                  scan_id: savedId,
+                  from_id: e.from_id,
+                  to_id: e.to_id,
+                  relation: e.relation || 'page_references_page',
+                  source_url: e.source_url || result.url,
+                  properties: e.properties || {},
+                }));
+                const { error: edgeErr } = await supabaseAdmin.from('scan_edges').insert(edgeRows);
+                if (edgeErr) scanLog('error', 'edges_insert_failed', { scanId, error: edgeErr.message });
+              }
             }
+          } catch (dbErr: any) {
+            scanLog('error', 'db_connection_failed', { scanId, error: dbErr.message });
           }
-        } catch (dbErr: any) {
-          console.error('Database connection failed:', dbErr.message);
         }
-        
-        send({ 
-          type: 'complete', 
-          score, 
-          checks: checksData,
-          id: savedId
+
+        scanLog('info', 'scan_complete', {
+          scanId,
+          savedId,
+          score: result.score,
+          score_version: result.score_version,
+          duration_ms: result.duration_ms,
+          companySlug,
         });
 
+        send({
+          type: 'complete',
+          score: result.score,
+          score_version: result.score_version,
+          scanId,
+          checks: {
+            surfaces: result.surfaces,
+            pages: result.pages,
+            framework: result.framework,
+            graph: result.graph,
+            journeys: result.journeys,
+            dimensions: result.dimensions,
+            score_version: result.score_version,
+            meta: {
+              duration_ms: result.duration_ms,
+              score_version: result.score_version,
+              discovery_score: result.discovery_score,
+              scan_id: scanId,
+              status: 'complete',
+              company_slug: companySlug,
+            },
+          },
+          id: savedId,
+        });
       } catch (error: any) {
-        send({ type: 'error', message: error.message });
+        scanLog('error', 'scan_failed', { scanId, error: error.message, url });
+        send({
+          type: 'error',
+          message: error.message,
+          code: error.code || 'INTERNAL',
+          scanId,
+        });
       } finally {
         controller.close();
       }
-    }
+    },
   });
 
   return new Response(stream, {
-    headers: { 
-      'Content-Type': 'text/plain', 
-      'Transfer-Encoding': 'chunked' 
-    }
+    headers: {
+      'Content-Type': 'text/plain',
+      'Transfer-Encoding': 'chunked',
+      'X-Scan-Id': scanId,
+    },
   });
 }

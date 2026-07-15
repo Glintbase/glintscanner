@@ -1,4 +1,5 @@
 import { supabase } from "@/lib/supabase/client";
+import { badgeColorForScore } from "@/lib/scanner/shared";
 
 export const runtime = 'edge';
 
@@ -26,25 +27,18 @@ export async function GET(
     console.error('Badge score fetch error:', err);
   }
 
-  // Fallbacks for well-known mock IDs or default values
+  // Demo fallbacks only when DB has no row (not used as production scores for real IDs)
   if (!found) {
-    if (params.id === 'stripe') {
-      score = 95;
-    } else if (params.id === 'twilio') {
-      score = 88;
-    } else if (params.id === 'supabase') {
-      score = 74;
-    } else if (params.id === 'vercel') {
-      score = 42;
-    } else {
-      score = 50; // Default fallback score
-    }
+    const demos: Record<string, number> = {
+      stripe: 95,
+      twilio: 88,
+      supabase: 74,
+      vercel: 38,
+    };
+    score = demos[params.id] ?? 0;
   }
-  
-  let color = '#EF4444'; // danger red
-  if (score >= 90) color = '#10B981'; // success green
-  else if (score >= 70) color = '#22D3EE'; // info cyan
-  else if (score >= 50) color = '#F59E0B'; // warning amber
+
+  const color = badgeColorForScore(score);
 
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="160" height="20">

@@ -17,7 +17,7 @@ export default function Image() {
           flexDirection: 'column',
           justifyContent: 'space-between',
           padding: '72px 80px',
-          background: '#020617',
+          background: '#000000',
           fontFamily: 'system-ui, sans-serif',
           position: 'relative',
           overflow: 'hidden',
@@ -45,7 +45,7 @@ export default function Image() {
             left: '200px',
             width: '600px',
             height: '400px',
-            background: 'radial-gradient(ellipse, rgba(255,69,0,0.12), transparent 70%)',
+            background: 'radial-gradient(ellipse, rgba(255,51,0,0.12), transparent 70%)',
             borderRadius: '50%',
           }}
         />
@@ -58,19 +58,19 @@ export default function Image() {
               style={{
                 width: '48px',
                 height: '48px',
-                background: '#FF4500',
+                background: '#FF3300',
                 borderRadius: '14px',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                boxShadow: '0 0 40px rgba(255,69,0,0.4)',
+                boxShadow: '0 0 40px rgba(255,51,0,0.4)',
               }}
             >
               <div
                 style={{
                   width: '22px',
                   height: '22px',
-                  background: '#020617',
+                  background: '#000000',
                   borderRadius: '5px',
                   transform: 'rotate(12deg)',
                 }}
@@ -102,7 +102,7 @@ export default function Image() {
             }}
           >
             AI Agent Readiness{' '}
-            <span style={{ color: '#FF4500' }}>Audit</span>
+            <span style={{ color: '#FF3300' }}>Audit</span>
           </div>
 
           {/* Subtitle */}
@@ -138,7 +138,7 @@ export default function Image() {
                 color: 'rgba(241,245,249,0.2)',
               }}
             >
-              scan.glintbase.xyz
+              scan.glintbase.dev
             </span>
           </div>
 
@@ -150,13 +150,13 @@ export default function Image() {
                 style={{
                   padding: '6px 16px',
                   borderRadius: '999px',
-                  border: '1px solid rgba(255,69,0,0.25)',
-                  background: 'rgba(255,69,0,0.06)',
+                  border: '1px solid rgba(255,51,0,0.25)',
+                  background: 'rgba(255,51,0,0.06)',
                   fontSize: '12px',
                   fontWeight: 700,
                   letterSpacing: '0.1em',
                   textTransform: 'uppercase' as const,
-                  color: 'rgba(255,69,0,0.7)',
+                  color: 'rgba(255,51,0,0.7)',
                 }}
               >
                 {label}
@@ -169,3 +169,4 @@ export default function Image() {
     { ...size }
   );
 }
+

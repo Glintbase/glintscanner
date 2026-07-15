@@ -9,15 +9,15 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "#020617",
+        background: "#000000",
         foreground: "#F1F5F9",
         brand: {
-          DEFAULT: "#FF4500", // Solar Ember
-          glow: "rgba(255, 69, 0, 0.3)",
+          DEFAULT: "#FF3300", // Solar Neon Red-Orange
+          glow: "rgba(255, 51, 0, 0.3)",
         },
         primary: {
-          DEFAULT: "#FF4500",
-          foreground: "#020617",
+          DEFAULT: "#FF3300",
+          foreground: "#000000",
         },
         secondary: {
           DEFAULT: "#8B5CF6", // Hyper Violet
@@ -25,10 +25,10 @@ const config: Config = {
         },
         accent: {
           DEFAULT: "#22D3EE",
-          foreground: "#020617",
+          foreground: "#000000",
         },
         surface: {
-          950: "#020617",
+          950: "#000000",
           900: "#0F172A",
           800: "#1E293B",
           700: "#334155",
@@ -38,7 +38,7 @@ const config: Config = {
         warning: "#F59E0B"
       },
       fontFamily: {
-        sans: ["var(--font-inter)"],
+        sans: ["var(--font-sans)", "sans-serif"],
         mono: ["var(--font-jetbrains)"],
       },
       animation: {

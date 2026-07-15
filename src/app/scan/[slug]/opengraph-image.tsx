@@ -1,5 +1,6 @@
 import { ImageResponse } from 'next/og';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getScanBySlug, deriveCompany } from '@/lib/resolveSlug';
+import { scoreBand } from '@/lib/scanner/shared';
 
 export const runtime = 'edge';
 
@@ -7,38 +8,17 @@ export const alt = 'AI Agent Readiness Audit — Glintbase Scanner';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 
-function deriveCompany(rawUrl: string): string {
-  let hostname = rawUrl;
-  try {
-    hostname = new URL(rawUrl).hostname;
-  } catch {
-    hostname = rawUrl.replace(/^https?:\/\//i, '').split('/')[0];
+export default async function Image({ params }: { params: { slug: string } }) {
+  if (['favicon.ico', 'robots.txt', 'sitemap.xml', 'icon.svg', 'leaderboard', 'api'].includes(params.slug)) {
+    return new Response('Not Found', { status: 404 });
   }
-  hostname = hostname.toLowerCase().replace(/^www\./i, '');
-  let company = hostname.split('.')[0];
-  if (['docs', 'www', 'developer', 'dev', 'api'].includes(company)) {
-    company = hostname.split('.')[1] || company;
-  }
-  return company.charAt(0).toUpperCase() + company.slice(1);
-}
 
-function scoreBand(score: number): { label: string; color: string } {
-  if (score >= 76) return { label: 'Agent-Native', color: '#22C55E' };
-  if (score >= 41) return { label: 'AI-Friendly', color: '#F59E0B' };
-  return { label: 'Legacy Docs', color: '#EF4444' };
-}
-
-export default async function Image({ params }: { params: { id: string } }) {
-  const supabase = createServerSupabaseClient();
-  const { data } = await supabase
-    .from('public_scans')
-    .select('url, score, checks')
-    .eq('id', params.id)
-    .single();
+  const data = await getScanBySlug(params.slug);
 
   const scanUrl = data?.url || 'Unknown';
   const score = data?.score ?? 0;
-  const checks = data?.checks || [];
+  const rawChecks = data?.checks || [];
+  const checks = Array.isArray(rawChecks) ? rawChecks : (rawChecks?.surfaces || []);
   const company = deriveCompany(scanUrl);
   const band = scoreBand(score);
   let displayDomain = scanUrl;
@@ -47,6 +27,7 @@ export default async function Image({ params }: { params: { id: string } }) {
   } catch {
     displayDomain = scanUrl.replace(/^https?:\/\//i, '').split('/')[0];
   }
+  displayDomain = displayDomain.toLowerCase().replace(/^www\./i, '');
 
   // Derive status indicators from check categories
   const indicators: { label: string; passed: boolean }[] = [];
@@ -83,7 +64,7 @@ export default async function Image({ params }: { params: { id: string } }) {
           flexDirection: 'column',
           justifyContent: 'space-between',
           padding: '64px 80px',
-          background: '#020617',
+          background: '#000000',
           fontFamily: 'system-ui, sans-serif',
           position: 'relative',
           overflow: 'hidden',
@@ -111,7 +92,7 @@ export default async function Image({ params }: { params: { id: string } }) {
             right: '80px',
             width: '400px',
             height: '400px',
-            background: `radial-gradient(ellipse, ${band.color}15, transparent 70%)`,
+            background: `radial-gradient(ellipse, ${band.colorHex}15, transparent 70%)`,
             borderRadius: '50%',
           }}
         />
@@ -126,19 +107,19 @@ export default async function Image({ params }: { params: { id: string } }) {
                 style={{
                   width: '36px',
                   height: '36px',
-                  background: '#FF4500',
+                  background: '#FF3300',
                   borderRadius: '10px',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  boxShadow: '0 0 30px rgba(255,69,0,0.35)',
+                  boxShadow: '0 0 30px rgba(255,51,0,0.35)',
                 }}
               >
                 <div
                   style={{
                     width: '16px',
                     height: '16px',
-                    background: '#020617',
+                    background: '#000000',
                     borderRadius: '4px',
                     transform: 'rotate(12deg)',
                   }}
@@ -189,10 +170,10 @@ export default async function Image({ params }: { params: { id: string } }) {
               style={{
                 fontSize: '96px',
                 fontWeight: 900,
-                color: band.color,
+                color: band.colorHex,
                 lineHeight: 1,
                 letterSpacing: '-0.04em',
-                textShadow: `0 0 60px ${band.color}40`,
+                textShadow: `0 0 60px ${band.colorHex}40`,
               }}
             >
               {score}
@@ -213,13 +194,13 @@ export default async function Image({ params }: { params: { id: string } }) {
                 marginTop: '8px',
                 padding: '6px 20px',
                 borderRadius: '999px',
-                background: `${band.color}15`,
-                border: `1px solid ${band.color}30`,
+                background: `${band.colorHex}15`,
+                border: `1px solid ${band.colorHex}30`,
                 fontSize: '13px',
                 fontWeight: 800,
                 letterSpacing: '0.12em',
                 textTransform: 'uppercase' as const,
-                color: band.color,
+                color: band.colorHex,
               }}
             >
               {band.label}

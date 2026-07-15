@@ -1,0 +1,12 @@
+# Example Product Docs
+
+> Agent-friendly documentation index for Example Product.
+
+## Docs
+- [Quickstart](https://docs.example.com/docs/quickstart)
+- [Authentication](https://docs.example.com/docs/auth)
+- [Webhooks](https://docs.example.com/docs/webhooks)
+- [API Reference](https://docs.example.com/docs/api)
+
+## OpenAPI
+- https://docs.example.com/openapi.json

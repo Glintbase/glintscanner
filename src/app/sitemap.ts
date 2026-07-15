@@ -45,7 +45,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       }
 
       scanRoutes = Array.from(uniqueScansMap.entries()).map(([company, createdAt]) => ({
-        url: `${baseUrl}/${company}-scan`,
+        url: `${baseUrl}/scan/${company.toLowerCase()}`,
         lastModified: new Date(createdAt),
         changeFrequency: 'weekly' as const,
         priority: 0.8,
@@ -57,3 +57,4 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [...staticRoutes, ...scanRoutes];
 }
+

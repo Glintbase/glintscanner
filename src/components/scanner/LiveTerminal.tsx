@@ -77,7 +77,16 @@ export default function LiveTerminal({ logs, isComplete }: { logs: Log[], isComp
               }
               if (l.message) return l.message;
               if (l.type === 'progress') {
-                const stepName = l.check === 'validation' ? 'DNS & Reachability Check' : l.check === 'extraction' ? 'Content Extraction' : l.check === 'analysis' ? 'Agent Readiness Analysis' : l.check;
+              const stepName = 
+                  l.check === 'validation' ? 'DNS & Reachability Check' : 
+                  l.check === 'discovery' ? 'Ecosystem Surface Discovery' : 
+                  l.check === 'classification' ? 'Surface Metadata Classification' :
+                  l.check === 'framework' ? 'Ecosystem Framework Detection' :
+                  l.check === 'crawling' ? 'High-Value Page Crawl & Extraction' :
+                  l.check === 'graph' ? 'Ecosystem Context Graph Construction' :
+                  l.check === 'journey' ? 'Agent Journey Pathfinder' :
+                  l.check === 'scoring' ? 'Readiness Index Synthesis' : 
+                  l.check;
                 return `${stepName} ${l.status}...`;
               }
               if (l.type === 'check') {

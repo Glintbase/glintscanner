@@ -1,12 +1,19 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Plus_Jakarta_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const jetbrains = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" });
+const plusJakartaSans = Plus_Jakarta_Sans({
+  variable: "--font-sans",
+  subsets: ["latin"],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains",
+  subsets: ["latin"],
+});
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://scan.glintbase.xyz"),
+  metadataBase: new URL("https://scan.glintbase.dev"),
   title: {
     default: "Glintbase Scanner — AI Agent Readiness Audit",
     template: "%s — Glintbase",
@@ -28,7 +35,7 @@ export const metadata: Metadata = {
     "semantic structure",
     "API discoverability",
   ],
-  authors: [{ name: "Glintbase", url: "https://glintbase.xyz" }],
+  authors: [{ name: "Glintbase", url: "https://glintbase.dev" }],
   creator: "Glintbase",
   publisher: "Glintbase",
   
@@ -55,7 +62,7 @@ export const metadata: Metadata = {
     title: "Glintbase Scanner — AI Agent Readiness Audit",
     description:
       "Analyze whether AI agents like Cursor, Claude Code, and Copilot can reliably understand and use your product documentation.",
-    url: "https://scan.glintbase.xyz",
+    url: "https://scan.glintbase.dev",
   },
   twitter: {
     card: "summary_large_image",
@@ -66,7 +73,7 @@ export const metadata: Metadata = {
     site: "@glintbase",
   },
   alternates: {
-    canonical: "https://scan.glintbase.xyz",
+    canonical: "https://scan.glintbase.dev",
   },
   icons: {
     icon: "/favicon.ico",
@@ -78,10 +85,11 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
-      <body className="font-sans antialiased bg-[#020617] text-[#F1F5F9] min-h-dvh flex flex-col selection:bg-[#FF4500]/20 overflow-x-hidden">
+    <html lang="en" className={`${plusJakartaSans.variable} ${jetbrainsMono.variable} h-full scroll-smooth`}>
+      <body className="min-h-full flex flex-col bg-black text-[#F1F5F9] font-sans selection:bg-[#FF3300]/30 selection:text-white overflow-x-hidden">
         {children}
       </body>
     </html>
   );
 }
+
