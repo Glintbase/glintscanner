@@ -132,11 +132,11 @@ function buildNeighborSet(nodeId: string, links: GraphLink[]): Set<string> {
 
 // â”€â”€â”€ Node Detail Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-function NodeDetailPanel({ node, onClose }: { node: GraphNode | null; onClose: () => void }) {
+function NodeDetailPanel({ node, onClose, isMobile }: { node: GraphNode | null; onClose: () => void; isMobile?: boolean }) {
   if (!node) return null;
   const color = typeColor(node.type ?? "page");
   return (
-    <div className="absolute top-4 right-4 w-56 bg-black border border-white/[0.08] rounded-xl shadow-2xl p-4 z-20 font-mono text-[10px] text-white/60 space-y-3">
+    <div className={`absolute ${isMobile ? "bottom-3 left-3 right-3 w-auto max-w-full" : "top-4 right-4 w-56"} bg-black/95 border border-white/[0.12] rounded-xl shadow-2xl p-4 z-20 font-mono text-[10px] text-white/60 space-y-3 backdrop-blur-md`}>
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
           <div className="text-white font-bold text-xs leading-snug truncate">{node.label}</div>
@@ -147,7 +147,7 @@ function NodeDetailPanel({ node, onClose }: { node: GraphNode | null; onClose: (
             {node.type ?? node.group}
           </div>
         </div>
-        <button onClick={onClose} className="text-white/20 hover:text-white/70 transition-colors text-xs shrink-0 mt-0.5">âœ•</button>
+        <button onClick={onClose} className="text-white/40 hover:text-white transition-colors text-sm shrink-0 p-1">✕</button>
       </div>
       <div className="border-t border-white/[0.06] pt-2 space-y-1.5">
         <div className="flex justify-between">
@@ -180,8 +180,9 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [showOrphans, setShowOrphans] = useState(true);
   const [containerWidth, setContainerWidth] = useState(800);
+  const isMobile = containerWidth < 768;
 
-  // â”€â”€ Responsive width â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Responsive width
   useEffect(() => {
     if (!containerRef.current) return;
     const obs = new ResizeObserver(entries => {
@@ -373,7 +374,8 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
     const isHub = HUB_TYPES.has(node.type ?? "");
 
     // 1. Outer glow ring (hubs + hovered + selected) using safe rgba conversion
-    if (isHub || isHovered || isSelected) {
+    // Skip heavy radial gradients on mobile for 60fps scrolling
+    if ((isHub || isHovered || isSelected) && !isMobile) {
       const baseHex = typeColor(node.type ?? "page");
       const glowR = r + (isHovered ? 6 : 4);
       const gradient = ctx.createRadialGradient(x, y, r * 0.5, x, y, glowR + 5);
@@ -520,13 +522,13 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
         </div>
       </div>
 
-      {/* â”€â”€ Canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-      <div ref={containerRef} className="relative w-full" style={{ height: 520 }}>
+      {/* Canvas */}
+      <div ref={containerRef} className="relative w-full touch-pan-y" style={{ height: isMobile ? 340 : 520 }}>
         {hasData ? (
           <ForceGraph2D
             ref={fgRef}
             width={containerWidth}
-            height={520}
+            height={isMobile ? 340 : 520}
             graphData={filteredData as any}
             nodeId="id"
             nodeLabel={() => ""}
@@ -541,8 +543,8 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
             onNodeHover={(n: any) => setHoverNode(n)}
             onNodeDragEnd={handleNodeDragEnd as any}
             onEngineStop={handleEngineStop}
-            cooldownTicks={220}
-            d3AlphaDecay={0.016}
+            cooldownTicks={isMobile ? 60 : 220}
+            d3AlphaDecay={isMobile ? 0.04 : 0.016}
             d3VelocityDecay={0.42}
             backgroundColor={isDark ? '#000000' : '#F0E8DA'}
           />
@@ -552,7 +554,7 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
           </div>
         )}
 
-        <NodeDetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} />
+        <NodeDetailPanel node={selectedNode} onClose={() => setSelectedNode(null)} isMobile={isMobile} />
       </div>
 
       {/* â”€â”€ Legend â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}

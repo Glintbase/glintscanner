@@ -321,7 +321,7 @@ export default function JourneyPanel({ journeys }: { journeys: JourneySimulation
       </div>
 
       {/* ── Two-panel body with collapsible dropdown selector ── */}
-      <div className="flex flex-col lg:flex-row" style={{ minHeight: '520px' }}>
+      <div className="flex flex-col lg:flex-row min-h-0 lg:min-h-[520px]">
 
         {/* CENTER — Step Timeline */}
         <div className="flex-1 flex flex-col overflow-y-auto border-b lg:border-b-0 lg:border-r border-white/[0.06] no-scrollbar relative">

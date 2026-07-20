@@ -691,21 +691,21 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
         {/* ——— HERO DASHBOARD ——— */}
         <div className="space-y-4">
           <div className="flex flex-col lg:flex-row items-stretch border border-white/[0.06] rounded-2xl overflow-hidden glint-card">
-            <div className="relative flex flex-col items-center justify-center px-10 py-10 bg-black min-w-[200px] border-b lg:border-b-0 lg:border-r border-white/[0.06]">
+            <div className="relative flex flex-col items-center justify-center px-6 py-6 sm:px-10 sm:py-10 bg-black min-w-full lg:min-w-[200px] border-b lg:border-b-0 lg:border-r border-white/[0.06]">
               <div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 50%, ${score >= 90 ? 'rgba(255,51,0,0.10)' : score >= 70 ? 'rgba(34,211,238,0.08)' : score >= 40 ? 'rgba(139,92,246,0.08)' : 'rgba(255,51,0,0.06)'} 0%, transparent 70%)` }} />
-              <motion.div className={`text-[88px] leading-none font-black font-mono tracking-tighter ${tierColor}`} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.6, ease: 'easeOut' }}>
+              <motion.div className={`text-6xl sm:text-7xl lg:text-[88px] leading-none font-black font-mono tracking-tighter ${tierColor}`} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.6, ease: 'easeOut' }}>
                 {score}
               </motion.div>
               <div className="text-[9px] font-mono font-bold tracking-[0.3em] text-white/25 uppercase mt-1">/ 100</div>
               <div className={`mt-3 text-[9px] font-mono font-bold tracking-widest uppercase px-2.5 py-1 rounded border ${score >= 90 ? 'text-[#FF3300] border-[#FF3300]/30 bg-[#FF3300]/[0.08]' : score >= 70 ? 'text-[#22D3EE] border-[#22D3EE]/30 bg-[#22D3EE]/[0.08]' : score >= 40 ? 'text-[#8B5CF6] border-[#8B5CF6]/30 bg-[#8B5CF6]/[0.08]' : 'text-[#FF3300]/70 border-[#FF3300]/20 bg-[#FF3300]/[0.05]'}`}>{tierText}</div>
             </div>
 
-            <div className="flex flex-col justify-center px-8 py-8 flex-1 bg-black border-b lg:border-b-0 lg:border-r border-white/[0.06]">
+            <div className="flex flex-col justify-center px-5 py-6 sm:px-8 sm:py-8 flex-1 bg-black border-b lg:border-b-0 lg:border-r border-white/[0.06]">
               <div className="text-[9px] font-mono uppercase tracking-[0.3em] text-white/25 mb-2">{isV2 ? 'Agent Ecosystem Discovery' : 'AI Readiness Audit'}</div>
-              <div className="text-3xl font-black text-white uppercase tracking-tight font-mono leading-none">
+              <div className="text-2xl sm:text-3xl font-black text-white uppercase tracking-tight font-mono leading-none break-all">
                 {url ? (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })() : 'Scanned Surface'}
               </div>
-              <div className="mt-3 text-[12px] text-white/45 leading-relaxed max-w-md">
+              <div className="mt-3 text-[11px] sm:text-[12px] text-white/45 leading-relaxed max-w-md">
                 {isV2
                   ? score >= 90 ? 'Elite developer ecosystem. Fully optimized for machine ingestion, OpenAPI parsing, and MCP orchestration.'
                   : score >= 70 ? 'AI-ready surfaces with complete discovery paths. Minor updates needed to reach elite index.'
@@ -723,26 +723,26 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
               )}
             </div>
 
-            <div className="flex flex-col justify-center min-w-[180px] bg-black divide-y divide-white/[0.05]">
-              <div className="px-6 py-5">
-                <div className="text-[8px] font-mono uppercase tracking-widest text-white/25 mb-1">Surfaces Found</div>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-3xl font-black font-mono text-[#FF3300]">{discoverablesList.filter((d: any) => d.found).length}</span>
-                  <span className="text-[11px] font-mono text-white/30">/ {discoverablesList.length}</span>
+            <div className="grid grid-cols-3 lg:flex lg:flex-col justify-center min-w-full lg:min-w-[180px] bg-black divide-x lg:divide-x-0 lg:divide-y divide-white/[0.05]">
+              <div className="px-3 sm:px-6 py-4 sm:py-5 text-center lg:text-left">
+                <div className="text-[8px] font-mono uppercase tracking-widest text-white/25 mb-1 truncate">Surfaces</div>
+                <div className="flex items-baseline justify-center lg:justify-start gap-1">
+                  <span className="text-2xl sm:text-3xl font-black font-mono text-[#FF3300]">{discoverablesList.filter((d: any) => d.found).length}</span>
+                  <span className="text-[10px] font-mono text-white/30">/{discoverablesList.length}</span>
                 </div>
               </div>
-              <div className="px-6 py-5">
-                <div className="text-[8px] font-mono uppercase tracking-widest text-white/25 mb-1">Large Pages</div>
-                <div className="flex items-baseline gap-1.5">
-                  <span className="text-3xl font-black font-mono text-[#22D3EE]">{contextOverload}</span>
-                  <span className="text-[11px] font-mono text-white/30">pages</span>
+              <div className="px-3 sm:px-6 py-4 sm:py-5 text-center lg:text-left">
+                <div className="text-[8px] font-mono uppercase tracking-widest text-white/25 mb-1 truncate">Large Pages</div>
+                <div className="flex items-baseline justify-center lg:justify-start gap-1">
+                  <span className="text-2xl sm:text-3xl font-black font-mono text-[#22D3EE]">{contextOverload}</span>
+                  <span className="text-[10px] font-mono text-white/30">pgs</span>
                 </div>
               </div>
-              <div className="px-6 py-5">
-                <div className="text-[8px] font-mono uppercase tracking-widest text-white/25 mb-1">Nav Gap</div>
-                <div className="flex items-baseline gap-1.5">
-                  <span className={`text-3xl font-black font-mono ${locatingDifficulty > 40 ? 'text-[#FF3300]' : 'text-[#8B5CF6]'}`}>{locatingDifficulty}</span>
-                  <span className="text-[11px] font-mono text-white/30">pts</span>
+              <div className="px-3 sm:px-6 py-4 sm:py-5 text-center lg:text-left">
+                <div className="text-[8px] font-mono uppercase tracking-widest text-white/25 mb-1 truncate">Nav Gap</div>
+                <div className="flex items-baseline justify-center lg:justify-start gap-1">
+                  <span className={`text-2xl sm:text-3xl font-black font-mono ${locatingDifficulty > 40 ? 'text-[#FF3300]' : 'text-[#8B5CF6]'}`}>{locatingDifficulty}</span>
+                  <span className="text-[10px] font-mono text-white/30">pts</span>
                 </div>
               </div>
             </div>
@@ -754,11 +754,11 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
               <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25">Surface Inventory</span>
               <span className="text-[8px] font-mono text-white/25">{discoverablesList.filter((d: any) => d.found).length} of {discoverablesList.length} active</span>
             </div>
-            <div className="bg-black grid grid-cols-1 md:grid-cols-3">
+            <div className="bg-black grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
               {discoverablesList.map((item: any, idx: number) => {
                 const isSkipped = item.status === 'skipped';
                 return (
-                  <div key={idx} className={`flex items-center gap-4 px-5 py-4 border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors ${idx % 3 < 2 ? 'md:border-r md:border-white/[0.05]' : ''}`}>
+                  <div key={idx} className="flex items-center gap-4 px-5 py-4 border-b border-white/[0.04] sm:border-r sm:border-white/[0.04] hover:bg-white/[0.02] transition-colors">
                     <div className={`text-2xl font-black font-mono w-8 text-center flex-shrink-0 ${isSkipped ? 'text-white/10' : item.found ? 'text-[#FF3300]' : 'text-white/15'}`}>
                       {isSkipped ? '–' : item.found ? '✓' : '–'}
                     </div>

@@ -43,7 +43,7 @@ export default function LiveTerminal({ logs, isComplete }: { logs: Log[], isComp
         ref={scrollRef}
         className="h-80 overflow-y-auto p-4 space-y-2"
       >
-        <AnimatePresence>
+        <div className="space-y-2">
           {logs.filter(log => log.type !== 'warning').map((log) => {
             let icon = <span className="text-surface-500 w-6">[ LOG ]</span>;
             let textClass = "text-surface-300";
@@ -103,18 +103,16 @@ export default function LiveTerminal({ logs, isComplete }: { logs: Log[], isComp
             };
 
             return (
-              <motion.div 
+              <div 
                 key={log.id}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="flex items-start gap-3"
+                className="flex items-start gap-3 transition-opacity duration-200"
               >
                 <div className="flex-shrink-0 font-bold whitespace-pre">{icon}</div>
-                <div className={textClass}>{getMessage(log)}</div>
-              </motion.div>
+                <div className={`${textClass} break-all sm:break-normal`}>{getMessage(log)}</div>
+              </div>
             );
           })}
-        </AnimatePresence>
+        </div>
         
         {!isComplete && (
           <div className="flex items-start gap-3 animate-pulse">

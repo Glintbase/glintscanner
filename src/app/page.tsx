@@ -59,25 +59,25 @@ function GlintbaseLogo({ size = 28 }: { size?: number }) {
 // ─── Navbar ───────────────────────────────────────────────────────────────
 function Navbar() {
   return (
-    <nav className="fixed top-0 left-0 right-0 z-[100] border-b border-white/5 bg-black/80 backdrop-blur-xl px-6 py-4">
-      <div className="max-w-5xl mx-auto flex items-center justify-between">
+    <nav className="fixed top-0 left-0 right-0 z-[100] border-b border-white/5 bg-black/80 backdrop-blur-xl px-4 sm:px-6 py-3 sm:py-4">
+      <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
         <a
           href="https://glintbase.dev"
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-3 group"
+          className="flex items-center gap-2 sm:gap-3 group shrink-0"
         >
           <div className="transition-transform duration-500 group-hover:rotate-12">
-            <GlintbaseLogo size={28} />
+            <GlintbaseLogo size={24} />
           </div>
-          <span className="text-sm font-black tracking-[0.25em] uppercase text-[#F1F5F9]">
+          <span className="text-xs sm:text-sm font-black tracking-[0.2em] uppercase text-[#F1F5F9]">
             Glint<span className="text-white/25">base</span>
           </span>
         </a>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3 sm:gap-6 shrink-0">
           <Link
             href="/leaderboard"
-            className="text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
+            className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
           >
             Leaderboard
           </Link>
@@ -88,9 +88,9 @@ function Navbar() {
             href="https://glintbase.dev"
             target="_blank"
             rel="noreferrer"
-            className="bg-[#FF3300] text-white font-black text-[10px] uppercase tracking-widest px-4 py-2 rounded-lg hover:bg-[#FF3300]/90 transition-all shadow-[0_0_20px_rgba(255,51,0,0.25)] flex items-center gap-2"
+            className="bg-[#FF3300] text-white font-black text-[9px] sm:text-[10px] uppercase tracking-widest px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg hover:bg-[#FF3300]/90 transition-all shadow-[0_0_20px_rgba(255,51,0,0.25)] flex items-center gap-1.5 whitespace-nowrap"
           >
-            Join Waitlist <ArrowRight size={12} />
+            Join Waitlist <ArrowRight size={11} />
           </a>
         </div>
       </div>
@@ -498,7 +498,7 @@ export default function Home() {
                 Free Public Tool · Powered by Glintbase
               </div>
  
-              <h1 className="text-5xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[1.15] text-white mb-6">
+              <h1 className="text-3xl sm:text-5xl md:text-6xl lg:text-7xl font-black tracking-tight leading-[1.15] text-white mb-6">
                 Analyze How{" "}
                 <span className="text-[#FF3300] drop-shadow-[0_0_30px_rgba(255,51,0,0.5)]">
                   AI Agents
@@ -507,14 +507,14 @@ export default function Home() {
                 Experience Your Product
               </h1>
 
-              <p className="text-base md:text-lg text-white/40 mb-10 max-w-xl leading-relaxed">
+              <p className="text-sm sm:text-base md:text-lg text-white/40 mb-8 sm:mb-10 max-w-xl leading-relaxed">
                 Discover your machine-readable entrypoints, build product context maps, and measure execution confidence.
               </p>
 
               {/* URL Input */}
               <form onSubmit={handleScan} className="w-full">
                 <div className="relative group w-full">
-                  <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none text-white/20 group-focus-within:text-[#FF3300] transition-colors duration-300">
+                  <div className="absolute inset-y-0 left-0 pl-4 sm:pl-5 flex items-center pointer-events-none text-white/20 group-focus-within:text-[#FF3300] transition-colors duration-300">
                     <Search size={18} />
                   </div>
                   <input
@@ -524,12 +524,12 @@ export default function Home() {
                     placeholder="https://yourproduct.com"
                     required
                     disabled={isScanning}
-                    className="w-full bg-white/[0.03] border-2 border-white/10 text-white text-base rounded-xl pl-12 pr-36 py-5 focus:outline-none focus:border-[#FF3300]/60 focus:bg-white/[0.05] transition-all font-mono placeholder:text-white/20 disabled:opacity-50"
+                    className="w-full bg-white/[0.03] border-2 border-white/10 text-white text-sm sm:text-base rounded-xl pl-11 sm:pl-12 pr-28 sm:pr-36 py-4 sm:py-5 focus:outline-none focus:border-[#FF3300]/60 focus:bg-white/[0.05] transition-all font-mono placeholder:text-white/20 disabled:opacity-50"
                   />
                   <button
                     type="submit"
                     disabled={isScanning}
-                    className="absolute inset-y-2 right-2 bg-[#FF3300] text-white font-black text-xs uppercase tracking-[0.2em] px-5 rounded-lg shadow-[0_0_20px_rgba(255,51,0,0.3)] hover:shadow-[0_0_30px_rgba(255,51,0,0.5)] hover:bg-[#FF3300]/90 transition-all disabled:bg-white/10 disabled:text-white/40 disabled:cursor-not-allowed disabled:shadow-none"
+                    className="absolute inset-y-2 right-2 bg-[#FF3300] text-white font-black text-[10px] sm:text-xs uppercase tracking-[0.15em] sm:tracking-[0.2em] px-3.5 sm:px-5 rounded-lg shadow-[0_0_20px_rgba(255,51,0,0.3)] hover:shadow-[0_0_30px_rgba(255,51,0,0.5)] hover:bg-[#FF3300]/90 transition-all disabled:bg-white/10 disabled:text-white/40 disabled:cursor-not-allowed disabled:shadow-none"
                   >
                     {isScanning ? "Scanning..." : "Scan"}
                   </button>

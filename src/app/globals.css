@@ -50,11 +50,20 @@
   .glint-card {
     border: 1px solid rgba(255, 51, 0, 0.16) !important;
     box-shadow: 0 0 22px -5px rgba(255, 51, 0, 0.14), inset 0 0 10px -2px rgba(255, 51, 0, 0.04) !important;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s ease, box-shadow 0.3s ease !important;
   }
   .glint-card:hover {
     border: 1px solid rgba(255, 51, 0, 0.32) !important;
     box-shadow: 0 0 28px -2px rgba(255, 51, 0, 0.22), inset 0 0 14px -1px rgba(255, 51, 0, 0.08) !important;
+  }
+
+  /* GPU Layer Acceleration & Touch Scroll Fixes */
+  .fixed {
+    will-change: transform;
+  }
+  
+  .touch-pan-y {
+    touch-action: pan-y !important;
   }
 
   /* Hide scrollbar utility */
