@@ -49,12 +49,16 @@
   /* Premium Glintbase-style card glow and borders */
   .glint-card {
     border: 1px solid rgba(255, 51, 0, 0.16) !important;
-    box-shadow: 0 0 22px -5px rgba(255, 51, 0, 0.14), inset 0 0 10px -2px rgba(255, 51, 0, 0.04) !important;
-    transition: border-color 0.3s ease, box-shadow 0.3s ease !important;
   }
-  .glint-card:hover {
-    border: 1px solid rgba(255, 51, 0, 0.32) !important;
-    box-shadow: 0 0 28px -2px rgba(255, 51, 0, 0.22), inset 0 0 14px -1px rgba(255, 51, 0, 0.08) !important;
+  @media (hover: hover) and (pointer: fine) {
+    .glint-card {
+      box-shadow: 0 0 22px -5px rgba(255, 51, 0, 0.14), inset 0 0 10px -2px rgba(255, 51, 0, 0.04) !important;
+      transition: border-color 0.3s ease, box-shadow 0.3s ease !important;
+    }
+    .glint-card:hover {
+      border: 1px solid rgba(255, 51, 0, 0.32) !important;
+      box-shadow: 0 0 28px -2px rgba(255, 51, 0, 0.22), inset 0 0 14px -1px rgba(255, 51, 0, 0.08) !important;
+    }
   }
 
   /* Mobile viewport containment & Touch Scroll Fixes */
@@ -138,11 +142,15 @@ html[data-theme="cream"] [class*="bg-white\/"] {
 html[data-theme="cream"] .glint-card {
   background-color: var(--cream-card) !important;
   border: 1px solid rgba(200, 140, 60, 0.25) !important;
-  box-shadow: 0 0 20px -6px rgba(200, 140, 60, 0.18) !important;
 }
-html[data-theme="cream"] .glint-card:hover {
-  border: 1px solid rgba(200, 140, 60, 0.45) !important;
-  box-shadow: 0 0 28px -2px rgba(200, 140, 60, 0.28) !important;
+@media (hover: hover) and (pointer: fine) {
+  html[data-theme="cream"] .glint-card {
+    box-shadow: 0 0 20px -6px rgba(200, 140, 60, 0.18) !important;
+  }
+  html[data-theme="cream"] .glint-card:hover {
+    border: 1px solid rgba(200, 140, 60, 0.45) !important;
+    box-shadow: 0 0 28px -2px rgba(200, 140, 60, 0.28) !important;
+  }
 }
 
 /* keep brand accent colours readable in cream mode */

@@ -816,52 +816,49 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
           {/* Ecosystem Diagnostic Dimensions Breakdown */}
           {isV2 && (
-            <div className="border border-white/[0.06] rounded-2xl overflow-hidden glint-card">
-              <div className="bg-black px-5 py-3 border-b border-white/[0.05] flex items-center justify-between">
+            <div className="border border-white/[0.06] rounded-2xl glint-card">
+              <div className="bg-black px-5 py-3 border-b border-white/[0.05] flex items-center justify-between rounded-t-2xl">
                 <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25">Ecosystem Diagnostic Dimensions</span>
                 <span className="text-[8px] font-mono text-white/25">Click cards to expand/collapse details</span>
               </div>
-              <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 items-start">
+              <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 items-start rounded-b-2xl">
                 {dimensionScores.map((dim, idx) => {
                   const isExpanded = !!expandedDims[idx];
                   return (
                     <div
                       key={idx}
                       onClick={() => toggleDimension(idx)}
-                      className="flex flex-col p-3 sm:p-4 rounded-xl border border-white/[0.03] bg-white/[0.01] hover:bg-white/[0.02] transition-all cursor-pointer select-none h-fit w-full min-w-0 max-w-full overflow-hidden"
+                      className="flex flex-col p-3 sm:p-4 rounded-xl border border-white/[0.03] bg-white/[0.01] hover:bg-white/[0.02] transition-colors cursor-pointer select-none w-full min-w-0"
                     >
-                      <div>
-                        <div className="flex items-center justify-between mb-1.5 font-mono">
-                          <span className="text-[10px] font-black text-white/80 uppercase tracking-wider truncate mr-2" title={dim.name}>
-                            {dim.name}
-                          </span>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-[11px] font-bold text-[#FF3300]">{dim.score}/{dim.maxScore}</span>
-                            {isExpanded ? <ChevronUp size={12} className="text-white/40" /> : <ChevronDown size={12} className="text-white/40" />}
-                          </div>
-                        </div>
-                        
-                        {/* Progress bar */}
-                        <div className="w-full h-1 bg-white/[0.04] rounded-full overflow-hidden mb-2">
-                          <div className="h-full bg-[#FF3300] rounded-full transition-all duration-500" style={{ width: `${(dim.score / dim.maxScore) * 100}%` }} />
+                      <div className="flex items-center justify-between mb-1.5 font-mono">
+                        <span className="text-[10px] font-black text-white/80 uppercase tracking-wider truncate mr-2" title={dim.name}>
+                          {dim.name}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <span className="text-[11px] font-bold text-[#FF3300]">{dim.score}/{dim.maxScore}</span>
+                          {isExpanded ? <ChevronUp size={12} className="text-white/40" /> : <ChevronDown size={12} className="text-white/40" />}
                         </div>
                       </div>
 
-                      <div
-                        className="overflow-hidden mt-2 transition-all duration-200"
-                        style={{ maxHeight: isExpanded ? '400px' : '0px', opacity: isExpanded ? 1 : 0 }}
-                      >
-                        <p className="text-[9px] text-white/40 leading-normal mb-3">{dim.description}</p>
-                        
-                        <div className="space-y-1.5 border-t border-white/[0.04] pt-2.5">
-                          {dim.observations.map((obs, oIdx) => (
-                            <div key={oIdx} className="flex items-start gap-1.5 text-[8px] font-mono text-white/30 leading-normal">
-                              <span className="text-[#FF3300] flex-shrink-0">•</span>
-                              <span>{obs}</span>
-                            </div>
-                          ))}
-                        </div>
+                      {/* Progress bar — no transition to avoid GPU layer promotion */}
+                      <div className="w-full h-1 bg-white/[0.04] rounded-full overflow-hidden mb-2">
+                        <div className="h-full bg-[#FF3300] rounded-full" style={{ width: `${(dim.score / dim.maxScore) * 100}%` }} />
                       </div>
+
+                      {/* Accordion — conditional render, never in DOM when collapsed */}
+                      {isExpanded && (
+                        <div className="mt-2">
+                          <p className="text-[9px] text-white/40 leading-normal mb-3">{dim.description}</p>
+                          <div className="space-y-1.5 border-t border-white/[0.04] pt-2.5">
+                            {dim.observations.map((obs, oIdx) => (
+                              <div key={oIdx} className="flex items-start gap-1.5 text-[8px] font-mono text-white/30 leading-normal">
+                                <span className="text-[#FF3300] flex-shrink-0">•</span>
+                                <span>{obs}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1020,51 +1017,50 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                       </div>
                     </button>
 
-                    <div
-                      className="border-t border-white/5 bg-black/40 overflow-hidden transition-all duration-200"
-                      style={{ maxHeight: isExpanded ? '600px' : '0px', opacity: isExpanded ? 1 : 0 }}
-                    >
-                      <div className="p-4 space-y-4">
-                        {page.headings?.length > 0 && (
-                          <div className="space-y-1.5">
-                            <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Discovered Headings</h5>
-                            <div className="flex flex-wrap gap-2">
-                              {page.headings.map((h: string, hIdx: number) => (
-                                <span key={hIdx} className="text-[10px] font-sans text-white/50 bg-white/5 border border-white/[0.03] rounded-md px-2 py-0.5">
-                                  {h}
-                                </span>
-                              ))}
+                    {isExpanded && (
+                      <div className="border-t border-white/5 bg-black/40">
+                        <div className="p-4 space-y-4">
+                          {page.headings?.length > 0 && (
+                            <div className="space-y-1.5">
+                              <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Discovered Headings</h5>
+                              <div className="flex flex-wrap gap-2">
+                                {page.headings.map((h: string, hIdx: number) => (
+                                  <span key={hIdx} className="text-[10px] font-sans text-white/50 bg-white/5 border border-white/[0.03] rounded-md px-2 py-0.5">
+                                    {h}
+                                  </span>
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {page.codeBlocks?.length > 0 ? (
-                          <div className="space-y-3">
-                            <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Extracted Code Blocks</h5>
-                            <div className="space-y-2">
-                              {page.codeBlocks.map((b: any, bIdx: number) => (
-                                <div key={bIdx} className="relative rounded-lg border border-white/5 bg-black overflow-hidden group">
-                                  <div className="bg-white/5 px-3 py-1 flex items-center justify-between border-b border-white/5 text-[9px] font-mono text-white/40 uppercase">
-                                    <span>{b.lang || 'text'}</span>
-                                    <button
-                                      onClick={() => handleCopy(b.code, `code-${pIdx}-${bIdx}`)}
-                                      className="hover:text-white transition-colors"
-                                    >
-                                      {copiedId === `code-${pIdx}-${bIdx}` ? 'Copied' : 'Copy'}
-                                    </button>
+                          {page.codeBlocks?.length > 0 ? (
+                            <div className="space-y-3">
+                              <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Extracted Code Blocks</h5>
+                              <div className="space-y-2">
+                                {page.codeBlocks.map((b: any, bIdx: number) => (
+                                  <div key={bIdx} className="relative rounded-lg border border-white/5 bg-black overflow-hidden group">
+                                    <div className="bg-white/5 px-3 py-1 flex items-center justify-between border-b border-white/5 text-[9px] font-mono text-white/40 uppercase">
+                                      <span>{b.lang || 'text'}</span>
+                                      <button
+                                        onClick={() => handleCopy(b.code, `code-${pIdx}-${bIdx}`)}
+                                        className="hover:text-white transition-colors"
+                                      >
+                                        {copiedId === `code-${pIdx}-${bIdx}` ? 'Copied' : 'Copy'}
+                                      </button>
+                                    </div>
+                                    <pre className="p-3 text-[10px] font-mono text-white/60 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-40">
+                                      {b.code}
+                                    </pre>
                                   </div>
-                                  <pre className="p-3 text-[10px] font-mono text-white/60 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-40">
-                                    {b.code}
-                                  </pre>
-                                </div>
-                              ))}
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="text-[10px] font-mono text-white/20 italic">No code blocks extracted on this page.</div>
-                        )}
+                          ) : (
+                            <div className="text-[10px] font-mono text-white/20 italic">No code blocks extracted on this page.</div>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 );
               })}
