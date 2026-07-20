@@ -608,7 +608,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
   return (
     <>
-      <div className="w-full animate-fade-in px-4 md:px-8 max-w-7xl mx-auto mt-8 mb-16 space-y-6" data-theme={isDark ? 'dark' : 'cream'}>
+      <div className="w-full max-w-full overflow-x-hidden animate-fade-in px-2 sm:px-4 md:px-8 max-w-7xl mx-auto mt-4 sm:mt-8 mb-16 space-y-6" data-theme={isDark ? 'dark' : 'cream'}>
 
         {/* ——— Dashboard Header ——— */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-5 gap-4">
@@ -822,14 +822,14 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                 <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25">Ecosystem Diagnostic Dimensions</span>
                 <span className="text-[8px] font-mono text-white/25">Click cards to expand/collapse details</span>
               </div>
-              <div className="bg-black p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4 items-start">
+              <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 items-start">
                 {dimensionScores.map((dim, idx) => {
                   const isExpanded = !!expandedDims[idx];
                   return (
                     <div
                       key={idx}
                       onClick={() => toggleDimension(idx)}
-                      className="flex flex-col p-4 rounded-xl border border-white/[0.03] bg-white/[0.01] hover:bg-white/[0.02] transition-all cursor-pointer select-none h-fit"
+                      className="flex flex-col p-3 sm:p-4 rounded-xl border border-white/[0.03] bg-white/[0.01] hover:bg-white/[0.02] transition-all cursor-pointer select-none h-fit w-full min-w-0 max-w-full overflow-hidden"
                     >
                       <div>
                         <div className="flex items-center justify-between mb-1.5 font-mono">

@@ -179,14 +179,20 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [showOrphans, setShowOrphans] = useState(true);
-  const [containerWidth, setContainerWidth] = useState(800);
+  const [containerWidth, setContainerWidth] = useState<number>(() =>
+    typeof window !== "undefined" ? Math.min(window.innerWidth - 32, 800) : 360
+  );
+  const [useInteractiveCanvas, setUseInteractiveCanvas] = useState(false);
   const isMobile = containerWidth < 768;
 
-  // Responsive width
+  // Responsive width observer
   useEffect(() => {
     if (!containerRef.current) return;
     const obs = new ResizeObserver(entries => {
-      setContainerWidth(entries[0].contentRect.width);
+      const measured = entries[0].contentRect.width;
+      if (measured > 0) {
+        setContainerWidth(measured);
+      }
     });
     obs.observe(containerRef.current);
     return () => obs.disconnect();
@@ -522,32 +528,129 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
         </div>
       </div>
 
-      {/* Canvas */}
-      <div ref={containerRef} className="relative w-full touch-pan-y" style={{ height: isMobile ? 340 : 520 }}>
+      {/* Canvas or Mobile SVG Renderer */}
+      <div ref={containerRef} className="relative w-full overflow-hidden" style={{ height: isMobile ? 360 : 520 }}>
         {hasData ? (
-          <ForceGraph2D
-            ref={fgRef}
-            width={containerWidth}
-            height={isMobile ? 340 : 520}
-            graphData={filteredData as any}
-            nodeId="id"
-            nodeLabel={() => ""}
-            nodeVal={nodeVal as any}
-            nodeColor={nodeColor as any}
-            nodeCanvasObjectMode={() => "replace"}
-            nodeCanvasObject={nodeCanvasObject as any}
-            linkColor={linkColor as any}
-            linkWidth={() => 0.65}
-            linkDirectionalArrowLength={0}
-            onNodeClick={handleNodeClick as any}
-            onNodeHover={(n: any) => setHoverNode(n)}
-            onNodeDragEnd={handleNodeDragEnd as any}
-            onEngineStop={handleEngineStop}
-            cooldownTicks={isMobile ? 60 : 220}
-            d3AlphaDecay={isMobile ? 0.04 : 0.016}
-            d3VelocityDecay={0.42}
-            backgroundColor={isDark ? '#000000' : '#F0E8DA'}
-          />
+          isMobile && !useInteractiveCanvas ? (
+            /* Mobile-Native Fast SVG Graph View — Zero GPU static noise & 60fps scrolling */
+            <div className="relative w-full h-full flex flex-col justify-between p-4 bg-black/40 font-mono select-none">
+              {/* Header bar */}
+              <div className="flex items-center justify-between gap-2 z-10">
+                <span className="text-[9px] text-white/40 uppercase tracking-widest font-bold">
+                  Mobile Topology Graph ({filteredData.nodes.length} nodes)
+                </span>
+                <button
+                  onClick={() => setUseInteractiveCanvas(true)}
+                  className="text-[9px] font-bold uppercase tracking-wider text-[#FF3300] bg-[#FF3300]/10 border border-[#FF3300]/30 hover:bg-[#FF3300]/20 rounded px-2.5 py-1 transition-all"
+                >
+                  ⚡ Launch Force Canvas
+                </button>
+              </div>
+
+              {/* Vector SVG Graph View */}
+              <div className="relative flex-1 w-full my-2 overflow-hidden flex items-center justify-center">
+                <svg className="w-full h-full max-h-[260px]" viewBox="0 0 400 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  {/* SVG Edges */}
+                  {filteredData.links.slice(0, 30).map((l, i) => {
+                    const srcIdx = filteredData.nodes.findIndex(n => n.id === (typeof l.source === 'object' ? (l.source as any).id : l.source));
+                    const tgtIdx = filteredData.nodes.findIndex(n => n.id === (typeof l.target === 'object' ? (l.target as any).id : l.target));
+                    if (srcIdx < 0 || tgtIdx < 0) return null;
+
+                    const total = Math.min(filteredData.nodes.length, 16);
+                    const sx = 200 + 130 * Math.cos((srcIdx % total) * (2 * Math.PI / total));
+                    const sy = 120 + 85 * Math.sin((srcIdx % total) * (2 * Math.PI / total));
+                    const tx = 200 + 130 * Math.cos((tgtIdx % total) * (2 * Math.PI / total));
+                    const ty = 120 + 85 * Math.sin((tgtIdx % total) * (2 * Math.PI / total));
+
+                    return (
+                      <line
+                        key={i}
+                        x1={sx} y1={sy} x2={tx} y2={ty}
+                        stroke="rgba(255,255,255,0.12)"
+                        strokeWidth="1"
+                        strokeDasharray={i % 3 === 0 ? "3 3" : undefined}
+                      />
+                    );
+                  })}
+
+                  {/* Central Hub Node */}
+                  <circle cx="200" cy="120" r="12" fill="#FF3300" opacity="0.9" />
+                  <circle cx="200" cy="120" r="18" fill="none" stroke="#FF3300" strokeWidth="1" opacity="0.4" />
+                  <text x="200" y="148" textAnchor="middle" fill="#FFFFFF" fontSize="9" fontWeight="bold" fontFamily="monospace">
+                    {filteredData.nodes[0]?.label ? (filteredData.nodes[0].label.length > 18 ? filteredData.nodes[0].label.slice(0, 16) + "…" : filteredData.nodes[0].label) : "Root Hub"}
+                  </text>
+
+                  {/* Surrounding Nodes */}
+                  {filteredData.nodes.slice(1, 15).map((node, i) => {
+                    const total = Math.min(filteredData.nodes.length - 1, 14);
+                    const angle = i * (2 * Math.PI / total);
+                    const cx = 200 + 130 * Math.cos(angle);
+                    const cy = 120 + 85 * Math.sin(angle);
+                    const color = typeColor(node.type);
+                    const isSelected = selectedNode?.id === node.id;
+
+                    return (
+                      <g key={node.id} onClick={() => { setSelectedNode(node); onNodeClick?.(node.id); }} className="cursor-pointer">
+                        <circle cx={cx} cy={cy} r={isSelected ? "9" : "6"} fill={color} opacity="0.9" />
+                        {isSelected && <circle cx={cx} cy={cy} r="12" fill="none" stroke="#FFFFFF" strokeWidth="1.5" />}
+                        <text
+                          x={cx}
+                          y={cy + 14}
+                          textAnchor="middle"
+                          fill="rgba(255,255,255,0.75)"
+                          fontSize="7"
+                          fontFamily="monospace"
+                        >
+                          {node.label.length > 12 ? node.label.slice(0, 10) + "…" : node.label}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </svg>
+              </div>
+
+              {/* Node tap helper */}
+              <div className="text-center text-[9px] text-white/30 tracking-wider">
+                Tap nodes to inspect details · Fast SVG graph mode
+              </div>
+            </div>
+          ) : (
+            <>
+              {isMobile && useInteractiveCanvas && (
+                <div className="absolute top-2 left-2 z-20">
+                  <button
+                    onClick={() => setUseInteractiveCanvas(false)}
+                    className="text-[8px] font-bold uppercase tracking-wider text-white/60 bg-black/80 border border-white/20 px-2 py-1 rounded backdrop-blur"
+                  >
+                    ← Switch to Mobile SVG
+                  </button>
+                </div>
+              )}
+              <ForceGraph2D
+                ref={fgRef}
+                width={Math.min(containerWidth || 360, typeof window !== "undefined" ? window.innerWidth - 32 : 360)}
+                height={isMobile ? 340 : 520}
+                graphData={filteredData as any}
+                nodeId="id"
+                nodeLabel={() => ""}
+                nodeVal={nodeVal as any}
+                nodeColor={nodeColor as any}
+                nodeCanvasObjectMode={() => "replace"}
+                nodeCanvasObject={nodeCanvasObject as any}
+                linkColor={linkColor as any}
+                linkWidth={() => 0.65}
+                linkDirectionalArrowLength={0}
+                onNodeClick={handleNodeClick as any}
+                onNodeHover={(n: any) => setHoverNode(n)}
+                onNodeDragEnd={handleNodeDragEnd as any}
+                onEngineStop={handleEngineStop}
+                cooldownTicks={isMobile ? 50 : 220}
+                d3AlphaDecay={isMobile ? 0.05 : 0.016}
+                d3VelocityDecay={0.42}
+                backgroundColor={isDark ? '#000000' : '#F0E8DA'}
+              />
+            </>
+          )
         ) : (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/35 font-mono text-[11px]">
             {debouncedQuery ? `No nodes matching "${debouncedQuery}"` : "No graph data available for this scan"}

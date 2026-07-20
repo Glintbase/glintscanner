@@ -120,19 +120,19 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
   };
 
   return (
-    <main className="flex-1 flex flex-col items-center pt-24 pb-12 px-4 w-full">
+    <main className="flex-1 flex flex-col items-center pt-20 sm:pt-24 pb-12 px-3 sm:px-4 w-full max-w-full overflow-x-hidden">
       {/* Structured Data */}
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      <div className="w-full max-w-3xl mb-8 flex justify-between items-end">
+      <div className="w-full max-w-3xl mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
         <div>
-          <h1 className="text-3xl font-black text-white uppercase tracking-tight mb-2">Scan Results: {url}</h1>
-          <p className="text-white/40 font-mono text-xs">Vanity URL: scan.glintbase.dev/scan/{params.slug}</p>
+          <h1 className="text-xl sm:text-3xl font-black text-white uppercase tracking-tight mb-2 break-all">Scan Results: {url}</h1>
+          <p className="text-white/40 font-mono text-[10px] sm:text-xs">Vanity URL: scan.glintbase.dev/scan/{params.slug}</p>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 sm:gap-6 shrink-0">
           <Link 
             href="/leaderboard"
             className="text-white/40 hover:text-white flex items-center gap-2 font-bold transition-colors uppercase tracking-wider text-xs"
