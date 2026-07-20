@@ -120,7 +120,7 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
   };
 
   return (
-    <main className="flex-1 flex flex-col items-center pt-20 sm:pt-24 pb-12 px-3 sm:px-4 w-full max-w-full overflow-x-hidden">
+    <main className="flex-1 flex flex-col items-center pt-20 sm:pt-24 pb-12 px-0 sm:px-4 w-full min-w-0 max-w-full">
       {/* Structured Data */}
       <script
         type="application/ld+json"

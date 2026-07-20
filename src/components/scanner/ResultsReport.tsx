@@ -607,7 +607,11 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
   return (
     <>
-      <div className="w-full max-w-full overflow-x-hidden px-2 sm:px-4 md:px-8 max-w-7xl mx-auto mt-4 sm:mt-8 mb-16 space-y-6" data-theme={isDark ? 'dark' : 'cream'}>
+      <div
+        className="w-full min-w-0 max-w-7xl mx-auto px-3 sm:px-4 md:px-8 mt-4 sm:mt-8 mb-16 space-y-6"
+        data-theme={isDark ? 'dark' : 'cream'}
+        style={{ overflowX: 'clip' }}
+      >
 
         {/* ——— Dashboard Header ——— */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-5 gap-4">
@@ -814,46 +818,81 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
             )}
           </div>
 
-          {/* Ecosystem Diagnostic Dimensions Breakdown */}
+          {/* Ecosystem Diagnostic Dimensions Breakdown
+              Mobile: isolate from canvas compositing; avoid overflow-x clip of labels */}
           {isV2 && (
-            <div className="border border-white/[0.06] rounded-2xl glint-card">
-              <div className="bg-black px-5 py-3 border-b border-white/[0.05] flex items-center justify-between rounded-t-2xl">
-                <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25">Ecosystem Diagnostic Dimensions</span>
-                <span className="text-[8px] font-mono text-white/25">Click cards to expand/collapse details</span>
+            <div className="border border-white/[0.06] rounded-2xl glint-card min-w-0 gpu-isolate relative z-[1]">
+              <div className="bg-black px-4 sm:px-5 py-3 border-b border-white/[0.05] flex items-center justify-between gap-2 rounded-t-2xl min-w-0">
+                <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25 truncate">
+                  Ecosystem Diagnostic Dimensions
+                </span>
+                <span className="text-[8px] font-mono text-white/25 shrink-0 hidden sm:inline">
+                  Tap cards to expand
+                </span>
               </div>
-              <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 items-start rounded-b-2xl">
+              {/*
+                Single column on narrow phones — multi-col grids + expand height
+                animations were a major source of Android Chrome GPU glitches.
+              */}
+              <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 items-stretch rounded-b-2xl min-w-0">
                 {dimensionScores.map((dim, idx) => {
                   const isExpanded = !!expandedDims[idx];
+                  const pct = dim.maxScore > 0 ? Math.min(100, Math.max(0, (dim.score / dim.maxScore) * 100)) : 0;
                   return (
                     <div
                       key={idx}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => toggleDimension(idx)}
-                      className="flex flex-col p-3 sm:p-4 rounded-xl border border-white/[0.03] bg-white/[0.01] hover:bg-white/[0.02] transition-colors cursor-pointer select-none w-full min-w-0"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleDimension(idx);
+                        }
+                      }}
+                      className="dim-card flex flex-col p-3.5 sm:p-4 rounded-xl border border-white/[0.06] bg-white/[0.01] active:bg-white/[0.03] sm:hover:bg-white/[0.02] cursor-pointer select-none w-full min-w-0"
                     >
-                      <div className="flex items-center justify-between mb-1.5 font-mono">
-                        <span className="text-[10px] font-black text-white/80 uppercase tracking-wider truncate mr-2" title={dim.name}>
+                      <div className="flex items-start justify-between gap-2 mb-2 font-mono min-w-0">
+                        <span
+                          className="text-[10px] sm:text-[11px] font-black text-white/85 uppercase tracking-wide leading-snug min-w-0 flex-1 break-words"
+                          title={dim.name}
+                        >
                           {dim.name}
                         </span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-[11px] font-bold text-[#FF3300]">{dim.score}/{dim.maxScore}</span>
-                          {isExpanded ? <ChevronUp size={12} className="text-white/40" /> : <ChevronDown size={12} className="text-white/40" />}
+                        <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                          <span className="text-[11px] font-bold text-[#FF3300] tabular-nums whitespace-nowrap">
+                            {dim.score}/{dim.maxScore}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronUp size={12} className="text-white/40" />
+                          ) : (
+                            <ChevronDown size={12} className="text-white/40" />
+                          )}
                         </div>
                       </div>
 
-                      {/* Progress bar — no transition to avoid GPU layer promotion */}
-                      <div className="w-full h-1 bg-white/[0.04] rounded-full overflow-hidden mb-2">
-                        <div className="h-full bg-[#FF3300] rounded-full" style={{ width: `${(dim.score / dim.maxScore) * 100}%` }} />
+                      {/* Progress bar — pure width style, no CSS transition */}
+                      <div className="w-full h-1 bg-white/[0.06] rounded-full mb-1 min-w-0">
+                        <div
+                          className="h-full bg-[#FF3300] rounded-full"
+                          style={{ width: `${pct}%`, maxWidth: '100%' }}
+                        />
                       </div>
 
-                      {/* Accordion — conditional render, never in DOM when collapsed */}
+                      {/* Accordion: mount only when open — no framer-motion height anim */}
                       {isExpanded && (
-                        <div className="mt-2">
-                          <p className="text-[9px] text-white/40 leading-normal mb-3">{dim.description}</p>
-                          <div className="space-y-1.5 border-t border-white/[0.04] pt-2.5">
+                        <div className="mt-2 pt-2 border-t border-white/[0.06] min-w-0">
+                          <p className="text-[9px] text-white/45 leading-relaxed mb-2 break-words">
+                            {dim.description}
+                          </p>
+                          <div className="space-y-1.5">
                             {dim.observations.map((obs, oIdx) => (
-                              <div key={oIdx} className="flex items-start gap-1.5 text-[8px] font-mono text-white/30 leading-normal">
-                                <span className="text-[#FF3300] flex-shrink-0">•</span>
-                                <span>{obs}</span>
+                              <div
+                                key={oIdx}
+                                className="flex items-start gap-1.5 text-[8px] font-mono text-white/35 leading-relaxed min-w-0"
+                              >
+                                <span className="text-[#FF3300] shrink-0">•</span>
+                                <span className="min-w-0 break-words">{obs}</span>
                               </div>
                             ))}
                           </div>
@@ -1068,21 +1107,22 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           </div>
         )}
 
-        {/* ———— KNOWLEDGE GRAPH VISUALIZER ———— */}
+        {/* ———— KNOWLEDGE GRAPH VISUALIZER ————
+            Isolate canvas/SVG so Android Chrome does not composite noise
+            into the Diagnostic Dimensions panel above/below. */}
         {graph && (
-          <div className="bg-black border border-white/5 rounded-2xl p-6 space-y-6 glint-card">
-            <div className="border-b border-white/5 pb-4 flex items-center justify-between">
-              <div>
+          <div className="bg-black border border-white/5 rounded-2xl p-4 sm:p-6 space-y-6 glint-card min-w-0 gpu-isolate relative z-0">
+            <div className="border-b border-white/5 pb-4 flex flex-wrap items-center justify-between gap-2 min-w-0">
+              <div className="min-w-0">
                 <h3 className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Graph Map Overview</h3>
                 <h2 className="text-xl font-black text-white uppercase tracking-tighter mt-1">Knowledge Graph</h2>
               </div>
-              <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/20 uppercase tracking-wider">
+              <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/20 uppercase tracking-wider shrink-0">
                 {graph.nodes.length} Nodes • {graph.edges.length} Edges
               </span>
             </div>
 
-            {/* Knowledge Graph Visualizer component */}
-            <div className="space-y-2">
+            <div className="space-y-2 min-w-0 w-full overflow-hidden rounded-xl">
               <ObsidianGraph3D
                 data={forceGraphData}
                 isDark={isDark}

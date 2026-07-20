@@ -86,7 +86,7 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${plusJakartaSans.variable} ${jetbrainsMono.variable} h-full scroll-smooth`}>
-      <body className="min-h-full flex flex-col bg-black text-[#F1F5F9] font-sans selection:bg-[#FF3300]/30 selection:text-white overflow-x-hidden">
+      <body className="min-h-full flex flex-col w-full min-w-0 bg-black text-[#F1F5F9] font-sans selection:bg-[#FF3300]/30 selection:text-white">
         {children}
       </body>
     </html>

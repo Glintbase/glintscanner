@@ -61,12 +61,27 @@
     }
   }
 
-  /* Mobile viewport containment & Touch Scroll Fixes */
-  html, body {
-    overflow-x: hidden !important;
-    max-width: 100vw !important;
+  /*
+   * Mobile viewport containment
+   * IMPORTANT: do NOT use max-width: 100vw — on mobile Chrome 100vw includes
+   * the scrollbar gutter and can clip content on the left/right edge.
+   */
+  html {
+    overflow-x: clip;
+    width: 100%;
   }
-  
+  body {
+    overflow-x: clip;
+    width: 100%;
+    position: relative;
+  }
+  /* Fallback for older Android WebViews without overflow: clip */
+  @supports not (overflow: clip) {
+    html, body {
+      overflow-x: hidden;
+    }
+  }
+
   .touch-pan-y {
     touch-action: pan-y !important;
   }
@@ -79,13 +94,35 @@
     -ms-overflow-style: none;  /* IE and Edge */
     scrollbar-width: none;  /* Firefox */
   }
+
+  /*
+   * Isolate heavy/canvas regions so Android Chrome GPU compositing
+   * does not smear noise into neighboring cards (Diagnostic Dimensions).
+   */
+  .gpu-isolate {
+    isolation: isolate;
+    contain: layout paint style;
+    position: relative;
+    z-index: 0;
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+  }
+
+  .dim-card {
+    min-width: 0;
+    max-width: 100%;
+    /* Avoid promoting every card to its own layer on mobile */
+    transform: none;
+    will-change: auto;
+    backface-visibility: hidden;
+  }
 }
 
-/* Global scrollbar hiding for slick dashboard interface */
+/* Global scrollbar hiding for slick dashboard interface (not on *) */
 ::-webkit-scrollbar {
   display: none;
 }
-html, body, *, scrollable {
+html, body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }

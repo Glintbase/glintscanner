@@ -179,22 +179,24 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
   const [hoverNode, setHoverNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [showOrphans, setShowOrphans] = useState(true);
-  const [containerWidth, setContainerWidth] = useState<number>(() =>
-    typeof window !== "undefined" ? Math.min(window.innerWidth - 32, 800) : 360
-  );
+  const [containerWidth, setContainerWidth] = useState(320);
   const [useInteractiveCanvas, setUseInteractiveCanvas] = useState(false);
   const isMobile = containerWidth < 768;
 
-  // Responsive width observer
+  // Responsive width observer — only use the container's content box width.
+  // Never seed from window.innerWidth (causes oversized canvas on mobile Chrome).
   useEffect(() => {
     if (!containerRef.current) return;
-    const obs = new ResizeObserver(entries => {
-      const measured = entries[0].contentRect.width;
-      if (measured > 0) {
-        setContainerWidth(measured);
-      }
+    const el = containerRef.current;
+    const apply = (w: number) => {
+      if (w > 0) setContainerWidth(Math.floor(w));
+    };
+    apply(el.getBoundingClientRect().width);
+    const obs = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect?.width ?? 0;
+      apply(measured);
     });
-    obs.observe(containerRef.current);
+    obs.observe(el);
     return () => obs.disconnect();
   }, []);
 
@@ -478,10 +480,19 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
   const hasData = filteredData.nodes.length > 0;
 
   return (
-    <div className="w-full flex flex-col bg-black rounded-xl border border-white/[0.06] overflow-hidden glint-card">
+    <div
+      className="w-full min-w-0 flex flex-col bg-black rounded-xl border border-white/[0.06] overflow-hidden glint-card gpu-isolate"
+      style={{
+        // Hard wall for Android Chrome canvas layer bleed
+        contain: 'layout paint style',
+        isolation: 'isolate',
+        WebkitTransform: 'translateZ(0)',
+        transform: 'translateZ(0)',
+      }}
+    >
 
-      {/* â”€â”€ Control bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */}
-      <div className="flex flex-wrap items-center gap-3 px-4 py-2.5 border-b border-white/[0.05] font-mono">
+      {/* Control bar */}
+      <div className="flex flex-wrap items-center gap-3 px-3 sm:px-4 py-2.5 border-b border-white/[0.05] font-mono min-w-0">
 
         {/* Search */}
         <div className="flex items-center gap-2 bg-white/[0.03] border border-white/[0.07] rounded-lg px-3 py-1.5 min-w-0 w-full max-w-[200px]">
@@ -528,11 +539,23 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
         </div>
       </div>
 
-      {/* Canvas or Mobile SVG Renderer */}
-      <div ref={containerRef} className="relative w-full overflow-hidden" style={{ height: isMobile ? 360 : 520 }}>
+      {/* Canvas or Mobile SVG Renderer — isolated paint container */}
+      <div
+        ref={containerRef}
+        className="relative w-full min-w-0 overflow-hidden"
+        style={{
+          height: isMobile ? 360 : 520,
+          // Avoid contain:size — it can zero out ResizeObserver width on some mobile browsers
+          contain: 'layout paint',
+          isolation: 'isolate',
+          // Prevent canvas from painting outside this box on mobile GPUs
+          clipPath: 'inset(0)',
+          overflow: 'hidden',
+        }}
+      >
         {hasData ? (
           isMobile && !useInteractiveCanvas ? (
-            /* Mobile-Native Fast SVG Graph View — Zero GPU static noise & 60fps scrolling */
+            /* Mobile-Native Fast SVG Graph View — no canvas = no GPU static noise */
             <div className="relative w-full h-full flex flex-col justify-between p-4 bg-black/40 font-mono select-none">
               {/* Header bar */}
               <div className="flex items-center justify-between gap-2 z-10">
@@ -620,35 +643,44 @@ export default function ObsidianGraph3D({ data, isDark = true, onNodeClick }: Ob
                 <div className="absolute top-2 left-2 z-20">
                   <button
                     onClick={() => setUseInteractiveCanvas(false)}
-                    className="text-[8px] font-bold uppercase tracking-wider text-white/60 bg-black/80 border border-white/20 px-2 py-1 rounded backdrop-blur"
+                    className="text-[8px] font-bold uppercase tracking-wider text-white/60 bg-black/90 border border-white/20 px-2 py-1 rounded"
                   >
                     ← Switch to Mobile SVG
                   </button>
                 </div>
               )}
-              <ForceGraph2D
-                ref={fgRef}
-                width={Math.min(containerWidth || 360, typeof window !== "undefined" ? window.innerWidth - 32 : 360)}
-                height={isMobile ? 340 : 520}
-                graphData={filteredData as any}
-                nodeId="id"
-                nodeLabel={() => ""}
-                nodeVal={nodeVal as any}
-                nodeColor={nodeColor as any}
-                nodeCanvasObjectMode={() => "replace"}
-                nodeCanvasObject={nodeCanvasObject as any}
-                linkColor={linkColor as any}
-                linkWidth={() => 0.65}
-                linkDirectionalArrowLength={0}
-                onNodeClick={handleNodeClick as any}
-                onNodeHover={(n: any) => setHoverNode(n)}
-                onNodeDragEnd={handleNodeDragEnd as any}
-                onEngineStop={handleEngineStop}
-                cooldownTicks={isMobile ? 50 : 220}
-                d3AlphaDecay={isMobile ? 0.05 : 0.016}
-                d3VelocityDecay={0.42}
-                backgroundColor={isDark ? '#000000' : '#F0E8DA'}
-              />
+              {/*
+                Cap canvas width to measured container only — never window.innerWidth.
+                Oversized canvases on Android cause horizontal overflow + compositor glitches
+                that appear as blue noise squares over cards above this section.
+              */}
+              <div className="w-full h-full overflow-hidden" style={{ maxWidth: '100%' }}>
+                <ForceGraph2D
+                  ref={fgRef}
+                  width={Math.max(280, Math.floor(containerWidth || 320))}
+                  height={isMobile ? 340 : 520}
+                  graphData={filteredData as any}
+                  nodeId="id"
+                  nodeLabel={() => ""}
+                  nodeVal={nodeVal as any}
+                  nodeColor={nodeColor as any}
+                  nodeCanvasObjectMode={() => "replace"}
+                  nodeCanvasObject={nodeCanvasObject as any}
+                  linkColor={linkColor as any}
+                  linkWidth={() => 0.65}
+                  linkDirectionalArrowLength={0}
+                  onNodeClick={handleNodeClick as any}
+                  onNodeHover={(n: any) => setHoverNode(n)}
+                  onNodeDragEnd={handleNodeDragEnd as any}
+                  onEngineStop={handleEngineStop}
+                  cooldownTicks={isMobile ? 40 : 220}
+                  d3AlphaDecay={isMobile ? 0.06 : 0.016}
+                  d3VelocityDecay={0.45}
+                  enableZoomInteraction={!isMobile || useInteractiveCanvas}
+                  enablePanInteraction={!isMobile || useInteractiveCanvas}
+                  backgroundColor={isDark ? '#000000' : '#F0E8DA'}
+                />
+              </div>
             </>
           )
         ) : (
