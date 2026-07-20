@@ -1,6 +1,5 @@
 "use client";
 
-import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, XCircle, Copy, AlertTriangle, Share2, X, ExternalLink, Terminal, ShieldCheck, Trophy, Sparkles, ChevronDown, ChevronUp, FileText, Sun, Moon, ScanSearch } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
 import { calculateScoreDimensions, ARS_VERSION, type ScoreDimension } from '@/lib/scanner/v2/scoring';
@@ -10,9 +9,9 @@ import dynamic from 'next/dynamic';
 const ObsidianGraph3D = dynamic(() => import('./ObsidianGraph3D'), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-[500px] flex flex-col items-center justify-center text-[10px] font-mono text-white/30 bg-black rounded-xl border border-white/5 gap-2">
+    <div className="w-full h-[360px] sm:h-[500px] flex flex-col items-center justify-center text-[10px] font-mono text-white/30 bg-black rounded-xl border border-white/5 gap-2">
       <div className="w-4 h-4 rounded-full border border-white/20 border-t-[#FF3300] animate-spin"></div>
-      Initializing WebGL Graph Engine...
+      Initializing graph engine...
     </div>
   ),
 });
@@ -608,7 +607,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
   return (
     <>
-      <div className="w-full max-w-full overflow-x-hidden animate-fade-in px-2 sm:px-4 md:px-8 max-w-7xl mx-auto mt-4 sm:mt-8 mb-16 space-y-6" data-theme={isDark ? 'dark' : 'cream'}>
+      <div className="w-full max-w-full overflow-x-hidden px-2 sm:px-4 md:px-8 max-w-7xl mx-auto mt-4 sm:mt-8 mb-16 space-y-6" data-theme={isDark ? 'dark' : 'cream'}>
 
         {/* ——— Dashboard Header ——— */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/5 pb-5 gap-4">
@@ -693,9 +692,9 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           <div className="flex flex-col lg:flex-row items-stretch border border-white/[0.06] rounded-2xl overflow-hidden glint-card">
             <div className="relative flex flex-col items-center justify-center px-6 py-6 sm:px-10 sm:py-10 bg-black min-w-full lg:min-w-[200px] border-b lg:border-b-0 lg:border-r border-white/[0.06]">
               <div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 50%, ${score >= 90 ? 'rgba(255,51,0,0.10)' : score >= 70 ? 'rgba(34,211,238,0.08)' : score >= 40 ? 'rgba(139,92,246,0.08)' : 'rgba(255,51,0,0.06)'} 0%, transparent 70%)` }} />
-              <motion.div className={`text-6xl sm:text-7xl lg:text-[88px] leading-none font-black font-mono tracking-tighter ${tierColor}`} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.6, ease: 'easeOut' }}>
+              <div className={`text-6xl sm:text-7xl lg:text-[88px] leading-none font-black font-mono tracking-tighter ${tierColor}`}>
                 {score}
-              </motion.div>
+              </div>
               <div className="text-[9px] font-mono font-bold tracking-[0.3em] text-white/25 uppercase mt-1">/ 100</div>
               <div className={`mt-3 text-[9px] font-mono font-bold tracking-widest uppercase px-2.5 py-1 rounded border ${score >= 90 ? 'text-[#FF3300] border-[#FF3300]/30 bg-[#FF3300]/[0.08]' : score >= 70 ? 'text-[#22D3EE] border-[#22D3EE]/30 bg-[#22D3EE]/[0.08]' : score >= 40 ? 'text-[#8B5CF6] border-[#8B5CF6]/30 bg-[#8B5CF6]/[0.08]' : 'text-[#FF3300]/70 border-[#FF3300]/20 bg-[#FF3300]/[0.05]'}`}>{tierText}</div>
             </div>
@@ -848,28 +847,21 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                         </div>
                       </div>
 
-                      <AnimatePresence initial={false}>
-                        {isExpanded && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={{ duration: 0.2 }}
-                            className="overflow-hidden mt-2"
-                          >
-                            <p className="text-[9px] text-white/40 leading-normal mb-3">{dim.description}</p>
-                            
-                            <div className="space-y-1.5 border-t border-white/[0.04] pt-2.5">
-                              {dim.observations.map((obs, oIdx) => (
-                                <div key={oIdx} className="flex items-start gap-1.5 text-[8px] font-mono text-white/30 leading-normal">
-                                  <span className="text-[#FF3300] flex-shrink-0">•</span>
-                                  <span>{obs}</span>
-                                </div>
-                              ))}
+                      <div
+                        className="overflow-hidden mt-2 transition-all duration-200"
+                        style={{ maxHeight: isExpanded ? '400px' : '0px', opacity: isExpanded ? 1 : 0 }}
+                      >
+                        <p className="text-[9px] text-white/40 leading-normal mb-3">{dim.description}</p>
+                        
+                        <div className="space-y-1.5 border-t border-white/[0.04] pt-2.5">
+                          {dim.observations.map((obs, oIdx) => (
+                            <div key={oIdx} className="flex items-start gap-1.5 text-[8px] font-mono text-white/30 leading-normal">
+                              <span className="text-[#FF3300] flex-shrink-0">•</span>
+                              <span>{obs}</span>
                             </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
@@ -1028,57 +1020,51 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                       </div>
                     </button>
 
-                    <AnimatePresence>
-                      {isExpanded && (
-                        <motion.div
-                          initial={{ height: 0 }}
-                          animate={{ height: 'auto' }}
-                          exit={{ height: 0 }}
-                          className="border-t border-white/5 bg-black/40 overflow-hidden"
-                        >
-                          <div className="p-4 space-y-4">
-                            {page.headings?.length > 0 && (
-                              <div className="space-y-1.5">
-                                <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Discovered Headings</h5>
-                                <div className="flex flex-wrap gap-2">
-                                  {page.headings.map((h: string, hIdx: number) => (
-                                    <span key={hIdx} className="text-[10px] font-sans text-white/50 bg-white/5 border border-white/[0.03] rounded-md px-2 py-0.5">
-                                      {h}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {page.codeBlocks?.length > 0 ? (
-                              <div className="space-y-3">
-                                <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Extracted Code Blocks</h5>
-                                <div className="space-y-2">
-                                  {page.codeBlocks.map((b: any, bIdx: number) => (
-                                    <div key={bIdx} className="relative rounded-lg border border-white/5 bg-black overflow-hidden group">
-                                      <div className="bg-white/5 px-3 py-1 flex items-center justify-between border-b border-white/5 text-[9px] font-mono text-white/40 uppercase">
-                                        <span>{b.lang || 'text'}</span>
-                                        <button
-                                          onClick={() => handleCopy(b.code, `code-${pIdx}-${bIdx}`)}
-                                          className="hover:text-white transition-colors"
-                                        >
-                                          {copiedId === `code-${pIdx}-${bIdx}` ? 'Copied' : 'Copy'}
-                                        </button>
-                                      </div>
-                                      <pre className="p-3 text-[10px] font-mono text-white/60 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-40">
-                                        {b.code}
-                                      </pre>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-[10px] font-mono text-white/20 italic">No code blocks extracted on this page.</div>
-                            )}
+                    <div
+                      className="border-t border-white/5 bg-black/40 overflow-hidden transition-all duration-200"
+                      style={{ maxHeight: isExpanded ? '600px' : '0px', opacity: isExpanded ? 1 : 0 }}
+                    >
+                      <div className="p-4 space-y-4">
+                        {page.headings?.length > 0 && (
+                          <div className="space-y-1.5">
+                            <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Discovered Headings</h5>
+                            <div className="flex flex-wrap gap-2">
+                              {page.headings.map((h: string, hIdx: number) => (
+                                <span key={hIdx} className="text-[10px] font-sans text-white/50 bg-white/5 border border-white/[0.03] rounded-md px-2 py-0.5">
+                                  {h}
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                        )}
+
+                        {page.codeBlocks?.length > 0 ? (
+                          <div className="space-y-3">
+                            <h5 className="text-[9px] font-mono font-bold text-[#FF3300] uppercase tracking-wider">Extracted Code Blocks</h5>
+                            <div className="space-y-2">
+                              {page.codeBlocks.map((b: any, bIdx: number) => (
+                                <div key={bIdx} className="relative rounded-lg border border-white/5 bg-black overflow-hidden group">
+                                  <div className="bg-white/5 px-3 py-1 flex items-center justify-between border-b border-white/5 text-[9px] font-mono text-white/40 uppercase">
+                                    <span>{b.lang || 'text'}</span>
+                                    <button
+                                      onClick={() => handleCopy(b.code, `code-${pIdx}-${bIdx}`)}
+                                      className="hover:text-white transition-colors"
+                                    >
+                                      {copiedId === `code-${pIdx}-${bIdx}` ? 'Copied' : 'Copy'}
+                                    </button>
+                                  </div>
+                                  <pre className="p-3 text-[10px] font-mono text-white/60 overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-40">
+                                    {b.code}
+                                  </pre>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] font-mono text-white/20 italic">No code blocks extracted on this page.</div>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 );
               })}
