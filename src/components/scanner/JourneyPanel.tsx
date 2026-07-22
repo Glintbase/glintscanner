@@ -283,6 +283,8 @@ export default function JourneyPanel({ journeys }: { journeys: JourneySimulation
     hops: 0
   };
 
+  const isLLMSimulation = traces.some((t) => t.steps?.some((s) => s.nodeId.startsWith('tool:')));
+
   return (
     <div className="mt-6 rounded-2xl border border-white/[0.06] bg-black overflow-hidden glint-card">
 
@@ -293,9 +295,13 @@ export default function JourneyPanel({ journeys }: { journeys: JourneySimulation
             <Bot size={16} className="text-[#8B5CF6]" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white tracking-tight">Agent Journey Pathfinder</h3>
+            <h3 className="text-sm font-bold text-white tracking-tight">
+              {isLLMSimulation ? 'LLM Multi-Agent Journey Simulation' : 'Agent Journey Pathfinder'}
+            </h3>
             <p className="text-[10px] text-white/30 font-mono mt-0.5">
-              Deterministic multi-start traversal (not LLM reasoning) across the knowledge graph
+              {isLLMSimulation
+                ? 'Real LLM tool-calling agent simulation (dynamic reasoning & empirical verification)'
+                : 'Deterministic multi-start traversal (not LLM reasoning) across the knowledge graph'}
             </p>
           </div>
         </div>

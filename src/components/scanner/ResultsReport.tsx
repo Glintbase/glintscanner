@@ -87,6 +87,17 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
   const [reportCopied, setReportCopied] = useState(false);
   const [expandedPageUrl, setExpandedPageUrl] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isDark) {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', 'cream');
+    }
+    return () => {
+      document.documentElement.removeAttribute('data-theme');
+    };
+  }, [isDark]);
+
   const toggleDimension = (idx: number) => {
     setExpandedDims((prev) => ({
       ...prev,
@@ -637,6 +648,18 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
           {/* Top Actions */}
           <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="https://glintbase.dev/enterprise"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-black bg-[#FF3300] hover:bg-[#e62e00] border border-[#FF3300] rounded px-3 py-1.5 transition-all font-mono shadow-[0_0_14px_rgba(255,51,0,0.35)] hover:shadow-[0_0_20px_rgba(255,51,0,0.55)] cursor-pointer"
+            >
+              <Sparkles size={11} />
+              Enterprise Audit
+            </a>
+
+            <div className="w-px h-4 bg-white/10 mx-0.5" />
+
             <a
               href="/"
               className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-black bg-[#FF3300] hover:bg-[#e62e00] border border-[#FF3300] rounded px-3 py-1.5 transition-all font-mono shadow-[0_0_14px_rgba(255,51,0,0.35)] hover:shadow-[0_0_20px_rgba(255,51,0,0.55)]"
@@ -1190,6 +1213,31 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
         {journeys && journeys.traces && journeys.traces.length > 0 && (
           <JourneyPanel journeys={journeys} />
         )}
+
+        {/* ———— Enterprise Audit Banner ———— */}
+        <div className="mt-8 rounded-2xl border border-[#8B5CF6]/30 bg-gradient-to-r from-[#8B5CF6]/[0.08] via-black to-[#FF3300]/[0.05] p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 glint-card">
+          <div className="space-y-2 max-w-2xl">
+            <div className="inline-flex items-center gap-2 text-[9px] font-mono font-bold uppercase tracking-[0.25em] text-[#8B5CF6]">
+              <Sparkles size={12} />
+              Enterprise Infrastructure Audit
+            </div>
+            <h3 className="text-lg sm:text-xl font-bold text-white font-mono uppercase tracking-tight">
+              Need a Custom In-Depth Enterprise Audit?
+            </h3>
+            <p className="text-xs text-white/50 leading-relaxed font-sans">
+              Get custom multi-agent simulation harnesses, live production API probing, dedicated MCP server tools, and tailored enterprise readiness benchmarks built specifically for your product.
+            </p>
+          </div>
+          <a
+            href="https://glintbase.dev/enterprise"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest text-black bg-[#FF3300] hover:bg-[#e62e00] rounded-xl px-6 py-3.5 transition-all font-mono shrink-0 shadow-[0_0_20px_rgba(255,51,0,0.4)] hover:shadow-[0_0_28px_rgba(255,51,0,0.6)] cursor-pointer"
+          >
+            Request Enterprise Audit
+            <ExternalLink size={13} />
+          </a>
+        </div>
 
       </div>
 

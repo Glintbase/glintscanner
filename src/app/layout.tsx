@@ -38,10 +38,10 @@ export const metadata: Metadata = {
   authors: [{ name: "Glintbase", url: "https://glintbase.dev" }],
   creator: "Glintbase",
   publisher: "Glintbase",
-  
+
   // 1. THIS IS THE VERIFICATION KEY MERGED PERFECTLY INSIDE YOUR METADATA OBJECT
   verification: {
-    google: "k0DX8PtCSHYedje9IPPug8EIPeS_ETRAdRjtGIYm-3g", 
+    google: "k0DX8PtCSHYedje9IPPug8EIPeS_ETRAdRjtGIYm-3g",
   },
 
   robots: {

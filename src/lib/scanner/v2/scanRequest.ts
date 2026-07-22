@@ -9,6 +9,8 @@ export interface ScanRequestBody {
   options?: {
     enabledSurfaces?: string[];
     profile?: 'quick' | 'deep';
+    useAgentHarness?: boolean;
+    provider?: string;
   };
 }
 
@@ -21,6 +23,8 @@ export interface ScanRequestValidation {
     url: string;
     enabledSurfaces?: string[];
     profile: 'quick' | 'deep';
+    useAgentHarness?: boolean;
+    provider?: string;
   };
   policy?: UrlPolicyResult;
 }
@@ -116,6 +120,10 @@ export function validateScanRequest(body: unknown): ScanRequestValidation {
     }
   }
 
+  const optObj = (b.options || {}) as Record<string, unknown>;
+  const useAgentHarness = Boolean(optObj.useAgentHarness);
+  const provider = typeof optObj.provider === 'string' ? optObj.provider : undefined;
+
   return {
     ok: true,
     status: 200,
@@ -123,6 +131,8 @@ export function validateScanRequest(body: unknown): ScanRequestValidation {
       url: policy.url,
       enabledSurfaces,
       profile,
+      useAgentHarness,
+      provider,
     },
     policy,
   };

@@ -27,7 +27,7 @@ interface JourneyDef {
   requireEvidence?: boolean;
 }
 
-const JOURNEYS: JourneyDef[] = [
+export const JOURNEYS: JourneyDef[] = [
   {
     id: 'find_docs_overview',
     label: 'Find Docs Overview',

@@ -190,6 +190,8 @@ export default function Home() {
   const [topRankings, setTopRankings] = useState<any[]>([]);
 
   const [showCustomizer, setShowCustomizer] = useState(false);
+  const [useAgentHarness, setUseAgentHarness] = useState(true);
+  const [selectedProvider, setSelectedProvider] = useState("google");
   const [customSurfaces, setCustomSurfaces] = useState<Record<string, boolean>>({
     landing: true,
     sitemap: true,
@@ -384,7 +386,10 @@ export default function Home() {
         body: JSON.stringify({ 
           url,
           options: {
-            enabledSurfaces
+            enabledSurfaces,
+            profile: useAgentHarness ? "deep" : "quick",
+            useAgentHarness,
+            provider: selectedProvider,
           }
         }),
       });
@@ -556,6 +561,52 @@ export default function Home() {
                       exit={{ height: 0, opacity: 0, marginTop: 0 }}
                       className="overflow-hidden w-full bg-white/[0.02] border border-white/5 rounded-xl p-5 text-left font-mono"
                     >
+                      <div className="border-b border-white/5 pb-4 mb-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-black">
+                            Agent Simulation Mode
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setUseAgentHarness(true)}
+                            className={`p-3 rounded-lg border text-left transition-all ${
+                              useAgentHarness
+                                ? "bg-[#FF3300]/[0.04] border-[#FF3300]/40 text-white"
+                                : "bg-transparent border-white/5 text-white/40 hover:border-white/10"
+                            }`}
+                          >
+                            <div className="text-xs font-bold mb-1 flex items-center justify-between">
+                              <span>🤖 LLM Multi-Agent Harness</span>
+                              {useAgentHarness && <Check size={12} className="text-[#FF3300]" />}
+                            </div>
+                            <div className="text-[10px] text-white/50 leading-relaxed">
+                              Real LLM tool-calling agents test onboarding paths using AI reasoning.
+                            </div>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setUseAgentHarness(false)}
+                            className={`p-3 rounded-lg border text-left transition-all ${
+                              !useAgentHarness
+                                ? "bg-white/[0.04] border-white/30 text-white"
+                                : "bg-transparent border-white/5 text-white/40 hover:border-white/10"
+                            }`}
+                          >
+                            <div className="text-xs font-bold mb-1 flex items-center justify-between">
+                              <span>⚡ Deterministic Pathfinder</span>
+                              {!useAgentHarness && <Check size={12} className="text-white" />}
+                            </div>
+                            <div className="text-[10px] text-white/50 leading-relaxed">
+                              Fast baseline graph-traversal search without LLM API calls.
+                            </div>
+                          </button>
+                        </div>
+
+                      </div>
+
                       <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-4">
                         <span className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-black">
                           Select Surfaces to Scan

@@ -23,6 +23,8 @@ Options:
   --markdown          Markdown report (default for TTY)
   --quiet, -q         Progress to stderr only; result on stdout
   --profile <p>       quick | deep (default: quick)
+  --agent             Run LLM Multi-Agent Journey Harness
+  --provider <p>      LLM Provider: google | openai | anthropic | groq | ollama
   --fail-under <n>    Exit 3 if score < n (CI gate)
   --score-version     Print ARS version and exit
   --help, -h          Show help
@@ -42,6 +44,8 @@ function parseArgs(argv: string[]) {
   let quiet = false;
   let profile: 'quick' | 'deep' = 'quick';
   let failUnder: number | null = null;
+  let useAgentHarness = false;
+  let provider: string | undefined = undefined;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -50,6 +54,8 @@ function parseArgs(argv: string[]) {
     if (a === '--json') format = 'json';
     else if (a === '--markdown') format = 'markdown';
     else if (a === '--quiet' || a === '-q') quiet = true;
+    else if (a === '--agent' || a === '--use-agent-harness') useAgentHarness = true;
+    else if (a === '--provider') provider = args[++i];
     else if (a === '--profile') {
       const p = args[++i];
       if (p !== 'quick' && p !== 'deep') throw Object.assign(new Error('profile must be quick|deep'), { code: 2 });
@@ -64,7 +70,7 @@ function parseArgs(argv: string[]) {
     }
   }
 
-  return { help: false as const, scoreVersion: false as const, url, format, quiet, profile, failUnder };
+  return { help: false as const, scoreVersion: false as const, url, format, quiet, profile, failUnder, useAgentHarness, provider };
 }
 
 async function main() {
@@ -85,12 +91,14 @@ async function main() {
     process.exit(0);
   }
 
-  const { url, format, quiet, profile, failUnder } = parsed as {
+  const { url, format, quiet, profile, failUnder, useAgentHarness, provider } = parsed as {
     url: string;
     format: 'json' | 'markdown' | 'auto';
     quiet: boolean;
     profile: 'quick' | 'deep';
     failUnder: number | null;
+    useAgentHarness: boolean;
+    provider?: string;
   };
 
   if (!url) {
@@ -107,7 +115,10 @@ async function main() {
   };
 
   try {
-    const result = await runScan({ url, options: { profile } }, { onProgress: progress });
+    const result = await runScan(
+      { url, options: { profile, useAgentHarness, provider } },
+      { onProgress: progress }
+    );
 
     const outFormat =
       format === 'auto' ? (process.stdout.isTTY ? 'markdown' : 'json') : format;

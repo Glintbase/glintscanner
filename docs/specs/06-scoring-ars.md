@@ -1,9 +1,9 @@
 # SPEC-06 — Agent Readiness Score (ARS) 1.0
 
-**Status:** draft  
-**Phase:** 4  
+**Status:** active  
+**Phase:** 4 + Multi-Agent Harness Upgrade  
 **Related tasks:** T4.01–T4.08, C5  
-**Public methodology:** `docs/methodology/ars-1.0.md` (publish with PR-14)
+**Public methodology:** `docs/methodology/ars-1.0.md`
 
 ## 1. Purpose
 
@@ -31,16 +31,17 @@ One composite, versioned score for leaderboards, badges, and reports.
 | canonical_sources | 0.12 | docs, github |
 | content_quality | 0.12 | avg words, headings, code blocks |
 | graph_connectivity | 0.14 | components, sinks, bridges |
-| journey_success | 0.20 | completion rate, hops, high-risk |
+| journey_success | 0.20 | completion rate, hops, high-risk (Deterministic or LLM Agent Simulation) |
 | freshness | 0.05 | changelog, status |
 | runtime_validity | 0.05 | verified surface ratio |
 
 Weights MUST sum to 1.0.
 
-## 4. Anti-gaming
+## 4. Anti-gaming & Evaluation Safeguards
 
 - Machine entrypoint **presence without validation** caps that subscore at 40/100.  
-- Journey success on synthetic targets counts as 0 (enforced in pathfinder).  
+- Journey success on synthetic targets counts as 0 (enforced in pathfinder & agent evaluator).  
+- LLM agent assertions require empirical ground-truth verification against scraped surfaces.  
 - Skipped surfaces excluded from denominators.  
 
 ## 5. Function contract

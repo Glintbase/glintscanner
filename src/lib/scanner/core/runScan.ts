@@ -17,6 +17,8 @@ import type { ScoreDimension } from '../v2/ars';
 export interface ScanOptions {
   enabledSurfaces?: string[];
   profile?: 'quick' | 'deep';
+  useAgentHarness?: boolean;
+  provider?: string;
 }
 
 export interface ScanProgressEvent {
@@ -94,7 +96,18 @@ export async function runScan(
 
   const graph = await buildContextGraph(classifiedSurfaces, extractedPages, (log) => emit(log));
 
-  const journeys = await simulateAgentJourneys(graph, (log) => emit(log), enabledSurfaces);
+  const pagesForScore = extractedPages.map(({ html, ...rest }) => rest);
+
+  let journeys;
+  if (input.options?.useAgentHarness) {
+    const { runAgentSimulationHarness } = await import('../agent/dispatcher');
+    journeys = await runAgentSimulationHarness(graph, classifiedSurfaces, pagesForScore, {
+      providerConfig: { provider: input.options?.provider as any },
+      onProgress: (log) => emit(log),
+    });
+  } else {
+    journeys = await simulateAgentJourneys(graph, (log) => emit(log), enabledSurfaces);
+  }
 
   emit({
     type: 'progress',
@@ -103,7 +116,6 @@ export async function runScan(
     message: `Computing ARS (${ARS_VERSION})...`,
   });
 
-  const pagesForScore = extractedPages.map(({ html, ...rest }) => rest);
   const ars = calculateARS({
     surfaces: classifiedSurfaces,
     pages: pagesForScore,

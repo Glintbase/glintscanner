@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const { url, enabledSurfaces, profile } = validated.data;
+  const { url, enabledSurfaces, profile, useAgentHarness, provider } = validated.data;
   const scanId = randomUUID();
   const companySlug = deriveCompanySlug(url);
 
@@ -42,7 +42,15 @@ export async function POST(req: Request) {
 
       try {
         const result = await runScan(
-          { url, options: { enabledSurfaces, profile } },
+          {
+            url,
+            options: {
+              enabledSurfaces,
+              profile,
+              useAgentHarness: useAgentHarness || profile === 'deep',
+              provider: provider || 'google',
+            },
+          },
           {
             onProgress: (log) => {
               send(log);

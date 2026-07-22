@@ -1,15 +1,21 @@
 # SPEC-05 — Agent Pathfinder (Journey Simulation)
 
-**Status:** draft  
-**Phase:** 3  
+**Status:** active  
+**Phase:** 3 + Multi-Agent Harness  
 **Related tasks:** T3.01–T3.10, T0.16–T0.19, C1  
+**Implementation:** `src/lib/scanner/v2/journey.ts` (Deterministic) & `src/lib/scanner/agent/` (Multi-Agent Harness)
 
 ## 1. Purpose
 
-Simulate how a **tool-using coding agent** would traverse documentation to complete onboarding tasks.
+Simulate how a **tool-using coding agent** (Cursor, Claude Code, Antigravity, Copilot, custom LLM agents) would traverse documentation to complete integration tasks.
 
-**Naming:** Product copy MUST say “deterministic pathfinder” / “agent journey simulation”.  
-MUST NOT claim LLM reasoning unless LLM probe mode (Phase 7) is enabled and labeled.
+The system features **dual simulation engines**:
+1. **⚡ Deterministic Pathfinder**: Fast, zero-LLM graph-traversal search.
+2. **🤖 LLM Multi-Agent Harness**: Real LLM reasoning and tool-calling agent simulation.
+
+**Naming:** UI copy MUST clearly distinguish between:
+- `"Deterministic multi-start traversal (not LLM reasoning) across the knowledge graph"`
+- `"LLM Multi-Agent Journey Simulation (Real LLM reasoning & tool calls)"`
 
 ## 2. Journey definition
 
@@ -44,9 +50,7 @@ interface JourneyDef {
 | locate_error_handling | recovery | concept:error_handling |
 | recover_setup_issue | recovery | support_path or error_handling |
 
-**Bugfix:** dependency map keys MUST equal journey `id` exactly (`recover_setup_issue`).
-
-## 3. Start node selection
+## 3. Deterministic Pathfinder Algorithm
 
 Priority order for `findStartNode(def, graph)`:
 
@@ -58,45 +62,65 @@ Priority order for `findStartNode(def, graph)`:
 3. Else first node  
 4. Else fail `no_start_node`
 
-**Forbidden:** always returning `root:domain` first without consulting `startTypes`.
+Goal predicate `isTarget(node, def)` requires non-synthetic graph nodes with confidence $\ge 0.8$.
 
-## 4. Goal predicates
+## 4. LLM Multi-Agent Harness Architecture (`src/lib/scanner/agent/`)
 
-`isTarget(node, def)` is true only if:
-
-1. Node matches `targetNodeId` or `targetType`, AND  
-2. `node.synthetic !== true`, AND  
-3. If type is `concept`, node has `evidence` OR inbound edge from a non-synthetic `page` with matching content, AND  
-4. `confidence >= 0.8` (configurable)
-
-## 5. Traversal algorithm (default: greedy)
+When `useAgentHarness: true` or `profile === 'deep'` or CLI flag `--agent` is enabled, the pipeline routes journey simulation through the multi-agent harness:
 
 ```
-visited = {start}
-loop hop in 1..maxHops:
-  candidates = outbound unvisited neighbors
-  if none → dead_end
-  score each candidate by relevance(keywords, label, id, type, pageText?)
-  pick best
-  if score < inferenceThreshold → mark inference
-  if isTarget → success
-  if unresolved_reference → missing
+[Discovered Surfaces & Knowledge Graph]
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ 1. Dynamic LLM Planner (planner.ts)                    │
+│ Generates product-tailored journey tasks (or Pack v1.1)│
+└────────────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Unified Provider Governor (providers/)              │
+│ Anthropic / OpenAI / Google (gemma-4-31b-it) / Groq    │
+│ Rate limit governor: 30 RPM throttle + token budget    │
+└────────────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Parallel Dispatcher (dispatcher.ts)                 │
+│ Runs journey tasks concurrently in worker pool         │
+└────────────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ 4. Bounded Agent Runner (runner.ts)                    │
+│ Multi-step tool loop (maxSteps: 8)                     │
+│ Tool Suite: search_docs, read_surface,                 │
+│ inspect_openapi_spec, verify_goal                      │
+└────────────────────────────────────────────────────────┘
+                   │
+                   ▼
+┌────────────────────────────────────────────────────────┐
+│ 5. Empirical Evaluator (evaluator.ts)                  │
+│ Verifies evidence claims against scraped surfaces      │
+└────────────────────────────────────────────────────────┘
 ```
 
-### Relevance score (v1)
+### Agent Tool Suite
 
-- +2 per keyword in label/id  
-- +1 prefix match  
-- + edge type prior (docs_entrypoint +2, support_path +2 for recovery, …)  
-- + min(weight, 3)  
-- −5 if unresolved_reference  
-- + bonus if page body contains keyword (when available)
+1. **`search_docs({ query })`**: Searches scraped documentation pages and knowledge graph nodes for matching terms, headings, or code snippets.
+2. **`read_surface({ url })`**: Navigates to and parses page body, headings, and code samples for a given URL or surface type.
+3. **`inspect_openapi_spec({ pathOrOperation })`**: Inspected OpenAPI endpoints and HTTP operation schemas.
+4. **`verify_goal({ targetUrl, evidenceSnippet, explanation })`**: Asserts journey completion with empirical evidence.
 
-### Optional beam search (k=3)
+### Procedural Step Formatting & UX
 
-Keep top-k partial paths; pick first success or best partial.
+Every agent step is parsed into a human-readable, procedural node trace:
+- **`nodeLabel`**: Destination title or URL (e.g. `Search Corpus: "auth"`, `https://docs.replit.com/auth`)
+- **`action`**: Procedural action description (`Searched documentation corpus for "auth"`, `Navigated to and read surface: Authentication Guide`)
+- **`found`**: Summary of discovered evidence or matching pages
+- **`url`**: Clickable external link rendered in the UI Step Inspector
 
-## 6. Failure taxonomy
+## 5. Failure Taxonomy
 
 ```ts
 type BreakpointType =
@@ -109,7 +133,7 @@ type BreakpointType =
   | 'no_evidence';
 ```
 
-## 7. Aggregation
+## 6. Aggregation
 
 ```ts
 interface JourneySimulation {
@@ -123,21 +147,13 @@ interface JourneySimulation {
 
 **Invariant:** `traces.length === 0` ⇒ `overallCompletionRate === 0` (not 100).
 
-## 8. UI integrity (see SPEC-08)
-
-Any checklist labeled as journeys MUST use `traces[i].success`.
-
-## 9. Acceptance criteria
+## 7. Acceptance Criteria
 
 | ID | Criterion |
 |----|-----------|
 | AC-05.1 | startTypes honored in unit tests |
-| AC-05.2 | synthetic targets never success |
+| AC-05.2 | synthetic targets never marked success |
 | AC-05.3 | empty active journeys → 0% rate |
 | AC-05.4 | recover_setup_issue respects surface deps |
-| AC-05.5 | ResultsReport checklist === traces |
-
-## 10. Non-goals
-
-- Full browser agent (click/type)  
-- Non-deterministic LLM path as default score input  
+| AC-05.5 | LLM multi-agent harness passes 59 unit tests |
+| AC-05.6 | Provider rate limit governor enforces 30 RPM limit for Google models |

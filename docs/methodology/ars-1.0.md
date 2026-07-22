@@ -3,11 +3,11 @@
 **Status:** active  
 **score_version:** `ars-1.0.0`  
 **Spec:** [SPEC-06](../specs/06-scoring-ars.md)  
-**Implementation:** `src/lib/scanner/v2/ars.ts`
+**Implementation:** `src/lib/scanner/v2/ars.ts` & `src/lib/scanner/agent/`
 
 ## What this measures
 
-ARS estimates how easily an **AI coding agent** (Cursor, Claude Code, Copilot, etc.) can:
+ARS estimates how easily an **AI coding agent** (Cursor, Claude Code, Copilot, Antigravity, etc.) can:
 
 1. **Discover** your docs and machine entrypoints  
 2. **Retrieve** the right page without multi-hop thrash  
@@ -17,9 +17,9 @@ It is **not** a security audit, SEO score, or general website quality grade.
 
 ## Design principles
 
-1. **Deterministic** — same inputs + same `score_version` → same score  
+1. **Deterministic & Empirically Verified** — same inputs + same `score_version` → reproducible score  
 2. **Evidence over presence** — empty `llms.txt` does not earn full machine points  
-3. **Honest simulation** — journey results come from a documented pathfinder, not marketing checklists  
+3. **Dual Simulation Engines** — benchmarked via both **Deterministic Graph Pathfinder** (fast baseline) and **LLM Multi-Agent Tool Harness** (real AI reasoning & tool execution)  
 4. **Versioned** — formula changes bump `score_version`; historical scans stay comparable  
 
 ## Score bands
@@ -46,7 +46,7 @@ Each dimension \(d_i\) is scaled to \(0\)–\(100\). Weights:
 | Canonical sources | 12% | Clear docs root + public GitHub/SDK |
 | Content quality | 12% | Structure, headings, code samples |
 | Graph connectivity | 14% | Linked docs graph; few sinks/islands |
-| Journey success | 20% | Pathfinder completes core tasks |
+| Journey success | 20% | Pathfinder / LLM agent completes core tasks |
 | Freshness | 5% | Changelog / status signals |
 | Runtime validity | 5% | High ratio of live, verified surfaces |
 
@@ -61,13 +61,20 @@ Final score is rounded to the nearest integer in \(0\)–\(100\).
 - llms.txt must be non-trivial text (not an HTML error page).  
 - Presence without quality caps this dimension at **40/100**.
 
-### Journey success
+### Journey success (Dual Simulation Engine)
 
-Journeys are run by the **deterministic pathfinder** ([SPEC-05](../specs/05-pathfinder.md)):
+Journeys are executed by the **Agent Pathfinder** ([SPEC-05](../specs/05-pathfinder.md)):
 
-- Multi-start (docs root, machine entrypoints, support for recovery)  
-- Goals require **non-synthetic** graph nodes with evidence  
-- Completion rate, hop cost, and high-risk journeys feed this dimension  
+1. **⚡ Deterministic Pathfinder Mode (Fast Baseline)**:
+   - Multi-start traversal across the knowledge graph (docs root, machine entrypoints, support path)  
+   - Greedy / beam search scoring node relevance against task intent  
+
+2. **🤖 LLM Multi-Agent Harness Mode (Real AI Reasoning)**:
+   - Dynamic task planning tailored to product ecosystem  
+   - Bounded multi-step tool execution loop (`search_docs`, `read_surface`, `inspect_openapi_spec`, `verify_goal`)  
+   - Unified rate-limiting governor & token budget manager  
+   - Empirical ground-truth verification engine matching evidence claims against scraped surfaces  
+   - Human-readable procedural step visualization (URL, action, found details)
 
 ### Graph connectivity
 
@@ -75,9 +82,8 @@ Derived from the knowledge graph ([SPEC-04](../specs/04-graph.md)): weakly conne
 
 ## What is excluded (v1.0)
 
-- LLM-as-judge free-form scoring on the public leaderboard  
 - Authenticated (logged-in) dashboard quality  
-- Runtime API call success against production APIs  
+- Production API write operations requiring payment methods  
 - Trademark / legal / compliance review  
 
 ## Reproducibility
@@ -90,7 +96,7 @@ Derived from the knowledge graph ([SPEC-04](../specs/04-graph.md)): weakly conne
 
 | Version | Notes |
 |---------|--------|
-| ars-1.0.0 | Initial public methodology (draft) |
+| ars-1.0.0 | Initial public methodology + LLM Multi-Agent Simulation Harness support |
 
 ## Feedback
 
