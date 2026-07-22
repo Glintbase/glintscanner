@@ -65,7 +65,7 @@ export async function runAgentJourney(
           const toolName = tc.toolName || tc.name;
           const args = tc.args || tc.input || {};
           const isVerify = toolName === 'verify_goal';
-          let outcome: JourneyStep['outcome'] = isVerify ? 'success' : 'progress';
+          const outcome: JourneyStep['outcome'] = isVerify ? 'success' : 'progress';
 
           let nodeLabel = toolName;
           let action = `Executed tool ${toolName}`;
