@@ -7,14 +7,23 @@
   "bin": {
     "glintbase-mcp": "./dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=20"
   },
-  "keywords": ["mcp", "agent-readiness", "scanner", "llms-txt", "openapi", "ai-agents"],
+  "keywords": [
+    "mcp",
+    "agent-readiness",
+    "scanner",
+    "llms-txt",
+    "openapi",
+    "ai-agents"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/glintbase/glintscanner",
+    "url": "https://github.com/Glintbase/glintscanner",
     "directory": "mcp"
   },
   "scripts": {

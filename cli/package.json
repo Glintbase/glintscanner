@@ -14,7 +14,7 @@
   "keywords": ["cli", "agent-readiness", "scanner", "llms-txt", "openapi", "ai-agents", "ci"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/glintbase/glintscanner",
+    "url": "https://github.com/Glintbase/glintscanner",
     "directory": "cli"
   },
   "scripts": {
