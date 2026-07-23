@@ -19,6 +19,8 @@ export interface ScanOptions {
   profile?: 'quick' | 'deep';
   useAgentHarness?: boolean;
   provider?: string;
+  /** Override the crawl page budget */
+  maxPages?: number;
 }
 
 export interface ScanProgressEvent {
@@ -88,10 +90,15 @@ export async function runScan(
 
   const framework = await detectEcosystemFramework(classifiedSurfaces, (log) => emit(log));
 
+  const crawlOptions: any = { seedUrl: url, profile, deepExtraction: profile === 'deep' };
+  if (input.options?.maxPages) {
+    crawlOptions.budget = { maxPages: input.options.maxPages };
+  }
+
   const extractedPages = await crawlEcosystem(
     classifiedSurfaces,
     (log) => emit(log),
-    { seedUrl: url, profile }
+    crawlOptions
   );
 
   const graph = await buildContextGraph(classifiedSurfaces, extractedPages, (log) => emit(log));

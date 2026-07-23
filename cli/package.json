@@ -1,0 +1,44 @@
+{
+  "name": "@glintbase/cli",
+  "version": "0.1.0",
+  "description": "Glintbase Agent Readiness Scanner — beautiful CLI for terminal and CI",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "glintbase": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["cli", "agent-readiness", "scanner", "llms-txt", "openapi", "ai-agents", "ci"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/glintbase/glintscanner",
+    "directory": "cli"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "conf": "^13.1.0",
+    "ora": "^8.2.0",
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/prompts": "^2.4.9",
+    "tsup": "^8.4.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.10"
+  }
+}

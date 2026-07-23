@@ -1,0 +1,39 @@
+{
+  "name": "@glintbase/mcp",
+  "version": "0.1.0",
+  "description": "Glintbase Agent Readiness MCP — zero-config scanner tools for AI coding agents",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "glintbase-mcp": "./dist/index.js"
+  },
+  "files": ["dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": ["mcp", "agent-readiness", "scanner", "llms-txt", "openapi", "ai-agents"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/glintbase/glintscanner",
+    "directory": "mcp"
+  },
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.10"
+  }
+}

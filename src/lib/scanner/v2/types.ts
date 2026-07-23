@@ -46,6 +46,15 @@ export interface ExtractedPage {
   fetchStatus?: 'ok' | 'unreachable' | 'timeout' | 'empty' | 'failed';
   /** Thin SPA shell — escalate to Playwright in Phase 7 */
   needsRender?: boolean;
+  /** How the content was obtained; absent implies a raw fetch. */
+  extractionMethod?:
+    | 'raw'
+    | 'firecrawl'
+    | 'next_data'
+    | 'rsc_flight'
+    | 'json_ld'
+    | 'noscript'
+    | 'dom_selector';
 }
 
 export type GraphNodeType =

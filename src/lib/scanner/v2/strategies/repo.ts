@@ -83,7 +83,11 @@ export class RepoStrategy implements Strategy {
           },
         });
         if (metadataRes && metadataRes.status === 200) {
-          const repoMeta = await metadataRes.json();
+          const repoMeta = (await metadataRes.json()) as {
+            stargazers_count?: number;
+            license?: { name?: string } | null;
+            language?: string | null;
+          };
           repoNode.properties.stars = repoMeta.stargazers_count ?? 'N/A';
           repoNode.properties.stars_count = repoMeta.stargazers_count ?? 0;
           repoNode.properties.license = repoMeta.license?.name || 'N/A';

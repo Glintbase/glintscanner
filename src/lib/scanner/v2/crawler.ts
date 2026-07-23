@@ -1,5 +1,6 @@
 import { ExtractedPage, DiscoveredSurface } from './types';
 import { parseMarkdownPage, parseHtmlPage, detectContentKind } from './parseContent';
+import { extractEmbeddedContent } from './extractEmbedded';
 import { fetchResource } from './fetchResource';
 import { sortUrlsByPriority, resolveBudget, type CrawlBudget } from './priority';
 import { expandSitemapUrls } from './sitemap';
@@ -16,6 +17,8 @@ export interface CrawlOptions {
   seedUrl?: string;
   profile?: 'quick' | 'deep';
   budget?: Partial<CrawlBudget>;
+  /** Recover content from JS-rendered shells via embedded-data extraction. */
+  deepExtraction?: boolean;
 }
 
 function sameHost(a: string, b: string): boolean {
@@ -30,7 +33,8 @@ function sameHost(a: string, b: string): boolean {
 
 async function scrapePage(
   url: string,
-  maxBytes: number
+  maxBytes: number,
+  deepExtraction = false
 ): Promise<ExtractedPage> {
   try {
     // Optional Firecrawl markdown
@@ -47,7 +51,10 @@ async function scrapePage(
           signal: controller.signal,
           body: JSON.stringify({ url, formats: ['markdown'] }),
         });
-        const scrapeResult = await res.json();
+        const scrapeResult = (await res.json()) as {
+          success?: boolean;
+          data?: { markdown?: string; metadata?: { title?: string } };
+        };
         if (scrapeResult.success && scrapeResult.data) {
           const md = scrapeResult.data.markdown || '';
           const fallbackTitle = scrapeResult.data.metadata?.title || url;
@@ -63,6 +70,7 @@ async function scrapePage(
             contentKind: 'markdown',
             fetchStatus: 'ok',
             needsRender,
+            extractionMethod: 'firecrawl',
           };
         }
       } catch {
@@ -98,18 +106,43 @@ async function scrapePage(
         ? parseMarkdownPage(result.body, url)
         : parseHtmlPage(result.body, url);
 
-    const needsRender = isContentSuspicious(result.body, parsed.wordCount, 'docs');
+    let needsRender = isContentSuspicious(result.body, parsed.wordCount, 'docs');
+    let title = parsed.title;
+    let headings = parsed.headings;
+    let codeBlocks = parsed.codeBlocks;
+    let wordCount = parsed.wordCount;
+    let contentKind: 'html' | 'markdown' = kind;
+    let html = result.body;
+    let extractionMethod: ExtractedPage['extractionMethod'] = 'raw';
+
+    // Embedded-data recovery for JS-rendered shells. Runs only on the raw path
+    // (Firecrawl success already returned above) and only when content is thin.
+    if (deepExtraction && (needsRender || parsed.wordCount < 150)) {
+      const embedded = extractEmbeddedContent(result.body, url);
+      if (embedded && embedded.wordCount > parsed.wordCount) {
+        // Keep the raw <title> when the recovery didn't surface a clean one.
+        if (embedded.title) title = embedded.title;
+        headings = embedded.headings;
+        codeBlocks = embedded.codeBlocks;
+        wordCount = embedded.wordCount;
+        contentKind = 'markdown';
+        html = embedded.textForMatch;
+        extractionMethod = embedded.method;
+        needsRender = false;
+      }
+    }
 
     return {
       url: result.finalUrl || url,
-      title: parsed.title,
-      headings: parsed.headings,
-      codeBlocks: parsed.codeBlocks,
-      wordCount: parsed.wordCount,
-      html: result.body,
-      contentKind: kind,
-      fetchStatus: needsRender ? 'ok' : 'ok',
+      title,
+      headings,
+      codeBlocks,
+      wordCount,
+      html,
+      contentKind,
+      fetchStatus: 'ok',
       needsRender,
+      extractionMethod,
     };
   } catch (err: any) {
     console.error(`Page scrape error for ${url}:`, err?.message);
@@ -256,7 +289,7 @@ export async function crawlEcosystem(
       `Crawling page ${corpus.length + 1}/${budget.maxPages}: ${url}...`
     );
 
-    const page = await scrapePage(url, budget.maxBytesPerResource);
+    const page = await scrapePage(url, budget.maxBytesPerResource, options.deepExtraction);
     corpus.push(page);
 
     // Expansion via strategy get_next_urls
