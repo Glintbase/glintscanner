@@ -1,3 +1,9 @@
+<div align="center">
+
+<!-- Drop your banner in assets/banner.png (recommended ~1500x500) -->
+<img src="https://raw.githubusercontent.com/Glintbase/.github/main/assets/banner.png" alt="Glintbase — Agent Readiness Infrastructure" width="100%" />
+
+
 # Glintscanner
 
 **Agent readiness scanner** for developer products.
