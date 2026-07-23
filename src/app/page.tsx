@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Activity, Zap, ArrowRight, ExternalLink, Settings, Check } from "lucide-react";
+import { Search, Activity, Zap, ExternalLink, Settings, Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import LiveTerminal from "@/components/scanner/LiveTerminal";
 import ResultsReport from "@/components/scanner/ResultsReport";
+import { SiteNav } from "@/components/layout/SiteNav";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 import { supabase } from "@/lib/supabase/client";
 import {
   normalizeUrl,
@@ -23,80 +25,7 @@ const EXAMPLES = [
   { name: "Vercel", url: "vercel.com/docs", score: 38, band: scoreBandLabel(38) },
 ];
 
-// ─── Logo ─────────────────────────────────────────────────────────────────
-function GlintbaseLogo({ size = 28 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 100 100"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      <defs>
-        <mask id="navLogoMask">
-          <rect width="100" height="100" fill="white" />
-          <rect 
-            x="28" y="28" width="44" height="44" rx="12" 
-            fill="black" 
-            transform="rotate(15 50 50)" 
-          />
-        </mask>
-        <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#FF3300" />
-          <stop offset="100%" stopColor="#FF1800" />
-        </linearGradient>
-      </defs>
-      <rect 
-        x="12" y="12" width="76" height="76" rx="22" 
-        fill="url(#logoGrad)" 
-        mask="url(#navLogoMask)" 
-      />
-    </svg>
-  );
-}
-
-// ─── Navbar ───────────────────────────────────────────────────────────────
-function Navbar() {
-  return (
-    <nav className="fixed top-0 left-0 right-0 z-[100] border-b border-white/5 bg-black/80 backdrop-blur-xl px-4 sm:px-6 py-3 sm:py-4">
-      <div className="max-w-5xl mx-auto flex items-center justify-between gap-2">
-        <a
-          href="https://glintbase.dev"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-2 sm:gap-3 group shrink-0"
-        >
-          <div className="transition-transform duration-500 group-hover:rotate-12">
-            <GlintbaseLogo size={24} />
-          </div>
-          <span className="text-xs sm:text-sm font-black tracking-[0.2em] uppercase text-[#F1F5F9]">
-            Glint<span className="text-white/25">base</span>
-          </span>
-        </a>
-        <div className="flex items-center gap-3 sm:gap-6 shrink-0">
-          <Link
-            href="/leaderboard"
-            className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-white/40 hover:text-white transition-colors"
-          >
-            Leaderboard
-          </Link>
-          <span className="hidden md:block text-[10px] font-mono text-white/20 uppercase tracking-widest">
-            Scanner_v1
-          </span>
-          <a
-            href="https://glintbase.dev"
-            target="_blank"
-            rel="noreferrer"
-            className="bg-[#FF3300] text-white font-black text-[9px] sm:text-[10px] uppercase tracking-widest px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg hover:bg-[#FF3300]/90 transition-all shadow-[0_0_20px_rgba(255,51,0,0.25)] flex items-center gap-1.5 whitespace-nowrap"
-          >
-            Join Waitlist <ArrowRight size={11} />
-          </a>
-        </div>
-      </div>
-    </nav>
-  );
-}
+// Site chrome (logo, nav, footer) lives in src/components/layout/
 
 // ─── Waitlist CTA Banner ──────────────────────────────────────────────────
 function WaitlistCTA() {
@@ -479,7 +408,7 @@ export default function Home() {
 
   return (
     <>
-      <Navbar />
+      <SiteNav />
 
       {/* Grid background */}
       <div className="fixed inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
@@ -908,22 +837,7 @@ export default function Home() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-white/5 py-8 px-6 flex flex-col md:flex-row items-center justify-between gap-4 bg-black/20 backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <GlintbaseLogo size={20} />
-          <span className="text-[10px] font-mono text-white/20 uppercase tracking-widest">
-            © 2025 Glintbase Protocol
-          </span>
-        </div>
-        <a
-          href="https://glintbase.dev"
-          target="_blank"
-          rel="noreferrer"
-          className="text-[10px] font-mono text-white/20 hover:text-[#FF3300] uppercase tracking-widest transition-colors"
-        >
-          glintbase.dev →
-        </a>
-      </footer>
+      <SiteFooter />
     </>
   );
 }

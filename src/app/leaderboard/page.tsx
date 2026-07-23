@@ -1,6 +1,8 @@
 import { Search, Trophy } from "lucide-react";
 import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { SiteNav } from "@/components/layout/SiteNav";
+import { SiteFooter } from "@/components/layout/SiteFooter";
 import LeaderboardClient from "./LeaderboardClient";
 
 export const dynamic = 'force-dynamic';
@@ -70,7 +72,12 @@ export default async function Leaderboard() {
   const isEmpty = leaderboardData.length === 0;
 
   return (
-    <main className="flex-1 flex flex-col items-center pt-32 pb-20 px-4 w-full">
+    <>
+      <SiteNav />
+      {/* Grid background */}
+      <div className="fixed inset-0 bg-[linear-gradient(to_right,#ffffff03_1px,transparent_1px),linear-gradient(to_bottom,#ffffff03_1px,transparent_1px)] bg-[size:32px_32px] pointer-events-none" />
+      <div className="fixed inset-0 bg-[radial-gradient(ellipse_60%_50%_at_50%_-10%,rgba(255,51,0,0.06),transparent)] pointer-events-none" />
+      <main className="flex-1 flex flex-col items-center pt-32 pb-20 px-4 w-full">
       <div className="flex flex-col items-center text-center mb-6">
         <Trophy size={48} className="text-[#FF3300] drop-shadow-[0_0_20px_rgba(255,51,0,0.4)] mb-6" />
         <h1 className="text-4xl md:text-5xl font-black uppercase tracking-tight mb-4 text-white">
@@ -109,5 +116,7 @@ export default async function Leaderboard() {
         </Link>
       </div>
     </main>
+      <SiteFooter />
+    </>
   );
 }
