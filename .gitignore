@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.js
 .yarn/install-state.gz
@@ -13,8 +13,10 @@
 /.next/
 /out/
 
-# production
+# production / build artifacts
 /build
+dist/
+*.tsbuildinfo
 
 # misc
 .DS_Store
@@ -31,6 +33,8 @@ yarn-error.log*
 # vercel
 .vercel
 
+# glintbase runtime output (CLI/MCP session cache + results)
+.glintbase/
+
 # typescript
-*.tsbuildinfo
 next-env.d.ts
