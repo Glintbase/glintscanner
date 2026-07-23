@@ -4,7 +4,7 @@
 
 Glintscanner audits whether **AI coding agents** can discover, traverse, and act on a product’s developer ecosystem. It produces a versioned **Agent Readiness Score (ARS)**.
 
-Hosted UI: Next.js app · Core logic: pure TypeScript pipeline · CLI: `glintscan`
+Hosted UI: Next.js app · Core logic: pure TypeScript pipeline · MCP: zero-config agent tools · CLI: `@glintbase/cli`
 
 ## Pipeline
 
@@ -22,7 +22,7 @@ URL
 7. ARS 1.0        → weighted composite score_version ars-1.0.0
  │
  ▼
-Stream events (web) · JSON/Markdown (CLI) · Supabase (optional host persistence)
+Stream events (web) · JSON/Markdown (CLI) · MCP tools (agents) · Supabase (optional host persistence)
 ```
 
 ## Module map
@@ -31,10 +31,25 @@ Stream events (web) · JSON/Markdown (CLI) · Supabase (optional host persistenc
 |------|------|
 | `src/lib/scanner/core/runScan.ts` | Single entrypoint for CLI + API |
 | `src/lib/scanner/core/reportMarkdown.ts` | Shareable Markdown report |
+| `src/lib/scanner/core/reachability.ts` | Standalone URL reachability check |
+| `src/lib/scanner/core/parseSpec.ts` | Unified spec parser (OpenAPI, llms.txt, MCP) |
 | `src/lib/scanner/v2/*` | Pipeline stages |
+| `src/lib/scanner/v2/crawler.ts` | Priority-queue crawl; extraction-tier order: firecrawl -> raw -> embedded |
+| `src/lib/scanner/v2/extractEmbedded.ts` | Zero-dep recovery of JS-rendered content (`__NEXT_DATA__`, RSC flight, JSON-LD, `<noscript>`, DOM selectors) |
 | `src/lib/scanner/shared/*` | URL normalize, score bands |
 | `src/app/api/scan/route.ts` | Streaming host + persistence |
+| `src/app/tools/page.tsx` | Developer Tools hub (MCP / CLI / skill install) |
+| `src/app/mcp/page.tsx` | MCP gateway — client config + tool catalog |
 | `src/components/scanner/*` | Report UI, graph, journeys |
+| `skills/glintbase-agent-readiness/` | Distributable agent skill (SKILL.md + references) |
+| `mcp/` | MCP server — 9 zero-config tools for AI coding agents |
+| `mcp/src/session.ts` | In-memory scan session (tools build on each other) |
+| `mcp/src/tools/*` | Tool implementations (discover, crawl, deep_crawl, graph, score, remediate) |
+| `mcp/src/cache.ts` | File-based session cache (.glintbase/cache/) |
+| `cli/` | Standalone CLI — terminal output, CI, local models |
+| `cli/src/commands/*` | scan, init, config, report commands |
+| `cli/src/providers.ts` | Provider resolution (Ollama, cloud, custom) |
+| `cli/src/output/*` | Terminal (picocolors + ora) and JSON formatters |
 | `docs/specs/*` | Behavioral contracts |
 | `docs/methodology/ars-1.0.md` | Public scoring methodology |
 
@@ -59,10 +74,17 @@ See `migration.sql`.
 - Service role key server-only
 - See `SECURITY.md`
 
-## Future packaging
+## Packaging
 
-Interim: core lives under `src/lib/scanner/core`.  
-Target monorepo (SPEC-09): `packages/scanner-core` + `packages/cli` + `apps/web`.
+Shared core, two thin front-ends:
+
+```
+src/lib/scanner/     ← scanner-core (imported by both)
+├── mcp/             ← @glintbase/mcp (zero-config MCP tools)
+└── cli/             ← @glintbase/cli (terminal + CI)
+```
+
+Both bundle scanner-core via tsup at build time. No runtime dependency on the Next.js app.
 
 ## Semver policy
 

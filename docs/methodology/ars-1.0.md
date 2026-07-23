@@ -76,9 +76,33 @@ Journeys are executed by the **Agent Pathfinder** ([SPEC-05](../specs/05-pathfin
    - Empirical ground-truth verification engine matching evidence claims against scraped surfaces  
    - Human-readable procedural step visualization (URL, action, found details)
 
+**Which engine runs depends on the execution surface** (see below). The deterministic engine is the reproducible baseline that every surface can run offline; the LLM harness is an optional higher-fidelity layer that requires a model provider.
+
 ### Graph connectivity
 
 Derived from the knowledge graph ([SPEC-04](../specs/04-graph.md)): weakly connected components, dead-end pages, unresolved references, and presence of key workflow nodes.
+
+### Content extraction tiers
+
+Content quality and journey success both depend on **how much real page text the crawler recovers**. Modern docs sites are frequently JS-rendered, so a raw HTTP fetch returns a near-empty shell. The scanner recovers content in three escalating tiers:
+
+1. **Raw HTML** — default; direct fetch + dual HTML/Markdown parse. Sufficient for server-rendered/static docs.
+2. **Embedded-data extraction** (`deep_crawl`, zero-dependency) — when a page is thin or flagged `needsRender`, recover the payload the framework already ships in the HTML: Next.js `__NEXT_DATA__`, App Router RSC flight chunks, JSON-LD, `<noscript>`, and main-content containers. **No API key or headless browser.**
+3. **Firecrawl** (optional, `FIRECRAWL_API_KEY`) — external rendering service for the cleanest markdown on the hardest SPAs.
+
+Each extracted page records an `extractionMethod` (`raw` · `next_data` · `rsc_flight` · `json_ld` · `noscript` · `dom_selector` · `firecrawl`) so results are auditable. A shell scored on raw HTML alone will report **artificially low** content quality and journey success versus the same site recovered via tier 2/3 — the score is honest about *what the agent could actually retrieve given that extraction tier*.
+
+## Execution surfaces & how they shape the score
+
+The identical scanner core runs behind three surfaces. They select **different journey engines and extraction tiers**, so the same URL can legitimately produce different scores:
+
+| Surface | Journey engine | Extraction | LLM provider |
+|---------|----------------|------------|--------------|
+| **Web** (`scan.glintbase.dev`) | Deterministic (`quick`) · **LLM harness auto-on for `deep`** | Raw + Firecrawl (if key) | Hosted (Google) |
+| **CLI** (`@glintbase/cli`) | Deterministic · **`--agent` → LLM harness** | Raw + Firecrawl (if key) | Yours (cloud or local model) |
+| **MCP** (`@glintbase/mcp`) | **Always deterministic** — the calling coding agent is the reasoning layer | Raw + zero-dep `deep_crawl`; Firecrawl optional | None (agent-provided) |
+
+**Reading a discrepancy:** a hosted `deep` scan (Firecrawl + LLM harness) will generally score a JS-heavy site higher than a default MCP scan (raw HTML + deterministic pathfinder). To align them, run `deep_crawl` before `score_readiness` in the MCP, or supply `FIRECRAWL_API_KEY` and `profile: "deep"`. Both numbers are valid — each reports readiness *under its own retrieval and reasoning configuration*.
 
 ## What is excluded (v1.0)
 
@@ -97,6 +121,7 @@ Derived from the knowledge graph ([SPEC-04](../specs/04-graph.md)): weakly conne
 | Version | Notes |
 |---------|--------|
 | ars-1.0.0 | Initial public methodology + LLM Multi-Agent Simulation Harness support |
+| ars-1.0.0 (doc rev) | Documented execution surfaces (web / CLI / MCP), content extraction tiers, and zero-dependency `deep_crawl` embedded-data recovery (`__NEXT_DATA__`, RSC flight, JSON-LD, `<noscript>`, main-content). No formula change — clarifies how retrieval tier and journey engine affect the score. |
 
 ## Feedback
 
