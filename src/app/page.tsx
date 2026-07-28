@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import LiveTerminal from "@/components/scanner/LiveTerminal";
 import ResultsReport from "@/components/scanner/ResultsReport";
+import EmailGateModal from "@/components/scanner/EmailGateModal";
 import { SiteNav } from "@/components/layout/SiteNav";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { supabase } from "@/lib/supabase/client";
@@ -16,6 +17,10 @@ import {
   scoreBandLabel,
   scoreBandTextClass,
 } from "@/lib/scanner/shared";
+
+// Email gate: once per browser — presence of this key means the user already
+// left their email, so future scans link silently and skip the modal.
+const LEAD_STORAGE_KEY = "glintbase_lead_email";
 
 // ─── Pre-scanned examples ─────────────────────────────────────────────────
 const EXAMPLES = [
@@ -117,6 +122,13 @@ export default function Home() {
   const [scanId, setScanId] = useState<string | null>(null);
   const [recentScans, setRecentScans] = useState<any[]>([]);
   const [topRankings, setTopRankings] = useState<any[]>([]);
+  const [gateOpen, setGateOpen] = useState(false);
+  const [pendingLead, setPendingLead] = useState<{
+    slug: string;
+    scanId: string | null;
+    url: string;
+    score: number;
+  } | null>(null);
 
   const [showCustomizer, setShowCustomizer] = useState(false);
   const [useAgentHarness, setUseAgentHarness] = useState(true);
@@ -296,6 +308,57 @@ export default function Home() {
     loadScans();
   }, []);
 
+  // Shared completion path for both stream-parse sites in handleScan.
+  // Known lead → silently link scan + redirect; new visitor → open the gate.
+  const completeScan = (data: any, url: string) => {
+    setScore(data.score);
+    setChecks({
+      ...data.checks,
+      score_version: data.score_version || data.checks?.score_version,
+    });
+    if (data.id) setScanId(data.id);
+    setScanComplete(true);
+    const slug = deriveCompanySlug(url);
+
+    let storedEmail: string | null = null;
+    try {
+      storedEmail = localStorage.getItem(LEAD_STORAGE_KEY);
+    } catch {
+      // Storage unavailable (private mode) — fall through to the gate
+    }
+
+    if (storedEmail) {
+      // Fire-and-forget: link the known email to this new scan
+      fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: storedEmail,
+          scanId: data.id || undefined,
+          companySlug: slug,
+          url,
+          score: data.score,
+        }),
+      }).catch(() => {});
+      router.push(`/scan/${slug}`);
+    } else {
+      setPendingLead({ slug, scanId: data.id || null, url, score: data.score });
+      setGateOpen(true);
+    }
+  };
+
+  const handleGateUnlocked = (email: string) => {
+    try {
+      localStorage.setItem(LEAD_STORAGE_KEY, email);
+    } catch {
+      // Non-fatal — the gate simply reappears next scan
+    }
+    setGateOpen(false);
+    if (pendingLead) {
+      router.push(`/scan/${pendingLead.slug}`);
+    }
+  };
+
   const handleScan = async (e: React.FormEvent) => {
     e.preventDefault();
     const url = normalizeUrl(rawInput);
@@ -346,15 +409,7 @@ export default function Home() {
               const data = JSON.parse(trimmed);
               data.id = data.id || Math.random().toString(36).substr(2, 9);
               if (data.type === "complete") {
-                setScore(data.score);
-                setChecks({
-                  ...data.checks,
-                  score_version: data.score_version || data.checks?.score_version,
-                });
-                if (data.id) setScanId(data.id);
-                setScanComplete(true);
-                const slug = deriveCompanySlug(url);
-                router.push(`/scan/${slug}`);
+                completeScan(data, url);
               }
               setLogs((prev) => [...prev, data]);
             } catch (err) {
@@ -370,15 +425,7 @@ export default function Home() {
           const data = JSON.parse(buffer.trim());
           data.id = data.id || Math.random().toString(36).substr(2, 9);
           if (data.type === "complete") {
-            setScore(data.score);
-            setChecks({
-              ...data.checks,
-              score_version: data.score_version || data.checks?.score_version,
-            });
-            if (data.id) setScanId(data.id);
-            setScanComplete(true);
-            const slug = deriveCompanySlug(url);
-            router.push(`/scan/${slug}`);
+            completeScan(data, url);
           }
           setLogs((prev) => [...prev, data]);
         } catch (err) {
@@ -404,6 +451,8 @@ export default function Home() {
     setScore(0);
     setChecks([]);
     setScanId(null);
+    setGateOpen(false);
+    setPendingLead(null);
   };
 
   return (
@@ -828,13 +877,23 @@ export default function Home() {
         )}
 
         {/* ── Results ─────────────────────────────────────── */}
-        {scanComplete && (Array.isArray(checks) ? checks.length > 0 : (checks?.surfaces?.length ?? 0) > 0) && (
+        {scanComplete && !gateOpen && (Array.isArray(checks) ? checks.length > 0 : (checks?.surfaces?.length ?? 0) > 0) && (
           <>
             <ResultsReport score={score} checks={checks} scanId={scanId || undefined} url={normalizeUrl(rawInput)} />
             <WaitlistCTA />
           </>
         )}
       </main>
+
+      {/* Email gate — blocks the report until the visitor leaves an email */}
+      <EmailGateModal
+        open={gateOpen}
+        scanId={pendingLead?.scanId}
+        companySlug={pendingLead?.slug}
+        url={pendingLead?.url}
+        score={pendingLead?.score}
+        onUnlocked={handleGateUnlocked}
+      />
 
       {/* Footer */}
       <SiteFooter />

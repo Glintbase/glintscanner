@@ -74,3 +74,22 @@ CREATE INDEX IF NOT EXISTS idx_public_scans_company_slug_latest
 -- UPDATE public_scans SET company_slug = lower(split_part(regexp_replace(regexp_replace(url, '^https?://(www\.)?', ''), '/.*$', ''), '.', 1))
 -- WHERE company_slug IS NULL;
 
+-- Phase 6: lead capture (email gate shown after a user's own scan)
+CREATE TABLE IF NOT EXISTS scan_leads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT NOT NULL,
+    scan_id UUID REFERENCES public_scans(id) ON DELETE SET NULL,
+    company_slug TEXT,
+    scanned_url TEXT,
+    score INTEGER,
+    source TEXT DEFAULT 'scan_gate',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (email, scan_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_leads_email ON scan_leads(lower(email));
+CREATE INDEX IF NOT EXISTS idx_scan_leads_created_at ON scan_leads(created_at DESC);
+
+-- Emails are PII: RLS on with NO public policies — service-role access only.
+ALTER TABLE scan_leads ENABLE ROW LEVEL SECURITY;
+

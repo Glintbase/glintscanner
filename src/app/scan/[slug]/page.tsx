@@ -5,6 +5,9 @@ import { Search } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getScanBySlug, deriveCompany } from "@/lib/resolveSlug";
 import { scoreBandLabel } from "@/lib/scanner/shared";
+import { getCompetitiveContext } from "@/lib/getCompetitiveContext";
+import CompetitiveBanner from "@/components/scanner/CompetitiveBanner";
+import ShareScorecard from "@/components/scanner/ShareScorecard";
 
 export const dynamic = 'force-dynamic';
 
@@ -78,6 +81,7 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
   const score = data.score;
   const checks = data.checks;
   const url = data.url;
+  const competitiveContext = await getCompetitiveContext(url);
 
   // JSON-LD Structured Data
   const jsonLd = {
@@ -149,7 +153,16 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
         </div>
       </div>
 
+      <CompetitiveBanner context={competitiveContext} score={score} company={company} />
+
       <ResultsReport score={score} checks={checks} scanId={data.id} url={url} />
+
+      <ShareScorecard
+        slug={params.slug}
+        company={company}
+        score={score}
+        band={scoreBandLabel(score)}
+      />
     </main>
   );
 }
