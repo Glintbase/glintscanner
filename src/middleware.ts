@@ -3,11 +3,12 @@ import type { NextRequest } from 'next/server';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
-// 5 scan requests per IP per hour when Redis is configured
+// Upstash configured when both vars exist
 const redisConfigured = !!(
   process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
 );
 
+// Create Upstash ratelimit instances (if configured)
 const ratelimit = redisConfigured
   ? new Ratelimit({
       redis: Redis.fromEnv(),
@@ -16,7 +17,6 @@ const ratelimit = redisConfigured
     })
   : null;
 
-// 20 lead submissions per IP per hour (generous — just an abuse guard)
 const leadRatelimit = redisConfigured
   ? new Ratelimit({
       redis: Redis.fromEnv(),
@@ -25,11 +25,13 @@ const leadRatelimit = redisConfigured
     })
   : null;
 
+// Memory fallback settings (configurable via env)
+const MEMORY_LIMIT = Number(process.env.MEMORY_LIMIT) || 10;
+const MEMORY_LEAD_LIMIT = Number(process.env.MEMORY_LEAD_LIMIT) || 20;
+const MEMORY_WINDOW_MS = Number(process.env.MEMORY_WINDOW_MS) || 60 * 60 * 1000;
+
 // Simple in-memory fallback for local/dev (not multi-instance safe)
 const memoryHits = new Map<string, { count: number; resetAt: number }>();
-const MEMORY_LIMIT = 10;
-const MEMORY_LEAD_LIMIT = 20;
-const MEMORY_WINDOW_MS = 60 * 60 * 1000;
 
 function memoryLimit(key: string, limit: number = MEMORY_LIMIT): { success: boolean; remaining: number } {
   const now = Date.now();
@@ -45,38 +47,74 @@ function memoryLimit(key: string, limit: number = MEMORY_LIMIT): { success: bool
   };
 }
 
+function getIpFromRequest(request: NextRequest) {
+  // Check common forward headers used on Vercel and other platforms.
+  const vf = request.headers.get('x-vercel-forwarded-for');
+  const xf = request.headers.get('x-forwarded-for');
+  const real = request.headers.get('x-real-ip');
+  const forwarded = vf || xf || real;
+  return (
+    // request.ip may be undefined in edge runtimes; keep as first choice when present
+    // (Node runtime sets it sometimes, but not guaranteed for edge)
+    (request as any).ip ||
+    forwarded?.split(',')[0]?.trim() ||
+    '127.0.0.1'
+  );
+}
+
 export async function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
 
   // Rate limit scan API only
   if (path === '/api/scan' || path.startsWith('/api/scan/')) {
-    const ip =
-      request.ip ||
-      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      request.headers.get('x-real-ip') ||
-      '127.0.0.1';
+    const ip = getIpFromRequest(request);
 
+    // Prefer Upstash when configured. If Upstash call errors, fall back to memory guard.
     if (ratelimit) {
-      const { success, remaining, reset } = await ratelimit.limit(ip);
-      if (!success) {
-        return NextResponse.json(
-          {
-            error: 'Rate limit reached. Please try again later.',
-            code: 'RATE_LIMITED',
-          },
-          {
-            status: 429,
-            headers: {
-              'X-RateLimit-Remaining': String(remaining),
-              'X-RateLimit-Reset': String(reset),
-              'Retry-After': '3600',
+      try {
+        const { success, remaining, reset } = await ratelimit.limit(ip);
+        if (!success) {
+          return NextResponse.json(
+            {
+              error: 'Rate limit reached. Please try again later.',
+              code: 'RATE_LIMITED',
             },
-          }
-        );
+            {
+              status: 429,
+              headers: {
+                'X-RateLimit-Remaining': String(remaining),
+                'X-RateLimit-Reset': String(reset),
+                'X-RateLimit-Backend': 'upstash',
+                'Retry-After': '3600',
+              },
+            }
+          );
+        }
+      } catch (err) {
+        // Log and gracefully degrade to in-memory guard. This avoids hard-failing all traffic
+        // if Upstash has a transient outage.
+        console.error('Upstash ratelimit error, falling back to memory limiter', { err });
+
+        const { success, remaining } = memoryLimit(`fallback:${ip}`, MEMORY_LIMIT);
+        if (!success) {
+          return NextResponse.json(
+            {
+              error: 'Rate limit reached (fallback). Please try again later.',
+              code: 'RATE_LIMITED',
+            },
+            {
+              status: 429,
+              headers: {
+                'X-RateLimit-Remaining': String(remaining),
+                'X-RateLimit-Backend': 'memory-fallback',
+              },
+            }
+          );
+        }
       }
     } else {
       // Production without Redis: still apply in-memory guard (warn via header)
-      const { success, remaining } = memoryLimit(ip);
+      const { success, remaining } = memoryLimit(ip, MEMORY_LIMIT);
       if (!success) {
         return NextResponse.json(
           {
@@ -97,26 +135,40 @@ export async function middleware(request: NextRequest) {
 
   // Rate limit lead capture (email gate) — generous abuse guard
   if (path === '/api/leads') {
-    const ip =
-      request.ip ||
-      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      request.headers.get('x-real-ip') ||
-      '127.0.0.1';
+    const ip = getIpFromRequest(request);
 
     if (leadRatelimit) {
-      const { success, remaining, reset } = await leadRatelimit.limit(ip);
-      if (!success) {
-        return NextResponse.json(
-          { error: 'Too many submissions. Please try again later.', code: 'RATE_LIMITED' },
-          {
-            status: 429,
-            headers: {
-              'X-RateLimit-Remaining': String(remaining),
-              'X-RateLimit-Reset': String(reset),
-              'Retry-After': '3600',
-            },
-          }
-        );
+      try {
+        const { success, remaining, reset } = await leadRatelimit.limit(ip);
+        if (!success) {
+          return NextResponse.json(
+            { error: 'Too many submissions. Please try again later.', code: 'RATE_LIMITED' },
+            {
+              status: 429,
+              headers: {
+                'X-RateLimit-Remaining': String(remaining),
+                'X-RateLimit-Reset': String(reset),
+                'X-RateLimit-Backend': 'upstash',
+                'Retry-After': '3600',
+              },
+            }
+          );
+        }
+      } catch (err) {
+        console.error('Upstash lead ratelimit error, falling back to memory limiter', { err });
+        const { success, remaining } = memoryLimit(`lead:${ip}`, MEMORY_LEAD_LIMIT);
+        if (!success) {
+          return NextResponse.json(
+            { error: 'Too many submissions. Please try again later.', code: 'RATE_LIMITED' },
+            {
+              status: 429,
+              headers: {
+                'X-RateLimit-Remaining': String(remaining),
+                'X-RateLimit-Backend': 'memory-fallback',
+              },
+            }
+          );
+        }
       }
     } else {
       const { success, remaining } = memoryLimit(`lead:${ip}`, MEMORY_LEAD_LIMIT);
