@@ -11,18 +11,18 @@ const redisConfigured = !!(
 // Create Upstash ratelimit instances (if configured)
 const ratelimit = redisConfigured
   ? new Ratelimit({
-      redis: Redis.fromEnv(),
-      limiter: Ratelimit.slidingWindow(5, '1 h'),
-      prefix: 'glintscan',
-    })
+    redis: Redis.fromEnv(),
+    limiter: Ratelimit.slidingWindow(5, '1 h'),
+    prefix: 'glintscan',
+  })
   : null;
 
 const leadRatelimit = redisConfigured
   ? new Ratelimit({
-      redis: Redis.fromEnv(),
-      limiter: Ratelimit.slidingWindow(20, '1 h'),
-      prefix: 'glintlead',
-    })
+    redis: Redis.fromEnv(),
+    limiter: Ratelimit.slidingWindow(20, '1 h'),
+    prefix: 'glintlead',
+  })
   : null;
 
 // Memory fallback settings (configurable via env)
@@ -35,6 +35,16 @@ const memoryHits = new Map<string, { count: number; resetAt: number }>();
 
 function memoryLimit(key: string, limit: number = MEMORY_LIMIT): { success: boolean; remaining: number } {
   const now = Date.now();
+
+  // Periodically sweep expired keys if memoryHits gets large to prevent memory growth
+  if (memoryHits.size > 200) {
+    memoryHits.forEach((v, k) => {
+      if (now > v.resetAt) {
+        memoryHits.delete(k);
+      }
+    });
+  }
+
   let entry = memoryHits.get(key);
   if (!entry || now > entry.resetAt) {
     entry = { count: 0, resetAt: now + MEMORY_WINDOW_MS };

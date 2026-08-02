@@ -9,7 +9,26 @@ export const runtime = 'nodejs';
 /** Vercel / platform timeout budget (seconds) */
 export const maxDuration = 300;
 
+const MAX_CONCURRENT_SCANS = Number(process.env.MAX_CONCURRENT_SCANS) || 3;
+let activeScansCount = 0;
+
 export async function POST(req: Request) {
+  if (activeScansCount >= MAX_CONCURRENT_SCANS) {
+    return new Response(
+      JSON.stringify({
+        error: 'Server is currently at capacity processing active scans. Please try again shortly.',
+        code: 'SERVER_BUSY',
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': '30',
+        },
+      }
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -33,6 +52,8 @@ export async function POST(req: Request) {
   const companySlug = deriveCompanySlug(url);
 
   scanLog('info', 'scan_started', { scanId, url, profile, companySlug });
+
+  activeScansCount++;
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -249,6 +270,7 @@ export async function POST(req: Request) {
           scanId,
         });
       } finally {
+        activeScansCount = Math.max(0, activeScansCount - 1);
         controller.close();
       }
     },

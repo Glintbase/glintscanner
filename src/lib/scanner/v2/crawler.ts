@@ -272,6 +272,8 @@ export async function crawlEcosystem(
     `Seeded ${queue.length} URLs. Crawling up to ${budget.maxPages} pages...`
   );
 
+  const CONCURRENCY = Number(process.env.CRAWL_CONCURRENCY) || 4;
+
   let qi = 0;
   while (corpus.length < budget.maxPages && qi < queue.length) {
     if (Date.now() - started > budget.maxDurationMs) {
@@ -279,31 +281,45 @@ export async function crawlEcosystem(
       break;
     }
 
-    const url = queue[qi++];
-    if (visited.has(url)) continue;
-    visited.add(url);
+    const remainingBudget = budget.maxPages - corpus.length;
+    const batchSize = Math.min(CONCURRENCY, remainingBudget);
+    const batchUrls: string[] = [];
+
+    while (batchUrls.length < batchSize && qi < queue.length) {
+      const nextUrl = queue[qi++];
+      if (!visited.has(nextUrl)) {
+        visited.add(nextUrl);
+        batchUrls.push(nextUrl);
+      }
+    }
+
+    if (batchUrls.length === 0) break;
 
     emitProgress(
       'crawling',
       'running',
-      `Crawling page ${corpus.length + 1}/${budget.maxPages}: ${url}...`
+      `Crawling batch (${corpus.length + 1}-${corpus.length + batchUrls.length}/${budget.maxPages})...`
     );
 
-    const page = await scrapePage(url, budget.maxBytesPerResource, options.deepExtraction);
-    corpus.push(page);
+    const pages = await Promise.all(
+      batchUrls.map((u) => scrapePage(u, budget.maxBytesPerResource, options.deepExtraction))
+    );
 
-    // Expansion via strategy get_next_urls
-    if (page.fetchStatus === 'ok' && page.html && hostAnchor) {
-      try {
-        const expanded = collectExpansionUrls(page, hostAnchor);
-        for (const next of sortUrlsByPriority(expanded)) {
-          if (!visited.has(next) && !queue.includes(next)) {
-            queue.push(next);
+    for (const page of pages) {
+      corpus.push(page);
+
+      // Expansion via strategy get_next_urls
+      if (page.fetchStatus === 'ok' && page.html && hostAnchor) {
+        try {
+          const expanded = collectExpansionUrls(page, hostAnchor);
+          for (const next of sortUrlsByPriority(expanded)) {
+            if (!visited.has(next) && !queue.includes(next)) {
+              queue.push(next);
+            }
           }
+        } catch {
+          /* expansion best-effort */
         }
-        // Re-sort remaining unvisited portion lightly by appending sorted new only
-      } catch {
-        /* expansion best-effort */
       }
     }
   }
