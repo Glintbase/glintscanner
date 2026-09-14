@@ -14,6 +14,9 @@ import { registerBuildGraph } from './buildGraph.js';
 import { registerRunJourneys } from './runJourneys.js';
 import { registerScoreReadiness } from './scoreReadiness.js';
 import { registerGetRemediation } from './getRemediation.js';
+import { registerRecheckIssues } from './recheckIssues.js';
+import { registerDiscoverProducts } from './discoverProducts.js';
+import { registerGetSkill } from './getSkill.js';
 
 export function registerTools(server: McpServer, session: ScanSession): void {
   registerDiscoverSurfaces(server, session);
@@ -25,4 +28,7 @@ export function registerTools(server: McpServer, session: ScanSession): void {
   registerRunJourneys(server, session);
   registerScoreReadiness(server, session);
   registerGetRemediation(server, session);
+  registerRecheckIssues(server, session);
+  registerDiscoverProducts(server, session);
+  registerGetSkill(server, session);
 }

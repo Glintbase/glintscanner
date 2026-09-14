@@ -21,7 +21,7 @@ Add to your client's MCP config (e.g. `.mcp.json` for Claude Code):
 
 Cursor (`~/.cursor/mcp.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`) use the same `mcpServers` shape. For OpenCode use the `mcp` block with `"type": "local"`.
 
-## The 9 tools
+## Tools
 
 | Tool | What it does |
 |------|--------------|
@@ -34,6 +34,23 @@ Cursor (`~/.cursor/mcp.json`), Windsurf (`~/.codeium/windsurf/mcp_config.json`) 
 | `run_journeys` | Deterministic agent journey simulations (no LLM) |
 | `score_readiness` | Full pipeline → composite ARS score (auto-runs missing stages) |
 | `get_remediation` | Prioritized fixes with templates and expected score impact |
+| `recheck_issues` | Re-evaluate specific issues to verify fixes without full crawl |
+| `discover_products` | Detect multi-product architectures and documentation sub-trees |
+| `get_skill` | Fetch full step-by-step markdown optimization playbooks |
+
+## 9 Bundled Skills (Prompts & Resources)
+
+Available natively in your agent client as MCP Prompts (`optimize-<skill>`) and MCP Resources (`skill://glintbase/<name>`):
+
+1. **`glintbase-agent-readiness`**: Master ARS 3.0 framework across all 6 pillars (Discovery, Access, Usability, Semantic, Architecture, Safety).
+2. **`living-artifacts-architect`**: Specifications and recipes for high-density `/llms.txt` and `/.well-known/ard.json`.
+3. **`agent-auth-handbook`**: Machine-to-machine authentication standards (WorkOS `auth.md`, OAuth 2.1, Bearer scopes).
+4. **`streamable-mcp-builder`**: Streamable HTTP MCP server architecture for Next.js and Express.
+5. **`webmcp-browser-integration`**: Client-side browser agent tools via `window.modelContext` and DOM tool tags.
+6. **`token-tax-and-schema-optimizer`**: Schema friction reduction and context-window token bloat elimination.
+7. **`flight-simulator-replay`**: Synthetic agent persona diagnostics (Claude Code, Cursor, Perplexity, Swarm).
+8. **`zero-drift-ci-gate`**: GitHub Actions quality gate configuration and PR comments.
+9. **`enterprise-agent-governance`**: Zero-Trust security, soft-404 barriers, mutation idempotency, and OWASP/ISO 42001 mapping.
 
 ## Golden path
 

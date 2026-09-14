@@ -19,12 +19,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createSession } from './session.js';
 import { registerTools } from './tools/index.js';
+import { registerSkillPromptsAndResources } from './skills.js';
 
 const server = new McpServer({
   name: 'glintbase',
-  version: '0.1.0',
+  version: '3.0.0',
 });
 
+// 1. Register 8 Bundled Skills (Prompts & Resources)
+registerSkillPromptsAndResources(server);
+
+// 2. Register Tools
 const session = createSession();
 registerTools(server, session);
 
