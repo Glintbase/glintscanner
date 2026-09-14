@@ -36,24 +36,42 @@ function tryParseYamlLoose(body: string): any | null {
   const titleMatch = body.match(/^\s*title\s*:\s*["']?(.+?)["']?\s*$/m);
   // Count path keys under paths: (lines starting with / after paths:)
   const pathsIdx = body.search(/^\s*paths\s*:/m);
-  const operations: OpenAPIOperation[] = [];
+  const pathsMap: Record<string, Record<string, any>> = {};
   if (pathsIdx >= 0) {
     const after = body.slice(pathsIdx);
-    const pathLine = /^\s+(\/[^\s:]+)\s*:/gm;
-    let m;
-    const paths = new Set<string>();
-    while ((m = pathLine.exec(after)) !== null) {
-      paths.add(m[1]);
+    const pathBlockRegex = /^[ \t]+(\/[^\s:]+)\s*:\s*\n((?:[ \t]+[^\n]+\n)*)/gm;
+    let match;
+    const recognizedMethods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'];
+    while ((match = pathBlockRegex.exec(after)) !== null) {
+      const path = match[1];
+      const block = match[2];
+      pathsMap[path] = pathsMap[path] || {};
+      const methodRegex = /^[ \t]+(get|post|put|delete|patch|options|head)\s*:/gim;
+      let mm;
+      let foundMethod = false;
+      while ((mm = methodRegex.exec(block)) !== null) {
+        const method = mm[1].toLowerCase();
+        pathsMap[path][method] = {};
+        foundMethod = true;
+      }
+      if (!foundMethod) {
+        pathsMap[path]['get'] = {};
+      }
     }
-    Array.from(paths).forEach((p) => {
-      operations.push({ method: 'GET', path: p, summary: 'yaml-detected' });
-    });
+    // Fallback: simple line matching if block regex did not capture paths
+    if (Object.keys(pathsMap).length === 0) {
+      const pathLine = /^\s+(\/[^\s:]+)\s*:/gm;
+      let m;
+      while ((m = pathLine.exec(after)) !== null) {
+        pathsMap[m[1]] = { get: {} };
+      }
+    }
   }
-  if (operations.length === 0 && !versionMatch) return null;
+  if (Object.keys(pathsMap).length === 0 && !versionMatch) return null;
   return {
     openapi: versionMatch?.[1],
     info: { title: titleMatch?.[1] },
-    paths: Object.fromEntries(operations.map((o) => [o.path, { get: {} }])),
+    paths: pathsMap,
     __yamlLoose: true,
   };
 }

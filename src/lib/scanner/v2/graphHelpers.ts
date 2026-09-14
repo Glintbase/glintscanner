@@ -12,11 +12,15 @@ export function contentHash(text: string): string {
 export function urlId(url: string): string {
   try {
     const u = new URL(url);
-    return (u.hostname + u.pathname)
+    const base = (u.hostname + u.pathname)
       .replace(/[^a-zA-Z0-9]/g, '_')
       .replace(/_+/g, '_')
-      .replace(/^_|_$/g, '')
-      .slice(0, 80);
+      .replace(/^_|_$/g, '');
+    if (u.search) {
+      const qHash = createHash('sha256').update(u.search).digest('hex').slice(0, 8);
+      return `${base.slice(0, 71)}_${qHash}`;
+    }
+    return base.slice(0, 80);
   } catch {
     return url.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 60);
   }

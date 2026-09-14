@@ -8,6 +8,7 @@ import {
   JourneyBreakpoint,
   JourneyCost,
 } from './types';
+import { AI_NATIVE_JOURNEYS, AI_NATIVE_DEPENDENCIES } from './journeys.ai-native';
 
 // ── Journey Definitions (pack v1.1) ────────────────────────────────────────
 
@@ -382,42 +383,58 @@ function findStartNode(def: JourneyDef, nodes: GraphNode[]): GraphNode | null {
 }
 
 function isTarget(node: GraphNode, def: JourneyDef): boolean {
-  if (node.synthetic) return false;
   if (node.id === 'root:domain' && def.targetType === 'canonical_link') {
-    // Root alone is not "docs overview" success unless no better target exists —
-    // prefer non-root canonical_link
     return false;
   }
 
-  const idMatch = !!(def.targetNodeId && node.id === def.targetNodeId);
-  const typeMatch = !!(
-    def.targetType &&
-    node.type === def.targetType &&
-    node.id !== 'root:domain'
-  );
-
-  if (!idMatch && !typeMatch) return false;
-
-  // Evidence gate for concepts / when requireEvidence
-  if (def.requireEvidence || node.type === 'concept') {
-    if (!hasEvidence(node)) return false;
-    if (node.type === 'concept' && node.confidence !== undefined && node.confidence < 0.8) {
-      return false;
+  // 1. If a specific targetNodeId is required, only match that target node ID
+  if (def.targetNodeId) {
+    let idMatch = false;
+    if (node.id === def.targetNodeId) idMatch = true;
+    if (def.targetNodeId === 'concept:rate_limits' && (node.id === 'concept:rate_limiting' || node.id === 'concept:rate_limits')) idMatch = true;
+    if (def.targetNodeId === 'concept:api_versioning' && (node.id === 'concept:api_versioning' || node.id.includes('changelog') || node.id.includes('version'))) idMatch = true;
+    if (!idMatch) return false;
+  } else {
+    // 2. Target Type matching
+    let typeMatch = false;
+    if (def.targetType) {
+      if (node.type === def.targetType && node.id !== 'root:domain') typeMatch = true;
+      if (def.targetType === 'workflow' && (node.type === 'concept' || node.type === 'page' || node.type === 'canonical_link') &&
+          (node.id.includes('quickstart') || node.id.includes('getting-started') || node.label.toLowerCase().includes('quickstart') || node.label.toLowerCase().includes('getting started'))) {
+        typeMatch = true;
+      }
     }
+
+    // 3. Keyword / Content matching for non-synthetic page nodes
+    let keywordMatch = false;
+    if (!node.synthetic && node.id !== 'root:domain') {
+      if (def.intentKeywords.some((kw) => {
+        const k = kw.toLowerCase();
+        return node.label.toLowerCase().includes(k) || node.id.toLowerCase().includes(k.replace(/\s+/g, '-'));
+      })) {
+        keywordMatch = true;
+      }
+    }
+
+    if (!typeMatch && !keywordMatch) return false;
   }
 
-  // For find_docs_overview: any non-root canonical_link counts
-  if (def.id === 'find_docs_overview' && node.type === 'canonical_link' && node.id !== 'root:domain') {
+  // Evidence gate: if requireEvidence is set, node must have evidence
+  if (def.requireEvidence && !hasEvidence(node)) {
+    return false;
+  }
+
+  // For B-01 (cold_start_discoverability): any non-root canonical_link or docs page counts
+  if (def.id === 'cold_start_discoverability' && (node.type === 'canonical_link' || node.type === 'page') && node.id !== 'root:domain') {
     return true;
   }
 
-  // For find_llms: prefer llms-labeled entrypoints
-  if (def.id === 'find_llms_entrypoint' && node.type === 'machine_entrypoint') {
-    const t = nodeSearchText(node);
-    return t.includes('llms') || t.includes('mcp') || t.includes('sitemap') || true;
+  // For B-02 (machine_entrypoint_quality): prefer machine_entrypoint or OpenAPI/sitemap page
+  if (def.id === 'machine_entrypoint_quality' && (node.type === 'machine_entrypoint' || node.type === 'api')) {
+    return true;
   }
 
-  return idMatch || typeMatch;
+  return true;
 }
 
 function classifyHallucinationPressure(
@@ -610,6 +627,9 @@ function runJourney(def: JourneyDef, graph: ContextGraph, options: PathfinderOpt
             surface: nextNode.label,
             reason: `Reached "${nextNode.label}" but the node has no content evidence (synthetic or empty)`,
           };
+        } else if (isTarget(nextNode, def)) {
+          outcome = 'success';
+          success = true;
         } else if (inferenceRequired) {
           outcome = 'inferred';
           const inferenceCount = path.steps.filter((s) => s.inferenceRequired).length + 1;
@@ -620,9 +640,6 @@ function runJourney(def: JourneyDef, graph: ContextGraph, options: PathfinderOpt
               reason: `Agent required inference at ${inferenceCount} steps — no confident canonical path found`,
             };
           }
-        } else if (isTarget(nextNode, def)) {
-          outcome = 'success';
-          success = true;
         }
 
         const step: JourneyStep = {
@@ -753,10 +770,11 @@ const JOURNEY_DEPENDENCIES: Record<string, string[]> = {
   recover_setup_issue: ['support', 'docs'],
 };
 
-function isJourneyEnabled(journeyId: string, enabledSurfaces?: string[]): boolean {
+function isJourneyEnabled(journeyId: string, enabledSurfaces?: string[], isAiNative?: boolean): boolean {
   if (!enabledSurfaces || enabledSurfaces.length === 0) return true;
-  const deps = JOURNEY_DEPENDENCIES[journeyId];
-  if (!deps) return true;
+  const depMap = isAiNative ? AI_NATIVE_DEPENDENCIES : JOURNEY_DEPENDENCIES;
+  const deps = depMap[journeyId];
+  if (!deps || deps.length === 0) return true;
   return deps.some((dep) => enabledSurfaces.includes(dep));
 }
 
@@ -766,7 +784,7 @@ export async function simulateAgentJourneys(
   graph: ContextGraph,
   progressCallback?: (log: any) => void,
   enabledSurfaces?: string[],
-  options?: PathfinderOptions
+  options?: PathfinderOptions & { pack?: string }
 ): Promise<JourneySimulation> {
   const emit = (status: string, message?: string) => {
     progressCallback?.({ type: 'progress', check: 'journey', status, message });
@@ -774,8 +792,11 @@ export async function simulateAgentJourneys(
 
   emit('running', 'Running deterministic agent pathfinder across the knowledge graph...');
 
+  const isAiNative = options?.pack === 'ai-native' || process.env.JOURNEY_PACK === 'ai-native';
+  const journeySource = isAiNative ? (AI_NATIVE_JOURNEYS as unknown as JourneyDef[]) : JOURNEYS;
+
   const traces: JourneyTrace[] = [];
-  const activeJourneys = JOURNEYS.filter((def) => isJourneyEnabled(def.id, enabledSurfaces));
+  const activeJourneys = journeySource.filter((def) => isJourneyEnabled(def.id, enabledSurfaces, isAiNative));
 
   if (activeJourneys.length === 0) {
     emit('done', 'Pathfinder complete: 0/0 journeys succeeded (0% completion rate)');

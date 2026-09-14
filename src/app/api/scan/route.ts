@@ -168,14 +168,18 @@ export async function POST(req: Request) {
               }
 
               if (dbError) {
-                await supabaseAdmin.from('public_scans').delete().eq('url', url);
+                // Fallback attempt with minimal schema without destructive deletion of historical records
                 const res = await supabaseAdmin
                   .from('public_scans')
                   .insert([{ url: result.url, score: result.score, checks: checksPayload }])
                   .select('id')
                   .single();
-                data = res.data;
-                dbError = res.error;
+                if (!res.error && res.data) {
+                  data = res.data;
+                  dbError = null;
+                } else {
+                  dbError = res.error;
+                }
               }
             }
 

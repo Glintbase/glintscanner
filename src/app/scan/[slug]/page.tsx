@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import ResultsReport from "@/components/scanner/ResultsReport";
 import Link from "next/link";
-import { Search } from "lucide-react";
+import { Search, FileText } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getScanBySlug, deriveCompany } from "@/lib/resolveSlug";
 import { scoreBandLabel } from "@/lib/scanner/shared";
@@ -136,7 +136,14 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
           <h1 className="text-xl sm:text-3xl font-black text-white uppercase tracking-tight mb-2 break-all">Scan Results: {url}</h1>
           <p className="text-white/40 font-mono text-[10px] sm:text-xs">Vanity URL: scan.glintbase.dev/scan/{params.slug}</p>
         </div>
-        <div className="flex items-center gap-4 sm:gap-6 shrink-0">
+        <div className="flex items-center gap-3 sm:gap-4 shrink-0 flex-wrap">
+          <Link
+            href={`/scan/${params.slug}/briefing`}
+            className="text-white/80 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-1.5 font-bold transition-all text-xs uppercase tracking-wider"
+          >
+            <FileText size={14} className="text-[#FF3300]" />
+            Executive PDF
+          </Link>
           <Link 
             href="/leaderboard"
             className="text-white/40 hover:text-white flex items-center gap-2 font-bold transition-colors uppercase tracking-wider text-xs"

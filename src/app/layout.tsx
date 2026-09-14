@@ -86,6 +86,59 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${plusJakartaSans.variable} ${jetbrainsMono.variable} h-full scroll-smooth`}>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+(function() {
+  if (typeof window === 'undefined') return;
+  window.modelContext = window.modelContext || {};
+  if (!window.modelContext.tools) window.modelContext.tools = [];
+  
+  const tools = [
+    {
+      name: 'scan_domain',
+      description: 'Audit a domain for AI agent readiness across Discovery, Access, Usability, and Payments.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'Domain URL to audit' }
+        },
+        required: ['url']
+      }
+    },
+    {
+      name: 'get_score',
+      description: 'Fetch cached ARS 2.0 readiness score and letter grade for a company slug.',
+      parameters: {
+        type: 'object',
+        properties: {
+          slug: { type: 'string', description: 'Company slug (e.g. stripe, supabase)' }
+        },
+        required: ['slug']
+      }
+    },
+    {
+      name: 'get_leaderboard',
+      description: 'Query top ranked agent-ready domains across categories.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: 'Number of results (default 10)' }
+        }
+      }
+    }
+  ];
+
+  window.modelContext.tools.push(...tools);
+  if (typeof document !== 'undefined') {
+    document.modelContext = window.modelContext;
+  }
+})();
+            `,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col w-full min-w-0 bg-black text-[#F1F5F9] font-sans selection:bg-[#FF3300]/30 selection:text-white">
         {children}
       </body>

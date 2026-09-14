@@ -99,11 +99,16 @@ export async function discoverEcosystem(
     }
     emitProgress('validation', 'done', `Reachability verified successfully.`);
   } else {
-    emitProgress('validation', 'running', `DNS & reachability verification on ${origin}...`);
-    // Prefer GET (many CDNs reject HEAD)
-    const reach = await fetchResource(origin, { timeoutMs: 6000, maxBytes: 64_000 });
-    if (!reach.ok && reach.status !== 'too_large' && reach.httpStatus !== 401 && reach.httpStatus !== 403) {
-      emitProgress('validation', 'failed', `Target ${origin} is unreachable.`);
+    emitProgress('validation', 'running', `DNS & reachability verification on ${url}...`);
+    // Prefer GET on full input URL first, fallback to origin
+    let reach = await fetchResource(url, { timeoutMs: 8000, maxBytes: 64_000 });
+    if (!reach.ok && url !== origin) {
+      const originReach = await fetchResource(origin, { timeoutMs: 8000, maxBytes: 64_000 });
+      if (originReach.ok) reach = originReach;
+    }
+    const isSuccessStatus = reach.ok || reach.status === 'too_large' || [200, 301, 302, 307, 308, 401, 403].includes(reach.httpStatus ?? 0);
+    if (!isSuccessStatus) {
+      emitProgress('validation', 'failed', `Target ${url} is unreachable.`);
       throw new Error(`Invalid domain or target is unreachable.`);
     }
     emitProgress('validation', 'done', `Reachability verified successfully.`);

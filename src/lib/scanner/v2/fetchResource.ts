@@ -38,7 +38,7 @@ export interface FetchResourceResult {
   bytes?: number;
 }
 
-const DEFAULT_UA = 'Mozilla/5.0 (compatible; Glintscanner-V2/2.0)';
+const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
 const DEFAULT_TIMEOUT = 8000;
 const DEFAULT_MAX_BYTES = 2_000_000;
 
@@ -78,16 +78,44 @@ export async function fetchResource(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const res = await fetch(safeUrl, {
-      method,
-      signal: controller.signal,
-      redirect: 'follow',
-      headers: {
-        'User-Agent': DEFAULT_UA,
-        Accept: '*/*',
-        ...options.headers,
-      },
-    });
+    let currentUrl = safeUrl;
+    let res: Response | null = null;
+    const maxRedirects = 5;
+
+    for (let hop = 0; hop <= maxRedirects; hop++) {
+      res = await fetch(currentUrl, {
+        method,
+        signal: controller.signal,
+        redirect: 'manual',
+        headers: {
+          'User-Agent': DEFAULT_UA,
+          Accept: '*/*',
+          ...options.headers,
+        },
+      });
+
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const location = res.headers.get('location');
+        if (!location) break;
+        let nextUrl: string;
+        try {
+          nextUrl = new URL(location, currentUrl).toString();
+        } catch {
+          break;
+        }
+        const nextPolicy = validateScanUrl(nextUrl, { allowHttp: true });
+        if (!nextPolicy.ok || !nextPolicy.url) {
+          return { ok: false, status: 'blocked', url: nextUrl };
+        }
+        currentUrl = nextPolicy.url;
+        continue;
+      }
+      break;
+    }
+
+    if (!res) {
+      return { ok: false, status: 'failed', url: safeUrl };
+    }
 
     const httpStatus = res.status;
     const contentType = res.headers.get('content-type');
@@ -101,7 +129,7 @@ export async function fetchResource(
         httpStatus,
         contentType,
         url: safeUrl,
-        finalUrl: res.url,
+        finalUrl: currentUrl,
       };
     }
 
@@ -112,7 +140,7 @@ export async function fetchResource(
         httpStatus,
         contentType,
         url: safeUrl,
-        finalUrl: res.url,
+        finalUrl: currentUrl,
       };
     }
 
@@ -126,7 +154,7 @@ export async function fetchResource(
           httpStatus,
           contentType,
           url: safeUrl,
-          finalUrl: res.url,
+          finalUrl: currentUrl,
           bytes: text.length,
         };
       }
@@ -137,7 +165,7 @@ export async function fetchResource(
           httpStatus,
           contentType,
           url: safeUrl,
-          finalUrl: res.url,
+          finalUrl: currentUrl,
           body: text,
           bytes: 0,
         };
@@ -149,7 +177,7 @@ export async function fetchResource(
           httpStatus,
           contentType,
           url: safeUrl,
-          finalUrl: res.url,
+          finalUrl: currentUrl,
           body: text.slice(0, 500),
           bytes: text.length,
         };
@@ -185,7 +213,7 @@ export async function fetchResource(
             httpStatus,
             contentType,
             url: safeUrl,
-            finalUrl: res.url,
+            finalUrl: currentUrl,
             bytes: total,
           };
         }
@@ -208,7 +236,7 @@ export async function fetchResource(
         httpStatus,
         contentType,
         url: safeUrl,
-        finalUrl: res.url,
+        finalUrl: currentUrl,
         body,
         bytes: 0,
       };
@@ -221,7 +249,7 @@ export async function fetchResource(
         httpStatus,
         contentType,
         url: safeUrl,
-        finalUrl: res.url,
+        finalUrl: currentUrl,
         body: body.slice(0, 500),
         bytes: body.length,
       };
@@ -233,7 +261,7 @@ export async function fetchResource(
       httpStatus,
       contentType,
       url: safeUrl,
-      finalUrl: res.url,
+      finalUrl: currentUrl,
       body,
       bytes: body.length,
     };

@@ -5,7 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "glintbase-mcp": "./dist/index.js"
+    "glintbase-mcp": "dist/index.js"
   },
   "files": [
     "dist"
@@ -23,7 +23,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/Glintbase/glintscanner",
+    "url": "git+https://github.com/Glintbase/glintscanner.git",
     "directory": "mcp"
   },
   "scripts": {

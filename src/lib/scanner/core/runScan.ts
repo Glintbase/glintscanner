@@ -21,6 +21,8 @@ export interface ScanOptions {
   provider?: string;
   /** Override the crawl page budget */
   maxPages?: number;
+  /** Journey pack to execute (e.g. 'ai-native') */
+  pack?: string;
 }
 
 export interface ScanProgressEvent {
@@ -113,7 +115,7 @@ export async function runScan(
       onProgress: (log) => emit(log),
     });
   } else {
-    journeys = await simulateAgentJourneys(graph, (log) => emit(log), enabledSurfaces);
+    journeys = await simulateAgentJourneys(graph, (log) => emit(log), enabledSurfaces, { pack: input.options?.pack });
   }
 
   emit({

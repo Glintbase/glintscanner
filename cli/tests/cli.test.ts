@@ -26,7 +26,10 @@ describe('glintbase --help', () => {
   it('prints command list', () => {
     const { stdout, exitCode } = run('--help');
     expect(exitCode).toBe(0);
+    expect(stdout).toContain('audit');
     expect(stdout).toContain('scan');
+    expect(stdout).toContain('check');
+    expect(stdout).toContain('remediate');
     expect(stdout).toContain('init');
     expect(stdout).toContain('config');
     expect(stdout).toContain('report');
@@ -37,7 +40,7 @@ describe('glintbase --version', () => {
   it('prints version', () => {
     const { stdout, exitCode } = run('--version');
     expect(exitCode).toBe(0);
-    expect(stdout).toContain('0.1.0');
+    expect(stdout).toMatch(/0\.[12]\.0/);
   });
 });
 
