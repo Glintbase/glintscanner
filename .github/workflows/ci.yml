@@ -21,7 +21,7 @@ jobs:
           cache-dependency-path: mcp/package-lock.json
       - run: npm cache clean --force
       - run: rm -rf node_modules package-lock.json
-      - run: npm install
+      - run: npm install --legacy-peer-deps
       - run: npm test
 
   cli-test:
@@ -38,7 +38,7 @@ jobs:
           cache-dependency-path: cli/package-lock.json
       - run: npm cache clean --force
       - run: rm -rf node_modules package-lock.json
-      - run: npm install
+      - run: npm install --legacy-peer-deps
       - run: npm test
 
   build:
@@ -53,14 +53,14 @@ jobs:
         run: |
           npm cache clean --force
           rm -rf node_modules package-lock.json
-          npm install
+          npm install --legacy-peer-deps
           npm run build
       - name: Build CLI
         working-directory: cli
         run: |
           npm cache clean --force
           rm -rf node_modules package-lock.json
-          npm install
+          npm install --legacy-peer-deps
           npm run build
       - name: Verify MCP binary
         working-directory: mcp
