@@ -1,0 +1,44 @@
+﻿{
+  "$schema": "https://registry.modelcontextprotocol.io/schema/server.json",
+  "name": "io.github.Glintbase/glintbase-mcp",
+  "version": "3.1.0",
+  "description": "Zero-config agent-readiness auditor and Flight Simulator tools for AI coding agents",
+  "author": {
+    "name": "Glintbase",
+    "url": "https://glintbase.dev"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Glintbase/glintscanner.git"
+  },
+  "homepage": "https://scan.glintbase.dev",
+  "license": "Apache-2.0",
+  "keywords": [
+    "mcp",
+    "agent-readiness",
+    "ars",
+    "ai-agents",
+    "flight-simulator",
+    "llms-txt",
+    "openapi"
+  ],
+  "distribution": {
+    "npm": {
+      "package": "@glintbase/mcp",
+      "version": "3.1.0",
+      "command": "npx",
+      "args": ["-y", "@glintbase/mcp"]
+    },
+    "remotes": [
+      {
+        "type": "sse",
+        "url": "https://scan.glintbase.dev/api/mcp"
+      }
+    ]
+  },
+  "capabilities": {
+    "tools": true,
+    "prompts": true,
+    "resources": true
+  }
+}
