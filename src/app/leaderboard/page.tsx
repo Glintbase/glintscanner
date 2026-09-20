@@ -6,6 +6,8 @@ import { SiteFooter } from "@/components/layout/SiteFooter";
 import LeaderboardClient from "./LeaderboardClient";
 
 export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+export const fetchCache = 'force-no-store';
 
 export default async function Leaderboard() {
   let leaderboardData: {
@@ -21,11 +23,10 @@ export default async function Leaderboard() {
     const { data, error } = await supabase
       .from('public_scans')
       .select('id, url, score, created_at')
-      .order('score', { ascending: false });
-
+      .order('created_at', { ascending: false });
 
     if (!error && data && data.length > 0) {
-      // Deduplicate by domain — keep highest score per domain
+      // Deduplicate by domain — keep the most recent scan per domain
       const domainMap = new Map<string, { id: string; url: string; score: number; company: string }>();
 
       for (const item of data) {
@@ -37,8 +38,8 @@ export default async function Leaderboard() {
         }
         hostname = hostname.toLowerCase().replace(/^www\./i, '');
 
-        const existing = domainMap.get(hostname);
-        if (!existing || existing.score < item.score) {
+        // Since results are ordered by created_at DESC, the first occurrence is always the latest scan
+        if (!domainMap.has(hostname)) {
           // Derive a display name from the hostname
           let company = hostname.split('.')[0];
           if (company === 'docs' || company === 'www' || company === 'developer' || company === 'dev') {
@@ -55,7 +56,7 @@ export default async function Leaderboard() {
         }
       }
 
-      // Convert to sorted array
+      // Convert to sorted array by score DESC for rank
       const sorted: { id: string; url: string; score: number; company: string }[] = [];
       domainMap.forEach((val) => sorted.push(val));
       sorted.sort((a, b) => b.score - a.score);

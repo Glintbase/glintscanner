@@ -23,7 +23,7 @@ import { registerSkillPromptsAndResources } from './skills.js';
 
 const server = new McpServer({
   name: 'glintbase',
-  version: '3.0.0',
+  version: '3.1.0',
 });
 
 // 1. Register 8 Bundled Skills (Prompts & Resources)

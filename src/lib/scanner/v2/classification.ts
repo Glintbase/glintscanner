@@ -13,9 +13,13 @@ async function classifySingleSurface(surface: DiscoveredSurface): Promise<Discov
 
   const isUserFacing = surface.type !== 'openapi' && surface.type !== 'llms_txt' && surface.type !== 'llms_full_txt' && surface.type !== 'sitemap';
   
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+
   try {
     const res = await fetch(surface.url, { 
       method: 'GET',
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; Glintscanner-V2/2.0)'
       }
@@ -67,6 +71,8 @@ async function classifySingleSurface(surface: DiscoveredSurface): Promise<Discov
       freshness: 'unknown',
       userFacing: isUserFacing,
     };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -82,15 +88,14 @@ export async function classifySurfaces(
 
   emitProgress('classification', 'running', 'Classifying discovered ecosystem surfaces...');
   
-  const classified: DiscoveredSurface[] = [];
-  
-  for (const s of surfaces) {
-    if (s.found) {
-      emitProgress('classification', 'running', `Analyzing metadata for ${s.type.toUpperCase().replace('_', '.')}...`);
-    }
-    const result = await classifySingleSurface(s);
-    classified.push(result);
-  }
+  const classified = await Promise.all(
+    surfaces.map(async (s) => {
+      if (s.found) {
+        emitProgress('classification', 'running', `Analyzing metadata for ${s.type.toUpperCase().replace('_', '.')}...`);
+      }
+      return classifySingleSurface(s);
+    })
+  );
 
   emitProgress('classification', 'done', 'Surface metadata classification complete.');
   return classified;

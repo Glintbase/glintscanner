@@ -1,9 +1,23 @@
-/** Normalize user input into an absolute https URL (or empty string). */
+/** Normalize user input into an absolute https/http URL (or empty string). Strips duplicate schemes like https://https:// */
 export function normalizeUrl(input: string): string {
-  const trimmed = input.trim();
+  let trimmed = input.trim();
   if (!trimmed) return '';
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+
+  // Extract initial repeated/chained schemes: e.g. "https://https://", "http://https://", "http://"
+  const schemeMatches = trimmed.match(/^(https?:\/\/)+/i);
+  let scheme = 'https://';
+  if (schemeMatches) {
+    const rawMatch = schemeMatches[0];
+    const individualSchemes = rawMatch.match(/https?:\/\//gi);
+    if (individualSchemes && individualSchemes.length === 1 && individualSchemes[0].toLowerCase().startsWith('http://')) {
+      scheme = 'http://';
+    } else {
+      scheme = 'https://';
+    }
+    trimmed = trimmed.slice(rawMatch.length);
+  }
+
+  return `${scheme}${trimmed}`;
 }
 
 /**

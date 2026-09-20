@@ -13,16 +13,15 @@ URL
  │
  ├─ URL policy (SSRF / scheme / ports)
  ▼
-1. Discovery      → surfaces (llms.txt, OpenAPI, docs, …) + content validation
-2. Classification → canonical / freshness metadata
-3. Framework      → Docusaurus, Mintlify, GitBook, …
-4. Crawl          → priority queue, budgets, dual HTML/MD parse, expansion
-5. Knowledge graph→ nodes/edges, evidence, OpenAPI operations, hyperlinks
-6. Pathfinder     → deterministic multi-start journeys (not LLM free-form)
-7. ARS 1.0        → weighted composite score_version ars-1.0.0
+1. Discovery       → surfaces (llms.txt, OpenAPI, MCP, docs, …) + content validation
+2. Classification  → canonical / freshness metadata & framework detection
+3. Crawl           → priority queue, budgets, dual HTML/MD parse, expansion
+4. Knowledge graph → nodes/edges, evidence, OpenAPI operations, hyperlinks
+5. Flight Simulator→ multi-agent autonomous journey simulation (Claude, Cursor, Perplexity)
+6. ARS 3.0 Engine  → 119 checks, 6 pillars, dynamic denominator scoring
  │
  ▼
-Stream events (web) · JSON/Markdown (CLI) · MCP tools (agents) · Supabase (optional host persistence)
+Stream events (web) · JSON/Markdown (CLI) · MCP tools (agents) · Flight Simulator Cockpit (#data=)
 ```
 
 ## Module map
@@ -38,11 +37,14 @@ Stream events (web) · JSON/Markdown (CLI) · MCP tools (agents) · Supabase (op
 | `src/lib/scanner/v2/extractEmbedded.ts` | Zero-dep recovery of JS-rendered content (`__NEXT_DATA__`, RSC flight, JSON-LD, `<noscript>`, DOM selectors) |
 | `src/lib/scanner/shared/*` | URL normalize, score bands |
 | `src/app/api/scan/route.ts` | Streaming host + persistence |
+| `src/app/api/mcp/route.ts` | Authoritative MCP endpoint (JSON-RPC 2.0 & SSE, 17 tools) |
+| `src/app/api/simulate/route.ts` | Autonomous Flight Simulator REST endpoint |
 | `src/app/tools/page.tsx` | Developer Tools hub (MCP / CLI / skill install) |
 | `src/app/mcp/page.tsx` | MCP gateway — client config + tool catalog |
-| `src/components/scanner/*` | Report UI, graph, journeys |
+| `src/app/simulate/page.tsx` | Flight Simulator Replay Cockpit page |
+| `src/components/scanner/*` | Report UI, graph, journeys, Cockpit, ARS 3.0 Live HUD |
 | `skills/glintbase-agent-readiness/` | Distributable agent skill (SKILL.md + references) |
-| `mcp/` | MCP server — 9 zero-config tools for AI coding agents |
+| `mcp/` | Standalone `@glintbase/mcp` package for local stdio usage |
 | `mcp/src/session.ts` | In-memory scan session (tools build on each other) |
 | `mcp/src/tools/*` | Tool implementations (discover, crawl, deep_crawl, graph, score, remediate) |
 | `mcp/src/cache.ts` | File-based session cache (.glintbase/cache/) |

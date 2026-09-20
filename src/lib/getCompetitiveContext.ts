@@ -48,17 +48,16 @@ export async function getCompetitiveContext(scanUrl: string): Promise<Competitiv
     const supabase = createServerSupabaseClient();
     const { data, error } = await supabase
       .from('public_scans')
-      .select('url, score')
-      .order('score', { ascending: false });
+      .select('url, score, created_at')
+      .order('created_at', { ascending: false });
 
     if (error || !data || data.length === 0) return FALLBACK;
 
-    // Deduplicate by domain — keep highest score per domain
+    // Deduplicate by domain — keep most recent scan per domain
     const domainMap = new Map<string, { hostname: string; score: number }>();
     for (const item of data) {
       const hostname = toHostname(item.url);
-      const existing = domainMap.get(hostname);
-      if (!existing || existing.score < item.score) {
+      if (!domainMap.has(hostname)) {
         domainMap.set(hostname, { hostname, score: item.score });
       }
     }

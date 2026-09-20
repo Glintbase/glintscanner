@@ -99,3 +99,82 @@ export function badgeColorForScore(score: number): string {
 }
 
 export const SCORE_BANDS = BANDS;
+
+export type ArsGrade = 'A+' | 'A' | 'B' | 'C' | 'D' | 'F';
+
+export interface GradeBand {
+  grade: ArsGrade;
+  label: string;
+  description: string;
+  color: string;
+  colorHex: string;
+  min: number;
+  max: number;
+}
+
+const GRADE_BANDS: GradeBand[] = [
+  {
+    grade: 'A+',
+    label: 'Certified Autonomous Ready',
+    description: 'Leading standard compliance across all operational layers.',
+    color: '#10B981',
+    colorHex: '#10B981',
+    min: 95,
+    max: 100,
+  },
+  {
+    grade: 'A',
+    label: 'Enterprise Agent Ready',
+    description: 'Advanced readiness with robust discovery, access, and usability.',
+    color: '#22C55E',
+    colorHex: '#22C55E',
+    min: 86,
+    max: 94,
+  },
+  {
+    grade: 'B',
+    label: 'Functionally Autonomous',
+    description: 'Meets production baseline; minor gaps in emerging protocols.',
+    color: '#22D3EE',
+    colorHex: '#22D3EE',
+    min: 70,
+    max: 85,
+  },
+  {
+    grade: 'C',
+    label: 'Partial Agent Support',
+    description: 'Intermittent agent execution failures due to missing specs.',
+    color: '#F59E0B',
+    colorHex: '#F59E0B',
+    min: 48,
+    max: 69,
+  },
+  {
+    grade: 'D',
+    label: 'Human-Centric Legacy',
+    description: 'Severe protocol gaps; agents struggle with access and parsing.',
+    color: '#F97316',
+    colorHex: '#F97316',
+    min: 28,
+    max: 47,
+  },
+  {
+    grade: 'F',
+    label: 'Autonomous Incompatible',
+    description: 'Agent blind; missing discovery, auth, and machine interfaces.',
+    color: '#EF4444',
+    colorHex: '#EF4444',
+    min: 0,
+    max: 27,
+  },
+];
+
+export function getArsGrade(score: number): GradeBand {
+  const s = Math.max(0, Math.min(100, Math.round(score)));
+  for (const band of GRADE_BANDS) {
+    if (s >= band.min && s <= band.max) return band;
+  }
+  return GRADE_BANDS[GRADE_BANDS.length - 1];
+}
+
+export const ARS_GRADE_BANDS = GRADE_BANDS;

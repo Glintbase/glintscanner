@@ -11,6 +11,7 @@ export interface ScanRequestBody {
     profile?: 'quick' | 'deep';
     useAgentHarness?: boolean;
     provider?: string;
+    archetypeOverride?: string;
   };
 }
 
@@ -25,6 +26,7 @@ export interface ScanRequestValidation {
     profile: 'quick' | 'deep';
     useAgentHarness?: boolean;
     provider?: string;
+    archetypeOverride?: string;
   };
   policy?: UrlPolicyResult;
 }
@@ -123,6 +125,7 @@ export function validateScanRequest(body: unknown): ScanRequestValidation {
   const optObj = (b.options || {}) as Record<string, unknown>;
   const useAgentHarness = Boolean(optObj.useAgentHarness);
   const provider = typeof optObj.provider === 'string' ? optObj.provider : undefined;
+  const archetypeOverride = typeof optObj.archetypeOverride === 'string' ? optObj.archetypeOverride : undefined;
 
   return {
     ok: true,
@@ -133,6 +136,7 @@ export function validateScanRequest(body: unknown): ScanRequestValidation {
       profile,
       useAgentHarness,
       provider,
+      archetypeOverride,
     },
     policy,
   };

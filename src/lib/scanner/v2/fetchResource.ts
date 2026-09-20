@@ -21,21 +21,27 @@ export type FetchStatus =
 export interface FetchResourceOptions {
   timeoutMs?: number;
   maxBytes?: number;
-  method?: 'GET' | 'HEAD';
+  method?: 'GET' | 'HEAD' | 'POST';
   headers?: Record<string, string>;
+  body?: string;
   /** When true, do not download body (existence probe). Still uses GET by default. */
   probeOnly?: boolean;
+  /** When true, reads the response body even for HTTP 4xx/5xx status codes instead of discarding it */
+  allowErrorBody?: boolean;
 }
 
 export interface FetchResourceResult {
   ok: boolean;
   status: FetchStatus;
   httpStatus?: number;
+  headers?: Record<string, string>;
   body?: string;
   contentType?: string | null;
   url: string;
   finalUrl?: string;
   bytes?: number;
+  networkError?: boolean;
+  error?: string;
 }
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -92,6 +98,7 @@ export async function fetchResource(
           Accept: '*/*',
           ...options.headers,
         },
+        body: method === 'POST' ? options.body : undefined,
       });
 
       if ([301, 302, 303, 307, 308].includes(res.status)) {
@@ -119,8 +126,18 @@ export async function fetchResource(
 
     const httpStatus = res.status;
     const contentType = res.headers.get('content-type');
+    const headers: Record<string, string> = {};
+    res.headers.forEach((v, k) => {
+      headers[k.toLowerCase()] = v;
+    });
+
+    const isSse = Boolean(contentType?.toLowerCase().includes('text/event-stream'));
+    const isError = httpStatus >= 400;
     const exists =
-      (httpStatus >= 200 && httpStatus < 400) || httpStatus === 401 || httpStatus === 403;
+      (httpStatus >= 200 && httpStatus < 400) ||
+      httpStatus === 401 ||
+      httpStatus === 403 ||
+      (options.allowErrorBody && isError);
 
     if (!exists) {
       return {
@@ -128,6 +145,7 @@ export async function fetchResource(
         status: httpStatus === 404 ? 'soft_404' : 'unreachable',
         httpStatus,
         contentType,
+        headers,
         url: safeUrl,
         finalUrl: currentUrl,
       };
@@ -135,135 +153,113 @@ export async function fetchResource(
 
     if (options.probeOnly || method === 'HEAD') {
       return {
-        ok: true,
-        status: 'ok',
+        ok: !isError,
+        status: isError ? (httpStatus === 404 ? 'soft_404' : 'unreachable') : 'ok',
         httpStatus,
         contentType,
+        headers,
         url: safeUrl,
         finalUrl: currentUrl,
       };
     }
 
-    const reader = res.body?.getReader();
-    if (!reader) {
-      const text = await res.text().catch(() => '');
-      if (text.length > maxBytes) {
-        return {
-          ok: false,
-          status: 'too_large',
-          httpStatus,
-          contentType,
-          url: safeUrl,
-          finalUrl: currentUrl,
-          bytes: text.length,
-        };
-      }
-      if (!text.trim()) {
-        return {
-          ok: false,
-          status: 'empty',
-          httpStatus,
-          contentType,
-          url: safeUrl,
-          finalUrl: currentUrl,
-          body: text,
-          bytes: 0,
-        };
-      }
-      if (looksLikeSoft404(text, httpStatus)) {
-        return {
-          ok: false,
-          status: 'soft_404',
-          httpStatus,
-          contentType,
-          url: safeUrl,
-          finalUrl: currentUrl,
-          body: text.slice(0, 500),
-          bytes: text.length,
-        };
+    // Fast non-hanging SSE reader: SSE channels are persistent streams that do not reach EOF.
+    if (isSse && res.body) {
+      const reader = res.body.getReader();
+      let sseBody = '';
+      try {
+        const readPromise = reader.read();
+        const sseTimeout = new Promise<{ done: boolean; value?: Uint8Array }>((resolve) =>
+          setTimeout(() => resolve({ done: true }), 800)
+        );
+        const chunk = await Promise.race([readPromise, sseTimeout]);
+        if (chunk && chunk.value) {
+          sseBody = new TextDecoder('utf-8', { fatal: false }).decode(chunk.value);
+        }
+      } catch {
+        /* non-fatal stream abort */
+      } finally {
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore cancel error */
+        }
       }
       return {
-        ok: true,
-        status: 'ok',
+        ok: httpStatus >= 200 && httpStatus < 400,
+        status: httpStatus >= 200 && httpStatus < 400 ? 'ok' : 'unreachable',
         httpStatus,
         contentType,
+        headers,
         url: safeUrl,
-        finalUrl: res.url,
+        finalUrl: currentUrl,
+        body: sseBody,
+        bytes: sseBody.length,
+      };
+    }
+
+    const text = await res.text().catch(() => '');
+    if (text.length > maxBytes) {
+      return {
+        ok: false,
+        status: 'too_large',
+        httpStatus,
+        contentType,
+        headers,
+        url: safeUrl,
+        finalUrl: currentUrl,
+        bytes: text.length,
+      };
+    }
+    if (isError) {
+      return {
+        ok: false,
+        status: httpStatus === 404 ? 'soft_404' : 'unreachable',
+        httpStatus,
+        contentType,
+        headers,
+        url: safeUrl,
+        finalUrl: currentUrl,
         body: text,
         bytes: text.length,
       };
     }
-
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.byteLength;
-        if (total > maxBytes) {
-          try {
-            reader.cancel();
-          } catch {
-            /* ignore */
-          }
-          return {
-            ok: false,
-            status: 'too_large',
-            httpStatus,
-            contentType,
-            url: safeUrl,
-            finalUrl: currentUrl,
-            bytes: total,
-          };
-        }
-        chunks.push(value);
-      }
-    }
-
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const c of chunks) {
-      merged.set(c, offset);
-      offset += c.byteLength;
-    }
-    const body = new TextDecoder('utf-8', { fatal: false }).decode(merged);
-
-    if (!body.trim()) {
+    if (!text.trim()) {
       return {
         ok: false,
         status: 'empty',
         httpStatus,
         contentType,
+        headers,
         url: safeUrl,
         finalUrl: currentUrl,
-        body,
+        body: text,
         bytes: 0,
       };
     }
-
-    if (looksLikeSoft404(body, httpStatus)) {
+    if (looksLikeSoft404(text, httpStatus)) {
       return {
         ok: false,
         status: 'soft_404',
         httpStatus,
         contentType,
+        headers,
         url: safeUrl,
         finalUrl: currentUrl,
-        body: body.slice(0, 500),
-        bytes: body.length,
+        body: text.slice(0, 500),
+        bytes: text.length,
       };
     }
-
     return {
       ok: true,
       status: 'ok',
       httpStatus,
       contentType,
+      headers,
       url: safeUrl,
       finalUrl: currentUrl,
-      body,
-      bytes: body.length,
+      body: text,
+      bytes: text.length,
     };
   } catch (err: any) {
     const isAbort = err?.name === 'AbortError';
@@ -271,6 +267,8 @@ export async function fetchResource(
       ok: false,
       status: isAbort ? 'timeout' : 'failed',
       url: safeUrl,
+      networkError: true,
+      error: isAbort ? `Connection timed out after ${timeoutMs}ms` : (err?.message || String(err)),
     };
   } finally {
     clearTimeout(timer);

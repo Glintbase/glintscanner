@@ -92,9 +92,10 @@ export function validateScanUrl(
     opts.allowHttp ??
     (process.env.ALLOW_HTTP === 'true' || process.env.NODE_ENV !== 'production');
 
-  let withScheme = raw;
-  if (!/^https?:\/\//i.test(withScheme)) {
-    withScheme = `https://${withScheme}`;
+  const cleanRaw = raw.replace(/^(https?:\/\/)+/gi, '');
+  let withScheme = `https://${cleanRaw}`;
+  if (/^http:\/\//i.test(raw)) {
+    withScheme = `http://${cleanRaw}`;
   }
 
   let parsed: URL;
@@ -128,15 +129,20 @@ export function validateScanUrl(
     };
   }
 
-  if (!parsed.hostname) {
-    return { ok: false, code: 'INVALID_URL', message: 'Hostname is required' };
-  }
-
   if (isBlockedHostname(parsed.hostname)) {
     return {
       ok: false,
       code: 'SSRF_BLOCKED',
       message: 'Target host is blocked (private, loopback, or metadata address)',
+    };
+  }
+
+  const isIpv6 = parsed.hostname.startsWith('[') && parsed.hostname.endsWith(']');
+  if (!parsed.hostname || (!parsed.hostname.includes('.') && parsed.hostname !== 'localhost' && !isIpv6)) {
+    return {
+      ok: false,
+      code: 'INVALID_URL',
+      message: `Invalid target domain "${parsed.hostname || ''}". Please provide a valid domain name (e.g. yourproduct.com).`,
     };
   }
 

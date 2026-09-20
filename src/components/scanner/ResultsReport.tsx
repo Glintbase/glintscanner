@@ -1,28 +1,25 @@
 "use client";
 
-import { CheckCircle2, XCircle, Copy, AlertTriangle, Share2, X, ExternalLink, Terminal, ShieldCheck, Trophy, Sparkles, ChevronDown, ChevronUp, FileText, Sun, Moon, ScanSearch } from 'lucide-react';
+import { CheckCircle2, XCircle, Copy, AlertTriangle, Share2, X, ExternalLink, Terminal, ShieldCheck, Trophy, Sparkles, ChevronDown, ChevronUp, FileText, Sun, Moon, ScanSearch, Play, Check, Zap } from 'lucide-react';
 import { useState, useMemo, useEffect } from 'react';
+import Link from 'next/link';
 import { calculateScoreDimensions, ARS_VERSION, type ScoreDimension } from '@/lib/scanner/v2/scoring';
-import { deriveCompany, scoreBand } from '@/lib/scanner/shared';
+import { deriveCompany, deriveCompanySlug, scoreBand, getArsGrade } from '@/lib/scanner/shared';
 import dynamic from 'next/dynamic';
 
-const ObsidianGraph3D = dynamic(() => import('./ObsidianGraph3D'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-[360px] sm:h-[500px] flex flex-col items-center justify-center text-[10px] font-mono text-white/30 bg-black rounded-xl border border-white/5 gap-2">
-      <div className="w-4 h-4 rounded-full border border-white/20 border-t-[#FF3300] animate-spin"></div>
-      Initializing graph engine...
-    </div>
-  ),
-});
-
-const JourneyPanel = dynamic(() => import('./JourneyPanel'), { ssr: false });
+import MachineTopologyMap from './MachineTopologyMap';
 
 const CATEGORY_LABELS: Record<string, { label: string }> = {
   context: { label: 'Context Optimization' },
   code: { label: 'Code Block Execution' },
   machine: { label: 'Machine Readability' },
   agent: { label: 'Agent Tooling & MCP' },
+};
+const ARS3_LAYER_LABELS: Record<string, string> = {
+  discovery: 'Layer 1: Discovery',
+  access: 'Layer 2: Access & Understanding',
+  usability: 'Layer 3: Usability & Interoperability',
+  payments: 'Layer 4: Payments & Commerce',
 };
 
 const SURFACE_LABELS: Record<string, string> = {
@@ -86,6 +83,9 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
   const [copiedFixes, setCopiedFixes] = useState(false);
   const [reportCopied, setReportCopied] = useState(false);
   const [expandedPageUrl, setExpandedPageUrl] = useState<string | null>(null);
+  const [expandedLayer, setExpandedLayer] = useState<string | null>(null);
+  const [copiedCliAudit, setCopiedCliAudit] = useState(false);
+  const [copiedMcpServe, setCopiedMcpServe] = useState(false);
 
   useEffect(() => {
     if (isDark) {
@@ -111,40 +111,6 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const handleCopyMarkdownReport = () => {
-    const reportText = generateMarkdownReport();
-    navigator.clipboard.writeText(reportText);
-    setReportCopied(true);
-    setTimeout(() => setReportCopied(false), 2500);
-  };
-
-  const handleCopyProblems = () => {
-    const text = `### Detected Problems Summary\n\n` + problems.map((p: any) => `- **${p.title}**: ${p.desc}`).join('\n');
-    navigator.clipboard.writeText(text);
-    setCopiedId('problems-md');
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleCopySolutions = () => {
-    const text = `### Implementation remedies\n\n` + solutions.map((s: any) => `#### ${s.title}\n\n${s.prompt}`).join('\n\n');
-    navigator.clipboard.writeText(text);
-    setCopiedId('solutions-md');
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleCopyProblemSummaryPrompt = () => {
-    const text = `We are missing critical developer ecosystem surfaces. Here is a summary of the problems:\n` + problems.map((p: any) => `- ${p.title}: ${p.desc}`).join('\n') + `\n\nPlease help us fix these issues.`;
-    navigator.clipboard.writeText(text);
-    setCopiedSummary(true);
-    setTimeout(() => setCopiedSummary(false), 2000);
-  };
-
-  const handleCopyFixesPrompt = () => {
-    const text = `Here are the remediation instructions for making our product agent-native:\n` + solutions.map((s: any) => `### ${s.title}\n\n${s.prompt}`).join('\n\n') + `\n\nPlease implement these files and configure our repository accordingly.`;
-    navigator.clipboard.writeText(text);
-    setCopiedFixes(true);
-    setTimeout(() => setCopiedFixes(false), 2000);
-  };
 
   // Lift theme to <html> so the navbar, body bg, and ALL children respond
   useEffect(() => {
@@ -172,6 +138,39 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
     return Array.isArray(rawChecks) ? undefined : rawChecks?.journeys;
   }, [rawChecks]);
 
+  const ars3Scorecard = useMemo(() => {
+    if (!Array.isArray(rawChecks) && rawChecks?.scorecard) {
+      return rawChecks.scorecard;
+    }
+    return null;
+  }, [rawChecks]);
+
+  const archetype = useMemo(() => {
+    if (!Array.isArray(rawChecks)) {
+      return rawChecks?.archetype || rawChecks?.scorecard?.archetype || null;
+    }
+    return null;
+  }, [rawChecks]);
+
+  const arsGrade = useMemo(() => {
+    if (!Array.isArray(rawChecks) && rawChecks?.grade) {
+      return rawChecks.grade;
+    }
+    return getArsGrade(score).grade;
+  }, [rawChecks, score]);
+
+  const soft404Detected = useMemo(() => {
+    if (ars3Scorecard?.layers?.access?.checks) {
+      return ars3Scorecard.layers.access.checks.some(
+        (c: any) => c.checkId === 'anti-spa-404-canary' && c.status === 'fail'
+      );
+    }
+    if (pages && pages.some((p: any) => p.fetchStatus === 'soft_404')) {
+      return true;
+    }
+    return false;
+  }, [ars3Scorecard, pages]);
+
   const forceGraphData = useMemo(() => {
     if (!graph || !graph.nodes || !graph.edges) {
       return { nodes: [], links: [] };
@@ -196,6 +195,9 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
   const isV2 = checks.length > 0 && ('type' in checks[0] && 'found' in checks[0]);
   const { label, color, border, glow } = getScoreLabel(score);
+  const bandInfo = scoreBand(score);
+  const tierText = bandInfo.displayLabel.toUpperCase();
+  const tierColor = bandInfo.textClass;
 
   const companySlug = url ? deriveCompany(url).toLowerCase() : '';
   const shareUrl = companySlug
@@ -245,36 +247,59 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
     }
   }, [checks, isV2]);
 
-  // SPEC-08 R1: journey checklist MUST use pathfinder traces, not surface presence
-  const simulatedActions = useMemo(() => {
-    if (journeys?.traces && Array.isArray(journeys.traces) && journeys.traces.length > 0) {
-      return journeys.traces.map((t: any) => ({
-        label: t.label || t.journey,
-        passed: !!t.success,
-        skipped: false,
-        hops: t.hopCount,
-        pressure: t.hallucinationPressure,
-        status: t.status,
-      }));
-    }
-    if (isV2) {
-      // Legacy scans without journeys: honest empty state (no fake passes)
-      return [];
-    }
-    return [
-      { label: 'Parse docs layout', passed: checks.some((c: any) => c.category === 'context' && c.score > 0), skipped: false },
-      { label: 'Extract code blocks', passed: checks.some((c: any) => c.category === 'code' && c.score > 0), skipped: false },
-      { label: 'Resolve dependencies', passed: checks.some((c: any) => c.category === 'machine' && c.score > 0), skipped: false },
-      { label: 'Execute tool calls', passed: checks.some((c: any) => c.category === 'agent' && c.score > 0), skipped: false },
-    ];
-  }, [checks, isV2, journeys]);
-
   const problems = useMemo(() => {
+    // 1. ARS 3.0 Scorecard checks (Primary)
+    if (ars3Scorecard) {
+      const allResults: any[] = ars3Scorecard.results?.length
+        ? ars3Scorecard.results
+        : [
+            ...(ars3Scorecard.layers?.discovery?.checks || []),
+            ...(ars3Scorecard.layers?.access?.checks || []),
+            ...(ars3Scorecard.layers?.usability?.checks || []),
+            ...(ars3Scorecard.layers?.payments?.checks || []),
+          ];
+
+      const failedOrWarned = allResults.filter(
+        (c: any) => c.status === 'fail' || c.status === 'warn'
+      );
+
+      if (failedOrWarned.length > 0) {
+        return failedOrWarned.map((c: any) => {
+          const layerKey = c.layer || (
+            c.checkId?.startsWith('robots') || c.checkId?.startsWith('ard') || c.checkId?.startsWith('ai-cat') || c.checkId?.startsWith('registry') ? 'discovery' :
+            c.checkId?.startsWith('llms') || c.checkId?.startsWith('anti-spa') || c.checkId?.startsWith('content') || c.checkId?.startsWith('zero-js') || c.checkId?.startsWith('openapi') ? 'access' :
+            c.checkId?.startsWith('mcp') || c.checkId?.startsWith('auth') || c.checkId?.startsWith('rate-limit') ? 'usability' :
+            'payments'
+          );
+
+          return {
+            id: c.checkId,
+            title: c.name || c.remediation?.title || c.checkId,
+            desc: c.message || 'Check failed or requires optimization.',
+            layer: layerKey,
+            layerLabel: ARS3_LAYER_LABELS[layerKey] || layerKey,
+            severity: c.status === 'fail' ? 'critical' : 'warning',
+            status: c.status,
+            earnedPoints: c.earnedPoints ?? 0,
+            maxPoints: c.maxPoints ?? 0,
+            targetFile: c.remediation?.file,
+            fix: c.remediation?.fixCommand || c.remediation?.title,
+            mcpPrompt: c.remediation?.mcpPrompt,
+            diffSnippet: c.remediation?.diffSnippet ? (Array.isArray(c.remediation.diffSnippet) ? c.remediation.diffSnippet.join('\n') : c.remediation.diffSnippet) : undefined,
+          };
+        });
+      }
+    }
+
+    // 2. Legacy V2 Surfaces Fallback
     if (isV2) {
       return checks.filter((s: any) => !s.found && s.status !== 'skipped').map((s: any) => ({
         title: SURFACE_LABELS[s.type] || s.type,
         desc: s.description,
-        fix: s.fix
+        fix: s.fix,
+        layer: 'surfaces',
+        layerLabel: 'Ecosystem Surface',
+        severity: 'critical',
       }));
     } else {
       const list: any[] = [];
@@ -284,19 +309,117 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           list.push({
             title: r.label,
             desc: r.fix || 'Asset is missing, incomplete, or requires optimization.',
-            fix: r.fix
+            fix: r.fix,
+            layer: c.category || 'legacy',
+            layerLabel: CATEGORY_LABELS[c.category]?.label || c.category || 'Legacy Audit',
+            severity: 'critical',
           });
         });
       });
       return list;
     }
-  }, [checks, isV2]);
+  }, [ars3Scorecard, checks, isV2]);
 
   const solutions = useMemo(() => {
+    // 1. ARS 3.0 Scorecard Remediations (Primary)
+    if (ars3Scorecard) {
+      const list: any[] = [];
+      const seenIds = new Set<string>();
+
+      // A. Explicit remediations array on scorecard
+      if (Array.isArray(ars3Scorecard.remediations) && ars3Scorecard.remediations.length > 0) {
+        for (const r of ars3Scorecard.remediations) {
+          const key = r.id || r.title;
+          if (!r.title || seenIds.has(key)) continue;
+          seenIds.add(key);
+
+          let promptContent = r.mcpPrompt;
+          if (!promptContent) {
+            if (r.diffSnippet) {
+              promptContent = `Target File: ${r.targetFile || 'Configuration'}\n${r.fixCommand ? `Command: ${r.fixCommand}\n\n` : ''}${r.diffSnippet}`;
+            } else if (r.fixCommand) {
+              promptContent = `${r.description || r.title}\n\nRun CLI remediation:\n${r.fixCommand}`;
+            } else {
+              promptContent = r.description || `Implement remediation for ${r.title}`;
+            }
+          }
+
+          list.push({
+            id: r.id,
+            title: r.title,
+            layer: r.layer,
+            layerLabel: ARS3_LAYER_LABELS[r.layer] || r.layer,
+            targetFile: r.targetFile,
+            fixCommand: r.fixCommand,
+            diffSnippet: r.diffSnippet,
+            prompt: promptContent,
+            severity: r.severity || 'high',
+          });
+        }
+      }
+
+      // B. Supplement with any failed check with remediation not yet in list
+      const allResults: any[] = ars3Scorecard.results?.length
+        ? ars3Scorecard.results
+        : [
+            ...(ars3Scorecard.layers?.discovery?.checks || []),
+            ...(ars3Scorecard.layers?.access?.checks || []),
+            ...(ars3Scorecard.layers?.usability?.checks || []),
+            ...(ars3Scorecard.layers?.payments?.checks || []),
+          ];
+
+      for (const c of allResults) {
+        if ((c.status === 'fail' || c.status === 'warn') && c.remediation) {
+          const key = c.checkId || c.remediation.title;
+          if (seenIds.has(key)) continue;
+          seenIds.add(key);
+
+          const layerKey = c.layer || (
+            c.checkId?.startsWith('robots') || c.checkId?.startsWith('ard') ? 'discovery' :
+            c.checkId?.startsWith('llms') || c.checkId?.startsWith('anti-spa') || c.checkId?.startsWith('content') ? 'access' :
+            c.checkId?.startsWith('mcp') || c.checkId?.startsWith('auth') ? 'usability' :
+            'payments'
+          );
+
+          const diffStr = c.remediation.diffSnippet
+            ? (Array.isArray(c.remediation.diffSnippet) ? c.remediation.diffSnippet.join('\n') : c.remediation.diffSnippet)
+            : undefined;
+
+          let promptContent = c.remediation.mcpPrompt;
+          if (!promptContent) {
+            if (diffStr) {
+              promptContent = `Target File: ${c.remediation.file || 'Codebase'}\n${c.remediation.fixCommand ? `Command: ${c.remediation.fixCommand}\n\n` : ''}${diffStr}`;
+            } else if (c.remediation.fixCommand) {
+              promptContent = `${c.message || c.remediation.title}\n\nRun CLI remediation:\n${c.remediation.fixCommand}`;
+            } else {
+              promptContent = c.message || `Implement remediation for ${c.remediation.title}`;
+            }
+          }
+
+          list.push({
+            id: c.checkId,
+            title: c.remediation.title,
+            layer: layerKey,
+            layerLabel: ARS3_LAYER_LABELS[layerKey] || layerKey,
+            targetFile: c.remediation.file,
+            fixCommand: c.remediation.fixCommand,
+            diffSnippet: diffStr,
+            prompt: promptContent,
+            severity: c.status === 'fail' ? 'critical' : 'high',
+          });
+        }
+      }
+
+      if (list.length > 0) return list;
+    }
+
+    // 2. Legacy V2 Surfaces Fallback
     if (isV2) {
       return checks.filter((s: any) => !s.found && s.status !== 'skipped' && s.fix).map((s: any) => ({
         title: RECOMMENDATION_TITLES[s.type] || `Implement ${s.type}`,
-        prompt: s.fix
+        prompt: s.fix,
+        layer: 'surfaces',
+        layerLabel: 'Ecosystem Surface',
       }));
     } else {
       const list: any[] = [];
@@ -305,19 +428,23 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
         failed.forEach((r: any) => {
           list.push({
             title: `Remedy for: ${r.label}`,
-            prompt: r.fix
+            prompt: r.fix,
+            layer: c.category,
+            layerLabel: CATEGORY_LABELS[c.category]?.label || c.category,
           });
         });
         if (c.fix && !c.results) {
           list.push({
             title: `General Remedy: ${CATEGORY_LABELS[c.category]?.label || c.category}`,
-            prompt: c.fix
+            prompt: c.fix,
+            layer: c.category,
+            layerLabel: CATEGORY_LABELS[c.category]?.label || c.category,
           });
         }
       });
       return list;
     }
-  }, [checks, isV2]);
+  }, [ars3Scorecard, checks, isV2]);
 
   const contextOverload = useMemo(() => {
     if (pages.length === 0) return 0;
@@ -348,6 +475,91 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
       month: 'long',
       day: 'numeric'
     });
+
+    if (ars3Scorecard) {
+      let report = `# ARS 3.0 AI Agent Readiness Audit Report\n\n`;
+      report += `**Product / Target URL:** ${url || 'Scanned Target'}\n`;
+      report += `**ARS Score:** ${score} / 100\n`;
+      report += `**Grade:** ${arsGrade} (${ars3Scorecard.gradeLabel || tierText})\n`;
+      report += `**Archetype Profile:** ${archetype?.label || archetype?.archetype || 'Auto-detected'}\n`;
+      report += `**Active Denominator:** ${ars3Scorecard.activeDenominator || 85} pts (Base: ${ars3Scorecard.baseDenominator || 85} pts + Bonus Earned: ${ars3Scorecard.bonusEarned || 0} pts)\n`;
+      if (scanId) report += `**Scan ID:** ${scanId}\n`;
+      report += `**Generated On:** ${current_date}\n\n`;
+      report += `---\n\n`;
+
+      report += `## 📊 Executive Summary\n\n`;
+      report += `This audit evaluates the machine-readability, searchability, tool discovery, and autonomous agent interoperability of the target across the ARS 3.0 open protocol standard.\n\n`;
+      if (score >= 90) {
+        report += `**Verdict:** **Elite (Agent-Native)**. Autonomous AI agents (Cursor, Claude Code, GitHub Copilot) can discover, parse, authenticate, and execute integrations against this product with zero friction and near-zero hallucination risks.\n`;
+      } else if (score >= 70) {
+        report += `**Verdict:** **AI-Friendly**. Core machine surfaces and protocols are available, but targeted improvements in authentication contracts, OpenAPI schemas, or error recovery are recommended to achieve elite status.\n`;
+      } else if (score >= 40) {
+        report += `**Verdict:** **AI-Capable**. Basic documentation is accessible, but agents face friction due to soft-404 SPA route leaks, missing machine schemas, or context-bloating navigation structures.\n`;
+      } else {
+        report += `**Verdict:** **Legacy Target**. Core open protocol files (robots.txt AI directives, /llms.txt, OpenAPI specs, auth.md) are absent or misconfigured, causing agent navigation stalls.\n`;
+      }
+      report += `\n---\n\n`;
+
+      // 4-Layer Summary Table
+      report += `## 🏛️ ARS 3.0 4-Layer Scorecard\n\n`;
+      report += `| Layer | Base Earned | Max Points | Status |\n`;
+      report += `| :--- | :---: | :---: | :--- |\n`;
+      if (ars3Scorecard.layers) {
+        const layerKeys = ['discovery', 'access', 'usability', 'payments'] as const;
+        layerKeys.forEach((k) => {
+          const l = ars3Scorecard.layers[k];
+          if (l) {
+            report += `| **${l.name || ARS3_LAYER_LABELS[k] || k}** | ${l.baseEarned} | ${l.baseMax} pts | ${l.statusText || 'Evaluated'} |\n`;
+          }
+        });
+      }
+      report += `\n---\n\n`;
+
+      // Detected Problems
+      report += `## 🚨 Detected Issues & Defects (${problems.length} issues)\n\n`;
+      if (problems.length > 0) {
+        problems.forEach((p: any, idx: number) => {
+          report += `### ${idx + 1}. [${(p.severity || 'defect').toUpperCase()}] ${p.title}\n`;
+          if (p.layerLabel) report += `- **Layer:** ${p.layerLabel}\n`;
+          report += `- **Description:** ${p.desc}\n`;
+          if (p.targetFile) report += `- **Target File:** \`${p.targetFile}\`\n`;
+          if (p.fix) report += `- **Recommended Fix:** \`${p.fix}\`\n`;
+          report += `\n`;
+        });
+      } else {
+        report += `No problems detected! All evaluated checks passed. 🎉\n\n`;
+      }
+      report += `---\n\n`;
+
+      // Actionable Remedies
+      report += `## 🛠️ Actionable Implementation Remediations (${solutions.length} available)\n\n`;
+      if (solutions.length > 0) {
+        solutions.forEach((s: any, idx: number) => {
+          report += `### Remedy ${idx + 1}: ${s.title}\n`;
+          if (s.layerLabel) report += `- **Layer:** ${s.layerLabel}\n`;
+          if (s.targetFile) report += `- **Target File:** \`${s.targetFile}\`\n`;
+          if (s.fixCommand) report += `- **CLI Fix Command:** \`${s.fixCommand}\`\n`;
+          report += `\n\`\`\`text\n${s.prompt}\n\`\`\`\n\n`;
+        });
+      } else {
+        report += `All evaluated systems are optimal. No immediate remediations required.\n\n`;
+      }
+
+      if (pages.length > 0) {
+        report += `---\n\n`;
+        report += `## 📑 Crawled Knowledge Corpus (${pages.length} pages)\n\n`;
+        report += `| Page Title | URL | Word Count | Code Blocks |\n`;
+        report += `| :--- | :--- | :---: | :---: |\n`;
+        pages.slice(0, 50).forEach((p: any) => {
+          report += `| [${p.title || 'Untitled'}](${p.url}) | \`${p.url}\` | ${p.wordCount ?? 0} words | ${p.codeBlocks?.length ?? 0} blocks |\n`;
+        });
+        report += `\n`;
+      }
+
+      report += `---\n\n`;
+      report += `*Report generated by [Glintbase Scanner](https://scan.glintbase.dev) — ARS 3.0 Open Protocol Specification.*`;
+      return report;
+    }
 
     if (isV2) {
       let report = `# AI Agent Readiness & Ecosystem Diagnostic Report\n\n`;
@@ -612,9 +824,100 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
     document.body.removeChild(link);
   };
 
-  const bandInfo = scoreBand(score);
-  const tierText = bandInfo.displayLabel.toUpperCase();
-  const tierColor = bandInfo.textClass;
+  const handleCopyMarkdownReport = () => {
+    const reportText = generateMarkdownReport();
+    navigator.clipboard.writeText(reportText);
+    setReportCopied(true);
+    setTimeout(() => setReportCopied(false), 2500);
+  };
+
+  const handleCopyProblems = () => {
+    let text = `### ARS 3.0 Detected Problems & Defects\n\n`;
+    if (ars3Scorecard) {
+      text += `**Target URL:** ${url || 'Scanned URL'}\n`;
+      text += `**ARS Score:** ${score}/100 (Grade: ${arsGrade})\n`;
+      text += `**Archetype Profile:** ${archetype?.label || archetype?.archetype || 'Auto-detected'}\n\n`;
+    }
+    text += problems.map((p: any) => `- [${(p.severity || 'warning').toUpperCase()}] **${p.title}** (${p.layerLabel || p.layer || 'general'}): ${p.desc}${p.targetFile ? ` [Target: ${p.targetFile}]` : ''}`).join('\n');
+    navigator.clipboard.writeText(text);
+    setCopiedId('problems-md');
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleCopySolutions = () => {
+    let text = `### ARS 3.0 Actionable Implementation Remedies\n\n`;
+    if (ars3Scorecard) {
+      text += `**Target URL:** ${url || 'Scanned URL'}\n`;
+      text += `**ARS Score:** ${score}/100\n\n`;
+    }
+    text += solutions.map((s: any) => `#### ${s.title}${s.layerLabel ? ` (${s.layerLabel})` : ''}\n${s.targetFile ? `**Target File:** \`${s.targetFile}\`\n` : ''}${s.fixCommand ? `**CLI Command:** \`${s.fixCommand}\`\n` : ''}\n\`\`\`\n${s.prompt}\n\`\`\``).join('\n\n');
+    navigator.clipboard.writeText(text);
+    setCopiedId('solutions-md');
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleCopyProblemSummaryPrompt = () => {
+    let text = '';
+    if (ars3Scorecard) {
+      text = `We completed an ARS 3.0 AI Agent Readiness Audit on our developer ecosystem.\n\n`;
+      text += `Target URL: ${url || 'Scanned Target'}\n`;
+      text += `ARS Score: ${score}/100 (Grade: ${arsGrade})\n`;
+      text += `Archetype Profile: ${archetype?.label || archetype?.archetype || 'Auto-detected'}\n`;
+      if (ars3Scorecard.activeDenominator) {
+        text += `Active Denominator: ${ars3Scorecard.activeDenominator} pts\n`;
+      }
+      text += `\nHere is the compressed diagnostic summary of detected defects across ARS 3.0 layers:\n\n`;
+
+      const groupedByLayer: Record<string, any[]> = {};
+      problems.forEach((p: any) => {
+        const layerKey = p.layer || 'general';
+        if (!groupedByLayer[layerKey]) groupedByLayer[layerKey] = [];
+        groupedByLayer[layerKey].push(p);
+      });
+
+      for (const [lKey, probs] of Object.entries(groupedByLayer)) {
+        const layerName = ARS3_LAYER_LABELS[lKey] || lKey.toUpperCase();
+        text += `### ${layerName}\n`;
+        probs.forEach((p) => {
+          text += `- [${(p.severity || 'defect').toUpperCase()}] ${p.title}: ${p.desc}${p.targetFile ? ` (File: ${p.targetFile})` : ''}\n`;
+        });
+        text += '\n';
+      }
+
+      text += `Please analyze these architectural agent readiness defects and recommend immediate remediation steps.`;
+    } else {
+      text = `We are missing critical developer ecosystem surfaces. Here is a summary of the problems:\n` + problems.map((p: any) => `- ${p.title}: ${p.desc}`).join('\n') + `\n\nPlease help us fix these issues.`;
+    }
+
+    navigator.clipboard.writeText(text);
+    setCopiedSummary(true);
+    setTimeout(() => setCopiedSummary(false), 2000);
+  };
+
+  const handleCopyFixesPrompt = () => {
+    let text = '';
+    if (ars3Scorecard) {
+      text = `Here are the official ARS 3.0 remediation instructions, configuration files, and code patches to make our product agent-native:\n\n`;
+      text += `Target: ${url || 'Scanned Repository'}\n`;
+      text += `Target ARS Grade: A+ (Elite Agent-Native)\n\n`;
+
+      solutions.forEach((s: any, idx: number) => {
+        text += `### ${idx + 1}. ${s.title}\n`;
+        if (s.layerLabel) text += `- **Layer:** ${s.layerLabel}\n`;
+        if (s.targetFile) text += `- **Target File:** \`${s.targetFile}\`\n`;
+        if (s.fixCommand) text += `- **CLI Fix:** \`${s.fixCommand}\`\n`;
+        text += `\n\`\`\`\n${s.prompt}\n\`\`\`\n\n`;
+      });
+
+      text += `Please implement these configuration files, fix commands, and code patches in our repository.`;
+    } else {
+      text = `Here are the remediation instructions for making our product agent-native:\n` + solutions.map((s: any) => `### ${s.title}\n\n${s.prompt}`).join('\n\n') + `\n\nPlease implement these files and configure our repository accordingly.`;
+    }
+
+    navigator.clipboard.writeText(text);
+    setCopiedFixes(true);
+    setTimeout(() => setCopiedFixes(false), 2000);
+  };
 
   return (
     <>
@@ -679,6 +982,19 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
               Export Markdown
             </button>
 
+            {url && (
+              <>
+                <div className="w-px h-4 bg-white/10 mx-0.5" />
+                <a
+                  href={`/scan/${companySlug || deriveCompanySlug(url)}/briefing?url=${encodeURIComponent(url)}&score=${score}`}
+                  className="inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-wider text-white border border-white/10 bg-white/[0.02] hover:bg-white/10 rounded px-3 py-1.5 transition-all font-mono cursor-pointer"
+                >
+                  <FileText size={11} />
+                  Executive PDF
+                </a>
+              </>
+            )}
+
 
             <div className="w-px h-4 bg-white/10 mx-0.5" />
 
@@ -717,10 +1033,18 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
         {/* ——— HERO DASHBOARD ——— */}
         <div className="space-y-4">
           <div className="flex flex-col lg:flex-row items-stretch border border-white/[0.06] rounded-2xl overflow-hidden glint-card">
-            <div className="relative flex flex-col items-center justify-center px-6 py-6 sm:px-10 sm:py-10 bg-black min-w-full lg:min-w-[200px] border-b lg:border-b-0 lg:border-r border-white/[0.06]">
+            <div className="relative flex flex-col items-center justify-center px-6 py-6 sm:px-10 sm:py-10 bg-black min-w-full lg:min-w-[220px] border-b lg:border-b-0 lg:border-r border-white/[0.06]">
               <div className="absolute inset-0 pointer-events-none" style={{ background: `radial-gradient(circle at 50% 50%, ${score >= 90 ? 'rgba(255,51,0,0.10)' : score >= 70 ? 'rgba(34,211,238,0.08)' : score >= 40 ? 'rgba(139,92,246,0.08)' : 'rgba(255,51,0,0.06)'} 0%, transparent 70%)` }} />
-              <div className={`text-6xl sm:text-7xl lg:text-[88px] leading-none font-black font-mono tracking-tighter ${tierColor}`}>
-                {score}
+              <div className="flex items-center gap-3">
+                <div className={`text-5xl sm:text-6xl lg:text-[76px] leading-none font-black font-mono tracking-tighter ${tierColor}`}>
+                  {score}
+                </div>
+                <div className="flex flex-col items-center pl-2 border-l border-white/10">
+                  <span className="px-2.5 py-0.5 rounded-lg bg-white/5 border border-white/15 text-2xl sm:text-3xl font-black font-mono text-white">
+                    {arsGrade}
+                  </span>
+                  <span className="text-[8px] font-mono text-white/40 uppercase mt-0.5">Grade</span>
+                </div>
               </div>
               <div className="text-[9px] font-mono font-bold tracking-[0.3em] text-white/25 uppercase mt-1">/ 100</div>
               <div className={`mt-3 text-[9px] font-mono font-bold tracking-widest uppercase px-2.5 py-1 rounded border ${score >= 90 ? 'text-[#FF3300] border-[#FF3300]/30 bg-[#FF3300]/[0.08]' : score >= 70 ? 'text-[#22D3EE] border-[#22D3EE]/30 bg-[#22D3EE]/[0.08]' : score >= 40 ? 'text-[#8B5CF6] border-[#8B5CF6]/30 bg-[#8B5CF6]/[0.08]' : 'text-[#FF3300]/70 border-[#FF3300]/20 bg-[#FF3300]/[0.05]'}`}>{tierText}</div>
@@ -731,6 +1055,18 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
               <div className="text-2xl sm:text-3xl font-black text-white uppercase tracking-tight font-mono leading-none break-all">
                 {url ? (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })() : 'Scanned Surface'}
               </div>
+              {archetype && (
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded text-[10px] font-mono font-bold bg-[#FF3300]/10 text-[#FF3300] border border-[#FF3300]/30 uppercase tracking-wider">
+                    Archetype: {archetype.label || archetype.archetype}
+                  </span>
+                  {ars3Scorecard?.activeDenominator && (
+                    <span className="text-[10px] font-mono text-white/50 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                      Denominator: {ars3Scorecard.activeDenominator} pts
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="mt-3 text-[11px] sm:text-[12px] text-white/45 leading-relaxed max-w-md">
                 {isV2
                   ? score >= 90 ? 'Elite developer ecosystem. Fully optimized for machine ingestion, OpenAPI parsing, and MCP orchestration.'
@@ -774,6 +1110,74 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
             </div>
           </div>
 
+          {/* Dual-Track CLI & Simulator Integration Bar */}
+          <div className="bg-white/[0.02] border border-white/[0.08] rounded-2xl p-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 glint-card">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-[#FF3300]/10 border border-[#FF3300]/30 flex items-center justify-center shrink-0">
+                <Terminal size={16} className="text-[#FF3300]" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-white uppercase tracking-wider font-mono">
+                  Developer Track & MCP Parity
+                </div>
+                <div className="text-[11px] text-white/50 truncate font-mono">
+                  Inspect in CLI or test live agent trajectories in Flight Simulator
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`glintbase audit ${url || ''}`);
+                  setCopiedCliAudit(true);
+                  setTimeout(() => setCopiedCliAudit(false), 2000);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 text-xs font-mono flex items-center gap-1.5 transition-all"
+                title="Copy CLI audit command"
+              >
+                <Copy size={12} className={copiedCliAudit ? 'text-emerald-400' : 'text-white/40'} />
+                <span>{copiedCliAudit ? 'Copied CLI Command' : 'glintbase audit'}</span>
+              </button>
+
+              <Link
+                href={`/simulate?target=${encodeURIComponent(url || '')}`}
+                className="px-3 py-1.5 rounded-lg bg-[#FF3300] hover:bg-[#FF3300]/90 text-white text-xs font-bold font-mono uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-md shadow-[#FF3300]/20"
+              >
+                <Play size={12} fill="currentColor" />
+                <span>Flight Simulator</span>
+              </Link>
+
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText('glintbase serve');
+                  setCopiedMcpServe(true);
+                  setTimeout(() => setCopiedMcpServe(false), 2000);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-black/60 hover:bg-black/90 text-white/80 hover:text-white border border-white/10 text-xs font-mono flex items-center gap-1.5 transition-all"
+                title="Copy MCP server serve command"
+              >
+                <Copy size={12} className={copiedMcpServe ? 'text-emerald-400' : 'text-white/40'} />
+                <span>{copiedMcpServe ? 'Copied' : 'glintbase serve'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Soft-404 Anti-SPA Canary Warning */}
+          {soft404Detected && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs space-y-2">
+              <div className="flex items-center gap-2 font-bold text-amber-300 uppercase tracking-wider font-mono">
+                <AlertTriangle size={16} /> Anti-SPA Canary Hazard Detected
+              </div>
+              <p className="leading-relaxed text-amber-200/80">
+                Non-existent routes return HTTP 200 HTML shells instead of RFC 7807 404 JSON. Autonomous agent personas (Claude Code, Cursor, Perplexity) parse these HTML shells as valid API bodies, resulting in hallucinated fields and stuck retry loops.
+              </p>
+              <div className="text-[11px] font-mono text-amber-300/90 pt-1">
+                Fix: Deploy an Anti-SPA 404 handler returning genuine HTTP 404 status.
+              </div>
+            </div>
+          )}
+
           {/* Surface inventory */}
           <div className="border border-white/[0.06] rounded-2xl overflow-hidden glint-card">
             <div className="bg-black px-5 py-3 border-b border-white/[0.05] flex items-center justify-between">
@@ -800,50 +1204,127 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
             </div>
           </div>
 
-          {/* Agent pathfinder journeys (SPEC-08: driven by journeys.traces only) */}
-          <div className="border border-white/[0.06] rounded-2xl overflow-hidden glint-card">
-            <div className="bg-black px-5 py-3 border-b border-white/[0.05] flex items-center justify-between">
-              <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25">Agent Journey Pathfinder (Deterministic)</span>
-              <span className="text-[8px] font-mono text-white/25">
-                {simulatedActions.length > 0
-                  ? `${simulatedActions.filter((a: any) => a.passed).length}/${simulatedActions.length} passed`
-                  : 'No traces'}
-              </span>
-            </div>
-            {simulatedActions.length === 0 ? (
-              <div className="bg-black px-5 py-8 text-center text-[10px] font-mono text-white/30">
-                No journey traces available for this scan. Re-run the scan to generate pathfinder results.
-              </div>
-            ) : (
-              <div className="bg-black grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                {simulatedActions.map((action: any, idx: number) => (
-                  <div
-                    key={idx}
-                    className={`flex flex-col items-center justify-center py-6 px-3 text-center gap-2 hover:bg-white/[0.02] transition-colors border-white/[0.05]
-                      border-b
-                      ${idx % 2 === 0 ? 'border-r' : ''}
-                      ${idx % 3 !== 2 ? 'md:border-r' : 'md:border-r-0'}
-                      ${idx % 4 !== 3 ? 'lg:border-r' : 'lg:border-r-0'}
-                    `}
-                  >
-                    <div className={`text-2xl font-black font-mono ${action.skipped ? 'text-white/10' : action.passed ? 'text-[#FF3300]' : 'text-white/15'}`}>
-                      {action.skipped ? '–' : action.passed ? '●' : '○'}
-                    </div>
-                    <div className={`text-[9px] font-mono leading-tight ${action.skipped ? 'text-white/20 line-through' : action.passed ? 'text-white/65' : 'text-white/25'}`}>
-                      {action.label}
-                    </div>
-                    {typeof action.hops === 'number' && (
-                      <div className="text-[8px] font-mono text-white/20">{action.hops} hops</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* ARS 3.0 Machine Topology Map */}
+          <MachineTopologyMap
+            graph={checks?.graph}
+            surfaces={checks?.surfaces || discoverablesList}
+            targetUrl={url || ''}
+          />
 
           {/* Ecosystem Diagnostic Dimensions Breakdown
               Mobile: isolate from canvas compositing; avoid overflow-x clip of labels */}
-          {isV2 && (
+          {/* ARS 3.0 Standard 4-Layer Dynamic Architecture */}
+          {ars3Scorecard?.layers ? (
+            <div className="border border-white/[0.06] rounded-2xl glint-card min-w-0 gpu-isolate relative z-[1]">
+              <div className="bg-black px-4 sm:px-5 py-3 border-b border-white/[0.05] flex items-center justify-between gap-2 rounded-t-2xl min-w-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[9px] font-mono uppercase tracking-[0.25em] text-[#FF3300] font-bold truncate">
+                    ARS 3.0 Standard · 4-Layer Dynamic Architecture
+                  </span>
+                  <span className="text-[9px] font-mono bg-white/5 text-white/50 px-2 py-0.5 rounded border border-white/10 shrink-0">
+                    119 Discrete Checks
+                  </span>
+                </div>
+                <span className="text-[8px] font-mono text-white/25 shrink-0 hidden sm:inline">
+                  Tap card to expand check results
+                </span>
+              </div>
+
+              <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 items-stretch rounded-b-2xl min-w-0">
+                {(['discovery', 'access', 'usability', 'payments'] as const).map((layerKey) => {
+                  const layer = ars3Scorecard.layers[layerKey];
+                  if (!layer) return null;
+                  const isExpanded = expandedLayer === layerKey;
+                  const pct = layer.baseMax > 0 ? Math.min(100, Math.max(0, (layer.totalEarned / layer.baseMax) * 100)) : 0;
+                  const passedChecks = layer.checks.filter((c: any) => c.status === 'pass').length;
+
+                  return (
+                    <div
+                      key={layerKey}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setExpandedLayer(isExpanded ? null : layerKey)}
+                      className={`flex flex-col p-4 rounded-xl border transition-all cursor-pointer select-none w-full min-w-0 ${
+                        isExpanded
+                          ? 'border-[#FF3300]/40 bg-white/[0.03]'
+                          : 'border-white/[0.06] bg-white/[0.01] hover:bg-white/[0.02]'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2 mb-2 font-mono min-w-0">
+                        <div className="min-w-0">
+                          <span className="text-[10px] sm:text-[11px] font-black text-white/90 uppercase tracking-wide leading-snug block truncate" title={layer.name}>
+                            {layer.name}
+                          </span>
+                          <span className="text-[9px] text-white/40 font-mono block mt-0.5">
+                            {passedChecks}/{layer.checks.length} checks passed
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                          <span className="text-xs font-bold text-[#FF3300] font-mono tabular-nums whitespace-nowrap">
+                            {layer.totalEarned}/{layer.baseMax}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronUp size={12} className="text-white/40" />
+                          ) : (
+                            <ChevronDown size={12} className="text-white/40" />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Progress bar */}
+                      <div className="w-full h-1.5 bg-white/[0.06] rounded-full mb-2 min-w-0 overflow-hidden">
+                        <div
+                          className="h-full bg-[#FF3300] rounded-full transition-all"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[9px] font-mono mt-auto pt-2 border-t border-white/[0.04]">
+                        <span className={`font-bold ${
+                          layer.statusText === 'Optimal' ? 'text-emerald-400' : layer.statusText === 'Needs attention' ? 'text-amber-400' : 'text-rose-400'
+                        }`}>
+                          {layer.applicable ? layer.statusText : 'N/A (Skipped)'}
+                        </span>
+                        {layer.bonusEarned > 0 && (
+                          <span className="text-cyan-400">+{layer.bonusEarned} bonus</span>
+                        )}
+                      </div>
+
+                      {/* Expandable checks list */}
+                      {isExpanded && (
+                        <div className="mt-3 pt-3 border-t border-white/[0.06] space-y-1.5 max-h-60 overflow-y-auto pr-1 custom-scrollbar">
+                          {layer.checks.map((c: any) => (
+                            <div
+                              key={c.checkId}
+                              className="p-2 rounded bg-black/50 border border-white/5 space-y-1 text-[9px] font-mono"
+                            >
+                              <div className="flex items-center justify-between gap-1">
+                                <span className="font-bold text-white/80 truncate">
+                                  {c.checkId}
+                                </span>
+                                <span className={`px-1.5 py-0.2 rounded text-[8px] uppercase font-bold ${
+                                  c.status === 'pass'
+                                    ? 'text-emerald-400 bg-emerald-500/10'
+                                    : c.status === 'warn'
+                                    ? 'text-amber-400 bg-amber-500/10'
+                                    : c.status === 'skip'
+                                    ? 'text-white/30 bg-white/5'
+                                    : 'text-rose-400 bg-rose-500/10'
+                                }`}>
+                                  {c.status}
+                                </span>
+                              </div>
+                              <p className="text-white/50 leading-tight">{c.message}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : isV2 ? (
             <div className="border border-white/[0.06] rounded-2xl glint-card min-w-0 gpu-isolate relative z-[1]">
               <div className="bg-black px-4 sm:px-5 py-3 border-b border-white/[0.05] flex items-center justify-between gap-2 rounded-t-2xl min-w-0">
                 <span className="text-[8px] font-mono uppercase tracking-[0.3em] text-white/25 truncate">
@@ -853,10 +1334,6 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                   Tap cards to expand
                 </span>
               </div>
-              {/*
-                Single column on narrow phones — multi-col grids + expand height
-                animations were a major source of Android Chrome GPU glitches.
-              */}
               <div className="bg-black p-3 sm:p-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4 items-stretch rounded-b-2xl min-w-0">
                 {dimensionScores.map((dim, idx) => {
                   const isExpanded = !!expandedDims[idx];
@@ -894,7 +1371,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                         </div>
                       </div>
 
-                      {/* Progress bar — pure width style, no CSS transition */}
+                      {/* Progress bar */}
                       <div className="w-full h-1 bg-white/[0.06] rounded-full mb-1 min-w-0">
                         <div
                           className="h-full bg-[#FF3300] rounded-full"
@@ -902,7 +1379,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                         />
                       </div>
 
-                      {/* Accordion: mount only when open — no framer-motion height anim */}
+                      {/* Accordion */}
                       {isExpanded && (
                         <div className="mt-2 pt-2 border-t border-white/[0.06] min-w-0">
                           <p className="text-[9px] text-white/45 leading-relaxed mb-2 break-words">
@@ -926,7 +1403,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                 })}
               </div>
             </div>
-          )}
+          ) : null}
 
         </div>
 
@@ -936,18 +1413,33 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           {/* PROBLEMS CARD */}
           <div className="bg-black border border-white/5 rounded-2xl p-6 flex flex-col justify-between overflow-hidden relative glint-card">
             <div className="space-y-4">
-              <div className="border-b border-white/5 pb-2">
+              <div className="border-b border-white/5 pb-2 flex items-center justify-between">
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Problems</h3>
+                <span className="text-[10px] font-mono text-white/40">{problems.length} detected</span>
               </div>
 
               <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1 custom-scrollbar text-[11px]">
                 {problems.length > 0 ? (
                   problems.map((prob: any, idx: number) => (
-                    <div key={idx} className="bg-black/20 p-3 rounded-xl border border-white/[0.03] space-y-1">
-                      <div className="flex items-center gap-1.5 font-bold text-white/80 uppercase tracking-wider text-[10px]">
-                        <span className="text-rose-500">●</span> {prob.title}
+                    <div key={idx} className="bg-black/20 p-3 rounded-xl border border-white/[0.03] space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 font-bold text-white/80 uppercase tracking-wider text-[10px] min-w-0">
+                          <span className={prob.severity === 'critical' ? "text-rose-500 shrink-0" : "text-amber-400 shrink-0"}>●</span>
+                          <span className="truncate">{prob.title}</span>
+                        </div>
+                        {prob.layer && (
+                          <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/5 text-white/50 border border-white/5 shrink-0 whitespace-nowrap">
+                            {prob.layer}
+                          </span>
+                        )}
                       </div>
                       <p className="text-white/40 leading-relaxed font-sans">{prob.desc}</p>
+                      {prob.targetFile && (
+                        <div className="text-[9px] font-mono text-white/30 flex items-center gap-1">
+                          <span>Target:</span>
+                          <code className="text-[#FF3300]/80">{prob.targetFile}</code>
+                        </div>
+                      )}
                     </div>
                   ))
                 ) : (
@@ -967,17 +1459,32 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           {/* SOLUTIONS CARD */}
           <div className="bg-black border border-white/5 rounded-2xl p-6 flex flex-col justify-between overflow-hidden relative glint-card">
             <div className="space-y-4">
-              <div className="border-b border-white/5 pb-2">
+              <div className="border-b border-white/5 pb-2 flex items-center justify-between">
                 <h3 className="text-xs font-bold text-white uppercase tracking-wider font-mono">Solutions</h3>
+                <span className="text-[10px] font-mono text-white/40">{solutions.length} available</span>
               </div>
 
               <div className="space-y-2.5 max-h-80 overflow-y-auto pr-1 custom-scrollbar text-[11px]">
                 {solutions.length > 0 ? (
                   solutions.map((sol: any, idx: number) => (
-                    <div key={idx} className="bg-black/20 p-3 rounded-xl border border-white/[0.03] space-y-1">
-                      <div className="font-bold text-white/80 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-                        <span className="text-emerald-400">●</span> {sol.title}
+                    <div key={idx} className="bg-black/20 p-3 rounded-xl border border-white/[0.03] space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-bold text-white/80 uppercase tracking-wider text-[10px] flex items-center gap-1.5 min-w-0">
+                          <span className="text-emerald-400 shrink-0">●</span>
+                          <span className="truncate">{sol.title}</span>
+                        </div>
+                        {sol.layer && (
+                          <span className="text-[8px] font-mono uppercase px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0 whitespace-nowrap">
+                            {sol.layer}
+                          </span>
+                        )}
                       </div>
+                      {sol.targetFile && (
+                        <div className="text-[9px] font-mono text-white/40 flex items-center gap-1">
+                          <span>Target:</span>
+                          <code className="text-white/70">{sol.targetFile}</code>
+                        </div>
+                      )}
                       <div className="bg-black border border-white/5 rounded p-2 relative max-h-24 overflow-y-auto mt-1">
                         <pre className="text-[9px] font-mono text-white/40 whitespace-pre-wrap">{sol.prompt}</pre>
                       </div>
@@ -1010,13 +1517,13 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                 <div className="bg-black/20 p-4 rounded-xl border border-white/5 space-y-2">
                   <div className="font-bold text-white/80 uppercase tracking-wider text-[9px] font-mono">Problem Summary Prompt</div>
                   <p className="text-white/40 leading-relaxed font-sans">
-                    Copy a compressed diagnostic summary of missing entrypoints to share with your team or feeding to LLM pipelines.
+                    Copy an ARS 3.0 compressed diagnostic defect summary structured by layer for teams or LLM pipelines.
                   </p>
                   <button
                     onClick={handleCopyProblemSummaryPrompt}
                     className="w-full bg-[#FF3300]/10 hover:bg-[#FF3300]/20 text-[#FF3300] hover:text-white font-mono text-[9px] font-bold uppercase tracking-widest py-2 rounded border border-[#FF3300]/20 transition-all cursor-pointer"
                   >
-                    {copiedSummary ? 'Copied Summary Prompt!' : 'Copy Summary Prompt'}
+                    {copiedSummary ? 'Copied ARS 3.0 Summary!' : 'Copy ARS 3.0 Summary Prompt'}
                   </button>
                 </div>
 
@@ -1024,13 +1531,13 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                 <div className="bg-black/20 p-4 rounded-xl border border-white/5 space-y-2">
                   <div className="font-bold text-white/80 uppercase tracking-wider text-[9px] font-mono">Fixes / Solutions Prompt</div>
                   <p className="text-white/40 leading-relaxed font-sans">
-                    Copy complete implementations and config files to copy-paste directly into Cursor, Claude Code, or Copilot.
+                    Copy ARS 3.0 remediation files, patches, and CLI fix commands directly for Cursor, Claude Code, or Copilot.
                   </p>
                   <button
                     onClick={handleCopyFixesPrompt}
                     className="w-full bg-[#22D3EE]/10 hover:bg-[#22D3EE]/20 text-[#22D3EE] hover:text-white font-mono text-[9px] font-bold uppercase tracking-widest py-2 rounded border border-[#22D3EE]/20 transition-all cursor-pointer"
                   >
-                    {copiedFixes ? 'Copied Remedies Prompt!' : 'Copy Remedies Prompt'}
+                    {copiedFixes ? 'Copied ARS 3.0 Remedies!' : 'Copy ARS 3.0 Remedies Prompt'}
                   </button>
                 </div>
 
@@ -1130,89 +1637,44 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           </div>
         )}
 
-        {/* ———— KNOWLEDGE GRAPH VISUALIZER ————
-            Isolate canvas/SVG so Android Chrome does not composite noise
-            into the Diagnostic Dimensions panel above/below. */}
-        {graph && (
-          <div className="bg-black border border-white/5 rounded-2xl p-4 sm:p-6 space-y-6 glint-card min-w-0 gpu-isolate relative z-0">
-            <div className="border-b border-white/5 pb-4 flex flex-wrap items-center justify-between gap-2 min-w-0">
-              <div className="min-w-0">
-                <h3 className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Graph Map Overview</h3>
-                <h2 className="text-xl font-black text-white uppercase tracking-tighter mt-1">Knowledge Graph</h2>
-              </div>
-              <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/20 uppercase tracking-wider shrink-0">
-                {graph.nodes.length} Nodes • {graph.edges.length} Edges
+
+
+        {/* ———— Agent Flight Simulator Cockpit Banner ———— */}
+        <div className="mt-8 rounded-2xl border border-white/10 bg-gradient-to-br from-white/[0.03] via-black to-[#FF3300]/[0.04] p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 glint-card">
+          <div className="space-y-2 max-w-2xl">
+            <div className="inline-flex items-center gap-2 text-[9px] font-mono font-bold uppercase tracking-[0.25em] text-[#FF3300]">
+              <Zap size={12} />
+              Autonomous Agent Flight Simulator
+            </div>
+            <h3 className="text-lg sm:text-xl font-bold text-white font-mono uppercase tracking-tight">
+              Test Real Agent Execution In The Cockpit
+            </h3>
+            <p className="text-xs text-white/50 leading-relaxed font-sans">
+              Evaluate real-world agent execution against this ecosystem across Claude Code, Cursor & Windsurf, and Perplexity Sonar. Measure token consumption tax, schema friction risks, and autonomous credential handshakes.
+            </p>
+            <div className="flex flex-wrap gap-2 pt-2">
+              <span className="px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/10 text-[9px] font-mono text-white/50">
+                5-Phase Trajectory
+              </span>
+              <span className="px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/10 text-[9px] font-mono text-white/50">
+                BPE Token Tax Counter
+              </span>
+              <span className="px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/10 text-[9px] font-mono text-white/50">
+                Time-to-First-Tool-Call (TTFTC)
+              </span>
+              <span className="px-2.5 py-1 rounded-md bg-white/[0.03] border border-white/10 text-[9px] font-mono text-white/50">
+                Schema Friction Index
               </span>
             </div>
-
-            <div className="space-y-2 min-w-0 w-full overflow-hidden rounded-xl">
-              <ObsidianGraph3D
-                data={forceGraphData}
-                isDark={isDark}
-                onNodeClick={(nodeId) => {
-                  const fmtNode = forceGraphData.nodes.find((n: any) => n.id === nodeId);
-                  const nodeUrl = (fmtNode?.metadata as any)?.url;
-                  if (nodeUrl) {
-                    window.open(nodeUrl, '_blank');
-                  }
-                }}
-              />
-            </div>
-
-            {/* Directed Graph Connection Map */}
-            <div className="space-y-3">
-              <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-white/40">Ecosystem Connection Logs</h4>
-              <div className="max-h-60 overflow-y-auto border border-white/5 rounded-xl bg-black/40 p-4 space-y-2.5 font-mono text-[10px] custom-scrollbar">
-                {graph.edges.map((edge: any, edgeIdx: number) => {
-                  const srcNode = graph.nodes.find((n: any) => n.id === edge.source);
-                  const destNode = graph.nodes.find((n: any) => n.id === edge.target);
-                  if (!srcNode || !destNode) return null;
-
-                  const edgeLabel =
-                    edge.type === 'page_references_page' ? '👉 REFERENCES' :
-                      edge.type === 'concept_depends_on_concept' ? '🔗 DEPENDS ON' :
-                        edge.type === 'workflow_depends_on_prerequisite' ? '⚠️ PREREQUISITE' :
-                          edge.type === 'api_maps_to_sdk_example' ? '🔗 MAPS TO' :
-                            edge.type === 'docs_entrypoint_connects_to_onboarding' ? '🚥 LEADS TO' :
-                              edge.type === 'support_path_resolves_error_path' ? '🛠️ RESOLVES' :
-                                '👉 LINKS';
-
-                  const typeColors: Record<string, string> = {
-                    page: 'text-[#8B5CF6]',
-                    concept: 'text-[#22D3EE]',
-                    api: 'text-[#FF3300]',
-                    sdk: 'text-[#FF3300]',
-                    workflow: 'text-[#22D3EE]',
-                    prerequisite: 'text-[#8B5CF6]',
-                    code_example: 'text-[#22D3EE]',
-                    machine_entrypoint: 'text-[#22D3EE]',
-                    support_path: 'text-white/40',
-                    canonical_link: 'text-[#FF3300]',
-                    duplicate: 'text-white/20',
-                    unresolved_reference: 'text-[#FF3300] font-bold'
-                  };
-
-                  return (
-                    <div key={edgeIdx} className="flex items-center gap-2 py-1 border-b border-white/[0.02] last:border-b-0">
-                      <span className={typeColors[srcNode.type] || 'text-white'}>
-                        {srcNode.label}
-                      </span>
-                      <span className="text-white/20 text-[9px]">{edgeLabel}</span>
-                      <span className={typeColors[destNode.type] || 'text-white'}>
-                        {destNode.label}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           </div>
-        )}
-
-        {/* ———— Phase 6: Agent Journey Simulation Panel ———— */}
-        {journeys && journeys.traces && journeys.traces.length > 0 && (
-          <JourneyPanel journeys={journeys} />
-        )}
+          <Link
+            href={`/simulate?url=${encodeURIComponent(url || '')}`}
+            className="inline-flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest text-white bg-[#FF3300] hover:bg-[#FF3300]/90 rounded-xl px-6 py-4 transition-all font-mono shrink-0 shadow-[0_0_20px_rgba(255,51,0,0.35)] hover:shadow-[0_0_30px_rgba(255,51,0,0.55)] cursor-pointer active:scale-[0.96]"
+          >
+            Launch Flight Simulator
+            <ExternalLink size={13} />
+          </Link>
+        </div>
 
         {/* ———— Enterprise Audit Banner ———— */}
         <div className="mt-8 rounded-2xl border border-[#8B5CF6]/30 bg-gradient-to-r from-[#8B5CF6]/[0.08] via-black to-[#FF3300]/[0.05] p-6 sm:p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 glint-card">

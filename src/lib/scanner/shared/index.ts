@@ -6,6 +6,9 @@ export {
   scoreBandColorHex,
   badgeColorForScore,
   SCORE_BANDS,
+  getArsGrade,
+  type ArsGrade,
+  type GradeBand,
   type ScoreBand,
   type ScoreBandKey,
 } from './scoreBand';

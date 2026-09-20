@@ -6,24 +6,30 @@
 
 # Glintscanner
 
-**Agent readiness scanner** for developer products.
+**Agent Readiness Scanner & Flight Simulator** for developer products.
 
-Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discover, parse, and complete integration journeys against your docs ecosystem — then get a versioned **Agent Readiness Score (ARS)**.
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-84%20passing-brightgreen.svg)](tests/)
+[![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org)
+
+Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discover, parse, and complete integration journeys against your docs ecosystem — then get a versioned **Agent Readiness Score (ARS 3.0)** and test your APIs inside the **Autonomous Flight Simulator**.
 
 - **Hosted:** [scan.glintbase.dev](https://scan.glintbase.dev)  
+- **Flight Simulator Cockpit:** [scan.glintbase.dev/simulate](https://scan.glintbase.dev/simulate)
 - **Resources:** [Developer Tools hub](https://scan.glintbase.dev/tools) · [MCP gateway](https://scan.glintbase.dev/mcp) · in-repo [`skills/`](./skills) agent skill  
 - **Methodology:** [docs/methodology/ars-1.0.md](./docs/methodology/ars-1.0.md)  
 - **Roadmap / specs:** [docs/](./docs/)
 
 ## Features
 
-- **Surface discovery** — llms.txt, OpenAPI, MCP, sitemap, docs, GitHub, SDK, …
+- **Surface discovery** — `llms.txt`, `OpenAPI`, `MCP`, `sitemap.xml`, `auth.md`, `ard.json`, `robots.txt`
 - **Content validation** — empty/HTML soft-404s don’t max machine scores
 - **Budgeted crawl** — priority seeds, dual HTML/Markdown parse, link expansion
 - **Knowledge graph** — pages, concepts, operations, evidence-backed edges
-- **Deterministic pathfinder** — multi-start agent journeys (not LLM free-form scoring)
-- **ARS 1.0** — weighted, versioned, anti-gaming composite score
-- **CLI** — JSON/Markdown reports for CI and shareable output
+- **Deterministic pathfinder & Flight Simulator** — multi-agent journey simulations with visual DAGs and state replay (`#data=`)
+- **ARS 3.0 Engine** — 119 checks, 6 evaluation pillars, and fair Dynamic Denominator scoring
+- **Authoritative MCP Endpoint** — `/api/mcp` supporting JSON-RPC 2.0 and Server-Sent Events (SSE)
+- **CLI & Web** — Real-time telemetry, visual terminal graphs, shareable reports, and automated CI quality gates
 
 ## Web vs CLI vs MCP — which should I use?
 
@@ -230,21 +236,21 @@ See [`.env.local.example`](./.env.local.example).
 
 Apply DB schema updates from [`migration.sql`](./migration.sql) in Supabase SQL editor when using persistence.
 
-## Score bands (ARS 1.0)
+## Score bands (ARS 3.0)
 
-| Score | Band |
-|------:|------|
-| 90–100 | Elite Agent-Native |
-| 70–89 | AI-Friendly |
-| 40–69 | AI-Capable |
-| 0–39 | Legacy Ecosystem |
+| Score | Tier | Characteristics |
+|------:|------|-----------------|
+| 90–100 | **Tier 1: Agent-Native** | Zero-friction autonomous integration, comprehensive MCP/tooling, structured auth, high token efficiency |
+| 75–89 | **Tier 2: Production-Ready** | Valid machine-readable surfaces (`llms.txt`, OpenAPI), consistent endpoints, predictable response formats |
+| 50–74 | **Tier 3: Partial Support** | Basic machine discoverability, missing granular specifications, moderate friction during agent execution |
+| 0–49 | **Tier 4: Legacy / Invisible** | High failure rate, lack of structured documentation, trapped behind SPAs or anti-bot defenses |
 
 ## Architecture
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the pipeline diagram and module map.
 
 ```
-URL → discover → classify → crawl → graph → pathfinder → ARS
+Target URL → Discover Surfaces → Classify & Fingerprint → Crawl & Parse → Knowledge Graph → Flight Simulation → ARS 3.0 Engine
 ```
 
 ## Tests & CI

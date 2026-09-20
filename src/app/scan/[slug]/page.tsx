@@ -1,12 +1,10 @@
 import type { Metadata } from "next";
 import ResultsReport from "@/components/scanner/ResultsReport";
 import Link from "next/link";
-import { Search, FileText } from "lucide-react";
+import { Sparkles } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getScanBySlug, deriveCompany } from "@/lib/resolveSlug";
 import { scoreBandLabel } from "@/lib/scanner/shared";
-import { getCompetitiveContext } from "@/lib/getCompetitiveContext";
-import CompetitiveBanner from "@/components/scanner/CompetitiveBanner";
 import ShareScorecard from "@/components/scanner/ShareScorecard";
 
 export const dynamic = 'force-dynamic';
@@ -81,7 +79,6 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
   const score = data.score;
   const checks = data.checks;
   const url = data.url;
-  const competitiveContext = await getCompetitiveContext(url);
 
   // JSON-LD Structured Data
   const jsonLd = {
@@ -131,36 +128,29 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      <div className="w-full max-w-3xl mb-8 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
-        <div>
-          <h1 className="text-xl sm:text-3xl font-black text-white uppercase tracking-tight mb-2 break-all">Scan Results: {url}</h1>
-          <p className="text-white/40 font-mono text-[10px] sm:text-xs">Vanity URL: scan.glintbase.dev/scan/{params.slug}</p>
-        </div>
-        <div className="flex items-center gap-3 sm:gap-4 shrink-0 flex-wrap">
+      {data.score_version !== 'ars-3.0.0' && (
+        <div className="w-full max-w-3xl mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+              <Sparkles className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                Legacy Audit Detected (Pre-ARS 3.0)
+              </div>
+              <p className="text-xs text-white/70">
+                This audit was calculated using an older scoring model. Upgrade to ARS 3.0 Standard to evaluate 119 discrete checks, dynamic archetype denominators, and live Flight Simulator testing.
+              </p>
+            </div>
+          </div>
           <Link
-            href={`/scan/${params.slug}/briefing`}
-            className="text-white/80 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg border border-white/10 flex items-center gap-1.5 font-bold transition-all text-xs uppercase tracking-wider"
+            href={`/?url=${encodeURIComponent(url)}`}
+            className="shrink-0 px-4 py-2 rounded-lg bg-[#FF3300] hover:bg-[#FF3300]/90 text-white text-xs font-bold uppercase tracking-wider transition shadow-md whitespace-nowrap"
           >
-            <FileText size={14} className="text-[#FF3300]" />
-            Executive PDF
-          </Link>
-          <Link 
-            href="/leaderboard"
-            className="text-white/40 hover:text-white flex items-center gap-2 font-bold transition-colors uppercase tracking-wider text-xs"
-          >
-            Leaderboard
-          </Link>
-          <Link 
-            href="/"
-            className="text-[#FF3300] hover:text-[#FF3300]/80 flex items-center gap-2 font-bold transition-colors uppercase tracking-wider text-xs"
-          >
-            <Search size={14} />
-            New Scan
+            Re-scan with ARS 3.0
           </Link>
         </div>
-      </div>
-
-      <CompetitiveBanner context={competitiveContext} score={score} company={company} />
+      )}
 
       <ResultsReport score={score} checks={checks} scanId={data.id} url={url} />
 

@@ -11,6 +11,11 @@ describe('normalizeUrl', () => {
     expect(normalizeUrl('https://example.com/path')).toBe('https://example.com/path');
   });
 
+  it('strips chained and duplicate protocols', () => {
+    expect(normalizeUrl('https://https://glintbase.dev')).toBe('https://glintbase.dev');
+    expect(normalizeUrl('http://https://example.com')).toBe('https://example.com');
+  });
+
   it('returns empty for blank input', () => {
     expect(normalizeUrl('   ')).toBe('');
   });

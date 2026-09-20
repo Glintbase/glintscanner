@@ -97,8 +97,12 @@ export async function detectEcosystemFramework(
     return 'Custom Docs';
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+
   try {
     const res = await fetch(docsSurface.url, {
+      signal: controller.signal,
       headers: {
         'User-Agent': 'Mozilla/5.0 (compatible; Glintscanner-V2/2.0)'
       }
@@ -112,6 +116,8 @@ export async function detectEcosystemFramework(
     }
   } catch (err) {
     console.error('Framework detection request failed:', err);
+  } finally {
+    clearTimeout(timer);
   }
 
   // Fallback signature check based on URL hostname

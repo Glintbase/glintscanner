@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Activity, Zap, ExternalLink, Settings, Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import LiveTerminal from "@/components/scanner/LiveTerminal";
+import Ars3LiveHud from "@/components/scanner/Ars3LiveHud";
 import ResultsReport from "@/components/scanner/ResultsReport";
 import EmailGateModal from "@/components/scanner/EmailGateModal";
 import { SiteNav } from "@/components/layout/SiteNav";
@@ -87,29 +87,6 @@ function WaitlistCTA() {
   );
 }
 
-interface SurfaceOption {
-  id: string;
-  label: string;
-  category: string;
-  description: string;
-}
-
-const SURFACE_OPTIONS: SurfaceOption[] = [
-  { id: "sitemap", label: "Sitemap Index", category: "Discovery", description: "Probes robots.txt and sitemap.xml for site structure discovery" },
-  { id: "llms_txt", label: "llms.txt", category: "AI Specs", description: "Detects /llms.txt summarizing product info for LLM crawlers" },
-  { id: "llms_full_txt", label: "llms-full.txt", category: "AI Specs", description: "Detects full text documentation file for single-shot retrieval" },
-  { id: "openapi", label: "OpenAPI Specs", category: "AI Specs", description: "Searches /openapi.json and yaml endpoints to discover API schemas" },
-  { id: "mcp", label: "MCP Config", category: "AI Specs", description: "Detects Model Context Protocol (mcp.json) tool endpoint descriptions" },
-  { id: "github", label: "GitHub Repository", category: "Codebases", description: "Searches for linked public code repositories and packages" },
-  { id: "docs", label: "Documentation", category: "Reference", description: "Audits the presence and readability of user documentation" },
-  { id: "api", label: "API Reference", category: "Reference", description: "Audits structural links to raw API documentation references" },
-  { id: "auth", label: "Developer Auth", category: "Console", description: "Detects developer login, registration, and credential pages" },
-  { id: "dashboard", label: "Developer Console", category: "Console", description: "Detects developer dashboards and workspace entrypoints" },
-  { id: "support", label: "Troubleshooting", category: "Console", description: "Detects support portals and troubleshooting pages" },
-  { id: "blog", label: "Updates", category: "Updates", description: "Checks for developer blogs and general product updates" },
-  { id: "changelog", label: "Releases", category: "Updates", description: "Detects public release changelogs for tracking API drift" },
-];
-
 // ─── Main Page ────────────────────────────────────────────────────────────
 export default function Home() {
   const router = useRouter();
@@ -123,83 +100,13 @@ export default function Home() {
   const [recentScans, setRecentScans] = useState<any[]>([]);
   const [topRankings, setTopRankings] = useState<any[]>([]);
   const [gateOpen, setGateOpen] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pendingLead, setPendingLead] = useState<{
     slug: string;
     scanId: string | null;
     url: string;
     score: number;
   } | null>(null);
-
-  const [showCustomizer, setShowCustomizer] = useState(false);
-  const [useAgentHarness, setUseAgentHarness] = useState(true);
-  const [selectedProvider, setSelectedProvider] = useState("google");
-  const [customSurfaces, setCustomSurfaces] = useState<Record<string, boolean>>({
-    landing: true,
-    sitemap: true,
-    llms_txt: true,
-    llms_full_txt: true,
-    openapi: true,
-    mcp: true,
-    github: true,
-    docs: true,
-    api: true,
-    sdk: true,
-    auth: true,
-    dashboard: true,
-    support: true,
-    blog: true,
-    changelog: true,
-    status: true,
-  });
-
-  const toggleSurface = (id: string) => {
-    setCustomSurfaces((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }));
-  };
-
-  const handleSelectAll = () => {
-    setCustomSurfaces({
-      landing: true,
-      sitemap: true,
-      llms_txt: true,
-      llms_full_txt: true,
-      openapi: true,
-      mcp: true,
-      github: true,
-      docs: true,
-      api: true,
-      sdk: true,
-      auth: true,
-      dashboard: true,
-      support: true,
-      blog: true,
-      changelog: true,
-      status: true,
-    });
-  };
-
-  const handleDeselectAll = () => {
-    setCustomSurfaces({
-      landing: false,
-      sitemap: false,
-      llms_txt: false,
-      llms_full_txt: false,
-      openapi: false,
-      mcp: false,
-      github: false,
-      docs: false,
-      api: false,
-      sdk: false,
-      auth: false,
-      dashboard: false,
-      support: false,
-      blog: false,
-      changelog: false,
-      status: false,
-    });
-  };
 
   useEffect(() => {
     async function loadScans() {
@@ -308,15 +215,27 @@ export default function Home() {
     loadScans();
   }, []);
 
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const search = new URLSearchParams(window.location.search);
+      const urlParam = search.get("url") || search.get("rescan");
+      if (urlParam) {
+        setRawInput(urlParam);
+      }
+    }
+  }, []);
+
   // Shared completion path for both stream-parse sites in handleScan.
   // Known lead → silently link scan + redirect; new visitor → open the gate.
   const completeScan = (data: any, url: string) => {
+    setIsScanning(false);
     setScore(data.score);
     setChecks({
       ...data.checks,
       score_version: data.score_version || data.checks?.score_version,
     });
     if (data.id) setScanId(data.id);
+    else if (data.scanId) setScanId(data.scanId);
     setScanComplete(true);
     const slug = deriveCompanySlug(url);
 
@@ -363,6 +282,8 @@ export default function Home() {
     e.preventDefault();
     const url = normalizeUrl(rawInput);
     if (!url) return;
+    setRawInput(url);
+    setErrorMsg(null);
 
     setIsScanning(true);
     setScanComplete(false);
@@ -370,21 +291,29 @@ export default function Home() {
     setScore(0);
     setChecks([]);
 
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => {
+      abortController.abort();
+    }, 35000);
+
     try {
-      const enabledSurfaces = Object.keys(customSurfaces).filter((k) => customSurfaces[k]);
       const response = await fetch("/api/scan", {
         method: "POST",
+        signal: abortController.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          url,
-          options: {
-            enabledSurfaces,
-            profile: useAgentHarness ? "deep" : "quick",
-            useAgentHarness,
-            provider: selectedProvider,
-          }
-        }),
+        body: JSON.stringify({ url }),
       });
+
+      if (!response.ok) {
+        let errMessage = `Scan request failed (${response.status})`;
+        try {
+          const errData = await response.json();
+          if (errData?.error) errMessage = errData.error;
+        } catch {
+          // ignore json parse error
+        }
+        throw new Error(errMessage);
+      }
 
       if (!response.body) throw new Error("No response body");
 
@@ -408,6 +337,9 @@ export default function Home() {
             try {
               const data = JSON.parse(trimmed);
               data.id = data.id || Math.random().toString(36).substr(2, 9);
+              if (data.type === "error") {
+                setErrorMsg(data.message || "An error occurred during scan");
+              }
               if (data.type === "complete") {
                 completeScan(data, url);
               }
@@ -424,6 +356,9 @@ export default function Home() {
         try {
           const data = JSON.parse(buffer.trim());
           data.id = data.id || Math.random().toString(36).substr(2, 9);
+          if (data.type === "error") {
+            setErrorMsg(data.message || "An error occurred during scan");
+          }
           if (data.type === "complete") {
             completeScan(data, url);
           }
@@ -433,11 +368,17 @@ export default function Home() {
         }
       }
     } catch (error: any) {
+      const isAbort = error?.name === "AbortError";
+      const errorMsgText = isAbort
+        ? "Scan timed out: Target server took too long to respond."
+        : error.message || "Failed to initiate scan";
+      setErrorMsg(errorMsgText);
       setLogs((prev) => [
         ...prev,
-        { id: "err", type: "error", message: error.message },
+        { id: "err", type: "error", message: errorMsgText },
       ]);
     } finally {
+      clearTimeout(timeoutId);
       setIsScanning(false);
       setScanComplete(true);
     }
@@ -447,6 +388,7 @@ export default function Home() {
     setRawInput("");
     setIsScanning(false);
     setScanComplete(false);
+    setErrorMsg(null);
     setLogs([]);
     setScore(0);
     setChecks([]);
@@ -517,143 +459,20 @@ export default function Home() {
                     {isScanning ? "Scanning..." : "Scan"}
                   </button>
                 </div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-3 text-[11px] font-mono gap-2">
-                  <p className="text-white/20 text-left">
-                    Paste your landing page, API root, docs domain, or repository URL.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setShowCustomizer(!showCustomizer)}
-                    className="flex items-center gap-1.5 text-white/40 hover:text-[#FF3300] transition-colors focus:outline-none self-start sm:self-auto"
+                {/* Sub-bar: Auto-detection indicator & Flight Simulator Launcher */}
+                <div className="mt-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1 font-mono text-[10px]">
+                  <span className="text-white/35 flex items-center gap-1.5 text-left">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#FF3300]" />
+                    ARS 3.0 Platform Auto-Detection & Dynamic Denominator
+                  </span>
+                  <Link
+                    href="/simulate"
+                    className="inline-flex items-center gap-1.5 text-[#FF3300] hover:text-white font-bold uppercase tracking-wider transition-colors self-start sm:self-auto"
                   >
-                    <Settings size={12} className={showCustomizer ? "text-[#FF3300] animate-pulse" : ""} />
-                    <span>{showCustomizer ? "Hide Customizer" : "Customize Scan"}</span>
-                  </button>
+                    <Zap size={11} />
+                    <span>Launch Flight Simulator Cockpit →</span>
+                  </Link>
                 </div>
-
-                <AnimatePresence>
-                  {showCustomizer && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                      animate={{ height: "auto", opacity: 1, marginTop: 16 }}
-                      exit={{ height: 0, opacity: 0, marginTop: 0 }}
-                      className="overflow-hidden w-full bg-white/[0.02] border border-white/5 rounded-xl p-5 text-left font-mono"
-                    >
-                      <div className="border-b border-white/5 pb-4 mb-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <span className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-black">
-                            Agent Simulation Mode
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <button
-                            type="button"
-                            onClick={() => setUseAgentHarness(true)}
-                            className={`p-3 rounded-lg border text-left transition-all ${
-                              useAgentHarness
-                                ? "bg-[#FF3300]/[0.04] border-[#FF3300]/40 text-white"
-                                : "bg-transparent border-white/5 text-white/40 hover:border-white/10"
-                            }`}
-                          >
-                            <div className="text-xs font-bold mb-1 flex items-center justify-between">
-                              <span>🤖 LLM Multi-Agent Harness</span>
-                              {useAgentHarness && <Check size={12} className="text-[#FF3300]" />}
-                            </div>
-                            <div className="text-[10px] text-white/50 leading-relaxed">
-                              Real LLM tool-calling agents test onboarding paths using AI reasoning.
-                            </div>
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => setUseAgentHarness(false)}
-                            className={`p-3 rounded-lg border text-left transition-all ${
-                              !useAgentHarness
-                                ? "bg-white/[0.04] border-white/30 text-white"
-                                : "bg-transparent border-white/5 text-white/40 hover:border-white/10"
-                            }`}
-                          >
-                            <div className="text-xs font-bold mb-1 flex items-center justify-between">
-                              <span>⚡ Deterministic Pathfinder</span>
-                              {!useAgentHarness && <Check size={12} className="text-white" />}
-                            </div>
-                            <div className="text-[10px] text-white/50 leading-relaxed">
-                              Fast baseline graph-traversal search without LLM API calls.
-                            </div>
-                          </button>
-                        </div>
-
-                      </div>
-
-                      <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-4">
-                        <span className="text-[10px] text-white/40 uppercase tracking-[0.2em] font-black">
-                          Select Surfaces to Scan
-                        </span>
-                        <div className="flex gap-4">
-                          <button
-                            type="button"
-                            onClick={handleSelectAll}
-                            className="text-[9px] text-[#FF3300] hover:text-[#FF3300]/80 transition-colors uppercase font-bold"
-                          >
-                            Select All
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleDeselectAll}
-                            className="text-[9px] text-white/40 hover:text-white/60 transition-colors uppercase font-bold"
-                          >
-                            Clear All
-                          </button>
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[240px] overflow-y-auto pr-1">
-                        {SURFACE_OPTIONS.map((opt) => {
-                          const isEnabled = customSurfaces[opt.id];
-                          return (
-                            <label
-                              key={opt.id}
-                              className={`group flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all duration-200 select-none ${
-                                isEnabled
-                                  ? "bg-[#FF3300]/[0.02] border-[#FF3300]/20 hover:border-[#FF3300]/40"
-                                  : "bg-transparent border-white/5 hover:border-white/10"
-                              }`}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={isEnabled}
-                                onChange={() => toggleSurface(opt.id)}
-                                className="sr-only"
-                              />
-                              <div
-                                className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center transition-all flex-shrink-0 ${
-                                  isEnabled
-                                    ? "border-[#FF3300] bg-[#FF3300]"
-                                    : "border-white/20 bg-transparent group-hover:border-white/40"
-                                }`}
-                              >
-                                {isEnabled && <Check size={10} className="text-white stroke-[3px]" />}
-                              </div>
-                              <div className="flex flex-col gap-0.5">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-bold text-white/90 group-hover:text-white transition-colors">
-                                    {opt.label}
-                                  </span>
-                                  <span className="text-[7px] text-white/30 px-1 border border-white/10 rounded uppercase font-bold">
-                                    {opt.category}
-                                  </span>
-                                </div>
-                                <span className="text-[10px] text-white/40 leading-snug">
-                                  {opt.description}
-                                </span>
-                              </div>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
               </form>
 
               {/* Real-time lists: Recently Scanned & Top 5 Rankings */}
@@ -731,17 +550,17 @@ export default function Home() {
 
               </div>
 
-              {/* ─── Scanner Walkthrough & Core Capabilities ─────────────────── */}
+              {/* ─── ARS 3.0 Standard Walkthrough & Capabilities ─────────────────── */}
               <div className="mt-24 pt-16 border-t border-white/5 w-full text-left space-y-12">
                 <div className="text-center space-y-4 max-w-xl mx-auto">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md border border-[#FF3300]/20 bg-[#FF3300]/[0.02] text-[9px] font-mono text-[#FF3300] uppercase tracking-widest">
-                    Operational Protocol
+                    ARS 3.0 Architecture
                   </div>
                   <h2 className="text-3xl font-black uppercase tracking-tight text-white font-mono">
-                    Ecosystem Audit Mechanics
+                    Sub-5s Machine Readiness Standard
                   </h2>
                   <p className="text-sm text-white/40 leading-relaxed font-sans">
-                    Analyze how autonomous AI agents traverse, parse, and ingest your product surfaces.
+                    Deterministic 119-check parallel probe suite, dynamic archetype denominator scaling, and autonomous flight simulation.
                   </p>
                 </div>
 
@@ -752,60 +571,46 @@ export default function Home() {
                   <div className="flex-1 w-full bg-white/[0.01] border border-white/5 hover:border-[#FF3300]/30 p-6 rounded-2xl space-y-3 transition-all duration-300 group min-h-[190px] flex flex-col justify-between">
                     <div>
                       <div className="text-2xl font-black font-mono text-[#FF3300]/50 group-hover:text-[#FF3300] transition-colors">01</div>
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Ecosystem Probing</h3>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Parallel 4-Layer Probing</h3>
                     </div>
                     <p className="text-xs text-white/45 leading-relaxed font-sans mt-2">
-                      Input your docs root, OpenAPI spec, public GitHub repo, or sitemap. The scanner executes reachability verification and parses key specifications like <code className="text-white/70 font-mono">llms.txt</code>.
+                      Sub-5-second concurrent probe suite testing 119 discrete checks across Discovery, Access, Usability, and Payments without slow HTML crawler latency.
                     </p>
                   </div>
 
-                  {/* Doodly Arrow 1 */}
+                  {/* Arrow 1 */}
                   <div className="flex shrink-0 items-center justify-center py-2 md:py-0">
-                    {/* Desktop Arrow */}
-                    <svg className="w-12 h-8 text-[#FF3300]/40 animate-pulse hidden md:block" viewBox="0 0 100 50" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 25 C 20 10, 40 15, 60 35 C 75 48, 85 38, 95 25" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 4" />
-                      <path d="M85 17 C 88 20, 92 23, 95 25 C 91 28, 87 32, 84 35" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    {/* Mobile Arrow */}
-                    <svg className="w-8 h-12 text-[#FF3300]/40 animate-pulse md:hidden" viewBox="0 0 50 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M25 5 C 10 30, 40 70, 25 95" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 4" />
-                      <path d="M17 85 C 20 88, 23 92, 25 95 C 28 91, 32 87, 35 84" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg className="w-10 h-6 text-[#FF3300]/40 animate-pulse hidden md:block" viewBox="0 0 100 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M10 25 H 90 M 75 12 L 90 25 L 75 38" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </div>
 
                   {/* Step 2 */}
-                  <div className="flex-1 w-full bg-white/[0.01] border border-white/5 hover:border-[#22D3EE]/30 p-6 rounded-2xl space-y-3 transition-all duration-300 group min-h-[190px] flex flex-col justify-between">
+                  <div className="flex-1 w-full bg-white/[0.01] border border-white/5 hover:border-[#FF3300]/30 p-6 rounded-2xl space-y-3 transition-all duration-300 group min-h-[190px] flex flex-col justify-between">
                     <div>
-                      <div className="text-2xl font-black font-mono text-[#22D3EE]/50 group-hover:text-[#22D3EE] transition-colors">02</div>
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Graph Synthesis</h3>
+                      <div className="text-2xl font-black font-mono text-[#FF3300]/50 group-hover:text-[#FF3300] transition-colors">02</div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Dynamic Archetype Scaling</h3>
                     </div>
                     <p className="text-xs text-white/45 leading-relaxed font-sans mt-2">
-                      Automatically maps out semantic references, conceptual dependencies, and API endpoints, building an interactive 3D directed graph to inspect isolated clusters and broken pathways.
+                      Calculates ARS score using dynamic denominator scaling (D<sub>active</sub> = D<sub>base</sub> + S<sub>bonus</sub>), eliminating unfair penalties for non-payment or documentation sites.
                     </p>
                   </div>
 
-                  {/* Doodly Arrow 2 */}
+                  {/* Arrow 2 */}
                   <div className="flex shrink-0 items-center justify-center py-2 md:py-0">
-                    {/* Desktop Arrow */}
-                    <svg className="w-12 h-8 text-[#22D3EE]/40 animate-pulse hidden md:block" viewBox="0 0 100 50" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M5 20 C 35 40, 65 10, 95 30" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 4" />
-                      <path d="M86 21 C 89 24, 92 27, 95 30 C 92 32, 88 35, 85 38" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    {/* Mobile Arrow */}
-                    <svg className="w-8 h-12 text-[#22D3EE]/40 animate-pulse md:hidden" viewBox="0 0 50 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M25 5 C 40 30, 10 70, 25 95" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 4" />
-                      <path d="M17 85 C 20 88, 23 92, 25 95 C 28 91, 32 87, 35 84" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <svg className="w-10 h-6 text-[#FF3300]/40 animate-pulse hidden md:block" viewBox="0 0 100 50" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M10 25 H 90 M 75 12 L 90 25 L 75 38" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   </div>
 
                   {/* Step 3 */}
-                  <div className="flex-1 w-full bg-white/[0.01] border border-white/5 hover:border-[#8B5CF6]/30 p-6 rounded-2xl space-y-3 transition-all duration-300 group min-h-[190px] flex flex-col justify-between">
+                  <div className="flex-1 w-full bg-white/[0.01] border border-white/5 hover:border-[#FF3300]/30 p-6 rounded-2xl space-y-3 transition-all duration-300 group min-h-[190px] flex flex-col justify-between">
                     <div>
-                      <div className="text-2xl font-black font-mono text-[#8B5CF6]/50 group-hover:text-[#8B5CF6] transition-colors">03</div>
-                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Agent Simulation</h3>
+                      <div className="text-2xl font-black font-mono text-[#FF3300]/50 group-hover:text-[#FF3300] transition-colors">03</div>
+                      <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Autonomous Flight Simulator</h3>
                     </div>
                     <p className="text-xs text-white/45 leading-relaxed font-sans mt-2">
-                      Simulates multiple task-driven agent workflows to locate integration friction. Evaluates hop counts, context size accumulation, and hallucination risks before delivering a custom remediation Markdown report.
+                      Zero-cost deterministic trajectory replay across Claude Code, Cursor, and Perplexity with BPE token tax counters and counterfactual What-If fix proofs.
                     </p>
                   </div>
 
@@ -851,28 +656,84 @@ export default function Home() {
           )}
         </AnimatePresence>
 
-        {/* ── Live Terminal ───────────────────────────────── */}
-        {(isScanning || (logs.length > 0 && (!scanComplete || (Array.isArray(checks) ? checks.length === 0 : (checks?.surfaces?.length ?? 0) === 0)))) && (
+        {/* ── Docked Command Bar (during scan / results / error) ────────────────────── */}
+        {(isScanning || scanComplete || logs.length > 0 || Boolean(errorMsg)) && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="w-full max-w-3xl"
+            className="w-full max-w-4xl mb-6 sticky top-20 z-30 backdrop-blur-md bg-black/60 p-3 rounded-2xl border border-white/10 shadow-2xl"
           >
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2 text-[10px] font-mono text-white/30 uppercase tracking-widest">
+            <form onSubmit={handleScan} className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-white/30">
+                  <Search size={15} />
+                </div>
+                <input
+                  type="text"
+                  value={rawInput}
+                  onChange={(e) => setRawInput(e.target.value)}
+                  placeholder="https://yourproduct.com"
+                  required
+                  disabled={isScanning}
+                  className="w-full bg-white/[0.04] border border-white/10 text-white text-xs sm:text-sm rounded-xl pl-10 pr-4 py-2.5 sm:py-3 focus:outline-none focus:border-[#FF3300]/60 focus:bg-white/[0.07] transition-all font-mono placeholder:text-white/20 disabled:opacity-50"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="submit"
+                  disabled={isScanning}
+                  className="bg-[#FF3300] text-white font-black text-[10px] sm:text-xs uppercase tracking-wider px-5 py-2.5 sm:py-3 rounded-xl shadow-[0_0_15px_rgba(255,51,0,0.3)] hover:shadow-[0_0_25px_rgba(255,51,0,0.5)] hover:bg-[#FF3300]/90 transition-all disabled:opacity-50 cursor-pointer shrink-0"
+                >
+                  {isScanning ? "Scanning..." : "Scan"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="bg-white/[0.03] hover:bg-white/[0.08] text-white/60 hover:text-white border border-white/10 text-[10px] sm:text-xs font-mono uppercase tracking-wider px-3.5 py-2.5 sm:py-3 rounded-xl transition-all cursor-pointer shrink-0"
+                  title="Reset to home"
+                >
+                  Reset
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+
+        {/* ── ARS 3.0 Live HUD ─────────────────────────────── */}
+        {(isScanning || Boolean(errorMsg) || (logs.length > 0 && (!scanComplete || (Array.isArray(checks) ? checks.length === 0 : (checks?.surfaces?.length ?? 0) === 0)))) && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2, ease: [0.23, 1, 0.32, 1] }}
+            className="w-full max-w-4xl"
+          >
+            <div className="flex items-center justify-between mb-2 px-1 font-mono">
+              <div className="flex items-center gap-2 text-[10px] text-white/40 uppercase tracking-widest">
                 <Zap size={12} className="text-[#FF3300]" />
                 Scanning: {normalizeUrl(rawInput)}
               </div>
               {scanComplete && (
                 <button
                   onClick={handleReset}
-                  className="text-[10px] font-mono text-white/30 hover:text-[#FF3300] uppercase tracking-widest transition-colors"
+                  className="text-[10px] text-white/40 hover:text-[#FF3300] uppercase tracking-widest transition-colors cursor-pointer"
                 >
                   ← New Scan
                 </button>
               )}
             </div>
-            <LiveTerminal logs={logs} isComplete={scanComplete} />
+            <Ars3LiveHud
+              url={normalizeUrl(rawInput)}
+              isScanning={isScanning}
+              logs={logs}
+              error={errorMsg}
+              onRetry={() => {
+                const syntheticEvent = { preventDefault: () => {} } as React.FormEvent;
+                handleScan(syntheticEvent);
+              }}
+            />
           </motion.div>
         )}
 
