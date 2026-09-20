@@ -1,5 +1,10 @@
 # @glintbase/mcp
 
+[![npm version](https://img.shields.io/npm/v/@glintbase/mcp.svg?color=cb3837)](https://www.npmjs.com/package/@glintbase/mcp)
+[![Smithery Badge](https://smithery.ai/badge/@glintbase/mcp)](https://smithery.ai/server/@glintbase/mcp)
+[![Glama](https://glama.ai/mcp/servers/Glintbase/glintscanner/badges/score.svg)](https://glama.ai/mcp/servers/Glintbase/glintscanner)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 **Zero-config agent-readiness tools for AI coding agents** — an [MCP](https://modelcontextprotocol.io) server that lets Claude Code, Cursor, Windsurf, OpenCode (and any MCP client) discover, crawl, and score how well a developer site works for AI agents.
 
 No API keys. No `.env`. Your agent calls the tools and reasons over the results with its own subscription.

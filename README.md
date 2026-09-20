@@ -10,6 +10,9 @@
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-84%20passing-brightgreen.svg)](tests/)
+[![npm @glintbase/mcp](https://img.shields.io/npm/v/@glintbase/mcp.svg?color=cb3837&label=@glintbase/mcp)](https://www.npmjs.com/package/@glintbase/mcp)
+[![Smithery Badge](https://smithery.ai/badge/@glintbase/mcp)](https://smithery.ai/server/@glintbase/mcp)
+[![Glama](https://glama.ai/mcp/servers/Glintbase/glintscanner/badges/score.svg)](https://glama.ai/mcp/servers/Glintbase/glintscanner)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org)
 
 Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discover, parse, and complete integration journeys against your docs ecosystem — then get a versioned **Agent Readiness Score (ARS 3.0)** and test your APIs inside the **Autonomous Flight Simulator**.
