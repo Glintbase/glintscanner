@@ -15,8 +15,8 @@ interface SseSession {
 }
 const activeSessions = new Map<string, SseSession>();
 
-// Cleanup stale sessions (>30 min)
-setInterval(() => {
+// Cleanup stale sessions (>30 min) lazily
+function cleanupStaleSessions() {
   const now = Date.now();
   for (const [id, session] of activeSessions.entries()) {
     if (now - session.createdAt > 30 * 60 * 1000) {
@@ -26,7 +26,7 @@ setInterval(() => {
       activeSessions.delete(id);
     }
   }
-}, 5 * 60 * 1000);
+}
 
 // Simple sliding window rate limiter (60 requests per minute per IP)
 const ipRequestHistory = new Map<string, number[]>();
@@ -257,11 +257,13 @@ export async function OPTIONS() {
 }
 
 export async function GET(req: NextRequest) {
-  const url = new URL(req.url);
-  const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-  const authHeader = req.headers.get('authorization') || '';
-  const apiKeyParam = url.searchParams.get('key') || '';
-  const hasAuth = Boolean(authHeader.startsWith('Bearer ') || apiKeyParam);
+  try {
+    cleanupStaleSessions();
+    const url = new URL(req.url);
+    const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
+    const authHeader = req.headers.get('authorization') || '';
+    const apiKeyParam = url.searchParams.get('key') || '';
+    const hasAuth = Boolean(authHeader.startsWith('Bearer ') || apiKeyParam);
 
   if (!hasAuth && !checkRateLimit(ip)) {
     return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 60 requests per minute.' }), {
@@ -346,26 +348,34 @@ export async function GET(req: NextRequest) {
       'Access-Control-Allow-Origin': '*',
     },
   });
-}
-
-export async function POST(req: NextRequest) {
-  const url = new URL(req.url);
-  const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-  const authHeader = req.headers.get('authorization') || '';
-  const apiKeyParam = url.searchParams.get('key') || '';
-  const hasAuth = Boolean(authHeader.startsWith('Bearer ') || apiKeyParam);
-
-  if (!hasAuth && !checkRateLimit(ip)) {
-    return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 60 requests per minute.' }), {
-      status: 429,
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message || 'Internal Server Error', stack: err.stack }), {
+      status: 500,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
   }
+}
 
-  let body: any;
+export async function POST(req: NextRequest) {
   try {
-    body = await req.json();
-  } catch {
+    cleanupStaleSessions();
+    const url = new URL(req.url);
+    const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
+    const authHeader = req.headers.get('authorization') || '';
+    const apiKeyParam = url.searchParams.get('key') || '';
+    const hasAuth = Boolean(authHeader.startsWith('Bearer ') || apiKeyParam);
+
+    if (!hasAuth && !checkRateLimit(ip)) {
+      return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 60 requests per minute.' }), {
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+
+    let body: any;
+    try {
+      body = await req.json();
+    } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
@@ -820,4 +830,21 @@ ${svg}
       'Access-Control-Allow-Origin': '*',
     },
   });
+  } catch (err: any) {
+    return new Response(
+      JSON.stringify({
+        jsonrpc: '2.0',
+        id: null,
+        error: { code: -32603, message: err.message || 'Internal Server Error' },
+        debug: { stack: err.stack },
+      }),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      }
+    );
+  }
 }
