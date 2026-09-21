@@ -283,6 +283,8 @@ except Exception as e:
 
     const personaDescriptions: Record<HarnessType, string> = {
       'claude-code': 'Engineering CLI (CLAUDE.md, dev guides, llms.txt, configs)',
+      cursor: 'IDE Agent (TypeScript types, OpenAPI schemas, autocomplete hints)',
+      perplexity: 'Research Agent (Deep doc synthesis, citations, narrative guides)',
       openclaw: 'Autonomous Web Explorer (DOM anchors, pricing, onboarding, sitemaps)',
       hermes: 'Function-Calling Agent (OpenAPI 3.1, schemas, .well-known/ard.json)',
       opencode: 'Terminal Coding Agent (REST curl, Bearer auth tokens, SDK samples)',
@@ -795,6 +797,10 @@ except Exception as e:
     const personas: Record<HarnessType, string> = {
       'claude-code':
         'You are Claude Code, Anthropic’s engineering CLI agent. You methodically examine developer guides, npm/pip packages, setup instructions, and configuration files (CLAUDE.md, llms.txt).',
+      cursor:
+        'You are Cursor, an AI-powered code editor. You prioritize TypeScript types, OpenAPI schemas, REST declarations, and inline completion hints.',
+      perplexity:
+        'You are Perplexity, an autonomous knowledge agent. You synthesize complete documentation guides, search FAQs, verify citations, and analyze platform architecture.',
       openclaw:
         'You are OpenClaw, an autonomous web agent. You perform rapid exploratory DOM traversal, investigating navigation anchors, pricing tiers, onboarding pages, and documentation hubs.',
       hermes:
@@ -807,6 +813,8 @@ except Exception as e:
 You are navigating ${target} to satisfy this intent: "${intent}".
 Your persona focus:
 - claude-code: developer guides, setup quickstarts, configuration files, llms.txt.
+- cursor: TypeScript definitions, OpenAPI schemas, tool calls, API reference.
+- perplexity: deep documentation guides, architecture synthesis, FAQs.
 - openclaw: DOM navigation anchors, user onboarding, pricing tiers, product portals.
 - hermes: machine-readable schemas, openapi.json, .well-known/ard.json, tool specifications.
 - opencode: REST curl endpoints, authentication headers, SDK code samples.
@@ -859,6 +867,18 @@ Keep label to 1-2 words.`;
         { path: '/docs/quickstart', label: 'quickstart', icon: 'docs' },
         { path: '/docs/authentication', label: 'auth', icon: 'auth' },
       ],
+      cursor: [
+        { path: '/docs', label: 'docs', icon: 'docs' },
+        { path: '/openapi.json', label: 'openapi', icon: 'openapi' },
+        { path: '/types', label: 'type-defs', icon: 'api' },
+        { path: '/api', label: 'api-reference', icon: 'api' },
+      ],
+      perplexity: [
+        { path: '/docs', label: 'docs', icon: 'docs' },
+        { path: '/guides', label: 'guides', icon: 'docs' },
+        { path: '/faq', label: 'faq', icon: 'docs' },
+        { path: '/llms.txt', label: 'llms.txt', icon: 'llms' },
+      ],
       openclaw: [
         { path: '/pricing', label: 'pricing', icon: 'sparkles' },
         { path: '/docs', label: 'docs', icon: 'docs' },
@@ -908,11 +928,33 @@ Keep label to 1-2 words.`;
       discoveredLinks: ['/docs', '/api', '/openapi.json', '/pricing'],
     };
 
-    const probes = [
+    let probes = [
       { url: `${target}/robots.txt`, status: 200, ms: 120 },
       { url: `${target}/llms.txt`, status: 404, ms: 140 },
       { url: `${target}/openapi.json`, status: 200, ms: 180 },
+      { url: `${target}/auth.md`, status: 404, ms: 150 },
     ];
+
+    if (/^https?:\/\//i.test(target)) {
+      try {
+        const probeFast = async (url: string) => {
+          try {
+            const res = await fetchResource(url, { timeoutMs: 1500 });
+            return { url, status: res?.httpStatus || 404, ms: 120 };
+          } catch {
+            return { url, status: 404, ms: 120 };
+          }
+        };
+        probes = await Promise.all([
+          probeFast(`${target}/robots.txt`),
+          probeFast(`${target}/llms.txt`),
+          probeFast(`${target}/openapi.json`),
+          probeFast(`${target}/auth.md`),
+        ]);
+      } catch {
+        // use default probes
+      }
+    }
 
     const dynamicData = this.generateDynamicHeuristicGraph(
       target,
@@ -978,13 +1020,9 @@ Keep label to 1-2 words.`;
         const stepNum = i + 1;
         const parentNode = node.parentId ? nodes.find((n) => n.id === node.parentId) : undefined;
 
-        onProgress({
-          type: 'ticker_update',
-          text: `● Fetching ${node.url || node.label}`,
-          subText: `${stepNum} steps`,
-        });
-
-        terminalLogs.push(`[${harness}@step-${stepNum}] Fetching ${node.url || node.label}...`);
+        terminalLogs.push(
+          `[${harness}@step-${stepNum}] Traversed ${node.url || node.label} [${node.status}] - "${node.thought}"`
+        );
 
         onProgress({
           type: 'node_materialized',
@@ -1011,13 +1049,18 @@ Keep label to 1-2 words.`;
         }
 
         onProgress({
-          type: 'agent_reaction',
-          reaction: node.isDeadEnd ? 'nope' : 'scanning',
-          thought: node.thought,
-          targetNodeId: node.id,
+          type: 'ticker_update',
+          text: `● Checking ${node.label}...`,
+          subText: `${i + 1} steps`,
         });
 
         if (node.isDeadEnd) {
+          onProgress({
+            type: 'agent_reaction',
+            reaction: 'nope',
+            thought: node.thought,
+            targetNodeId: node.id,
+          });
           onProgress({
             type: 'agent_nope',
             targetNodeId: node.id,
@@ -1026,7 +1069,7 @@ Keep label to 1-2 words.`;
         } else {
           onProgress({
             type: 'agent_reaction',
-            reaction: 'nod',
+            reaction: i === 0 ? 'scanning' : 'nod',
             thought: node.thought,
             targetNodeId: node.id,
           });
@@ -1061,10 +1104,40 @@ Keep label to 1-2 words.`;
     }
 
     const totalTokens = nodes.reduce((sum, n) => sum + n.tokens, 0);
+
+    // Dynamic friction calculation based on intent, trajectory and probes
+    const deadEnds = nodes.filter((n) => n.isDeadEnd || n.status === 'fail').length;
+    const warns = nodes.filter((n) => n.status === 'warn').length;
+    let friction = deadEnds * 25 + warns * 10;
+
+    const lowerIntent = intent.toLowerCase();
+    const isAuth = /auth|login|token|key|credential|bearer/i.test(lowerIntent);
+    const isOverview = /what does|overview|features|explain|summary|about|product/i.test(lowerIntent);
+    const hasLlms = probes.some((p) => p.url.includes('llms.txt') && p.status === 200);
+    const hasOpenApi = probes.some((p) => p.url.includes('openapi') && p.status === 200);
+
+    if (isOverview) {
+      friction += hasLlms ? 4 : 18;
+    } else if (isAuth) {
+      const hasAuthDoc = probes.some((p) => p.url.includes('auth') && p.status === 200);
+      friction += hasAuthDoc ? 6 : 22;
+    } else {
+      friction += hasOpenApi ? 5 : 20;
+    }
+
+    if (harness === 'cursor' && !hasOpenApi) {
+      friction += 8;
+    } else if (harness === 'claude-code' && hasLlms) {
+      friction = Math.max(4, friction - 4);
+    }
+
+    const clampedFriction = Math.max(4, Math.min(92, friction));
+    const answerEfficiency = 100 - clampedFriction;
+
     const kpis: JourneyKPIMetrics = {
-      answerFromSite: 100,
-      answerEfficiency: 88,
-      followedSiteLinks: 82,
+      answerFromSite: deadEnds > 0 ? 75 : 100,
+      answerEfficiency,
+      followedSiteLinks: Math.max(70, 95 - deadEnds * 15),
     };
 
     const remediations = nodes
@@ -1087,7 +1160,7 @@ Keep label to 1-2 words.`;
       target,
       intent,
       harness,
-      status: 'success',
+      status: deadEnds > 0 ? 'failed' : 'success',
       telemetry: {
         stepsCount: nodes.length,
         reasoningStepsCount: 1,
@@ -1167,16 +1240,21 @@ Keep label to 1-2 words.`;
   ): { nodes: JourneyPillNode[]; summary: string; bulletPoints: string[] } {
     const hasOpenApi = probes.some((p) => p.url.includes('openapi') && p.status === 200);
     const hasLlms = probes.some((p) => p.url.includes('llms.txt') && p.status === 200);
+    const hasAuth = probes.some((p) => p.url.includes('auth') && p.status === 200);
     const lowerIntent = intent.toLowerCase();
 
-    const isPricingIntent =
-      lowerIntent.includes('pricing') || lowerIntent.includes('cost') || lowerIntent.includes('plan');
-    const isSchemaIntent =
-      lowerIntent.includes('schema') || lowerIntent.includes('openapi') || lowerIntent.includes('mcp');
+    const isAuthIntent = /auth|authenticate|login|token|api[_\s-]?key|credential|bearer|secret|oauth|sso/i.test(lowerIntent);
+    const isOverviewIntent = /what does|overview|features|explain|summary|about|product|how it works|what is|capabilities|architecture/i.test(lowerIntent);
+    const isPricingIntent = /pricing|cost|plan|bill|pay|checkout|tier|rate/i.test(lowerIntent);
+    const isSchemaIntent = /schema|openapi|swagger|endpoints|routes|mcp|tools|specification|protocol/i.test(lowerIntent);
+    const isIntegrationIntent = /install|sdk|client|quickstart|integrate|setup|getting.?started|npm|pip|library/i.test(lowerIntent);
+
+    const mult = harness === 'claude-code' ? 0.85 : harness === 'cursor' ? 1.15 : harness === 'perplexity' ? 1.3 : 1.0;
+    const scaleTokens = (val: number) => Math.round(val * mult);
 
     const nodes: JourneyPillNode[] = [];
 
-    // Step 0: Apex Entry Point
+    // Step 0: Apex Entry Point (Common to all, scaled by persona)
     nodes.push({
       id: 'node_0',
       label: 'home',
@@ -1184,14 +1262,159 @@ Keep label to 1-2 words.`;
       status: 'pass',
       row: 0,
       col: 0,
-      tokens: 540,
+      tokens: scaleTokens(540),
       latencyMs: 140,
       httpStatus: 200,
       url: target,
-      thought: `Navigated to ${domain}. Scanning page metadata and header navigation anchors for intent matches.`,
+      thought: `Navigated to ${domain}. Scanning page metadata, semantic headers, and anchor indices.`,
     });
 
+    if (isOverviewIntent) {
+      // 4-Hop Overview / Architecture Trajectory
+      nodes.push({
+        id: 'node_1',
+        parentId: 'node_0',
+        label: hasLlms ? 'llms.txt' : 'overview',
+        iconType: hasLlms ? 'llms' : 'docs',
+        status: 'pass',
+        row: 0,
+        col: 1,
+        tokens: scaleTokens(hasLlms ? 420 : 920),
+        latencyMs: 150,
+        httpStatus: 200,
+        url: hasLlms ? `${target}/llms.txt` : `${target}/overview`,
+        thought: hasLlms
+          ? `Discovered clean machine-readable index at /llms.txt. Ingesting core platform summary.`
+          : `Reading product overview and introductory architecture documentation.`,
+      });
+      nodes.push({
+        id: 'node_2',
+        parentId: 'node_1',
+        label: 'capabilities',
+        iconType: 'docs',
+        status: 'pass',
+        row: 0,
+        col: 2,
+        tokens: scaleTokens(780),
+        latencyMs: 160,
+        httpStatus: 200,
+        url: `${target}/features`,
+        thought: `Extracted key platform capabilities, features, and core problem domain for ${domain}.`,
+      });
+      nodes.push({
+        id: 'node_3',
+        parentId: 'node_2',
+        label: 'ready',
+        iconType: 'sparkles',
+        status: 'pass',
+        row: 0,
+        col: 3,
+        tokens: scaleTokens(460),
+        latencyMs: 110,
+        httpStatus: 200,
+        url: `${target}/summary`,
+        thought: `Synthesized complete platform profile. Developer question resolved with minimal context overhead.`,
+      });
+
+      return {
+        nodes,
+        summary: `Agent traversed ${domain} exploring platform overview and capabilities for "${intent}". Successfully extracted product scope.`,
+        bulletPoints: [
+          `> Resolved platform overview via ${hasLlms ? '/llms.txt markdown index' : 'documentation overview'}.`,
+          `> Mapped core product capabilities and architecture patterns.`,
+          `> Completed inquiry with ${harness} strategy in ${nodes.length} hops.`,
+        ],
+      };
+    }
+
+    if (isAuthIntent) {
+      // 6-Hop Authentication & Credentials Trajectory
+      nodes.push({
+        id: 'node_1',
+        parentId: 'node_0',
+        label: 'docs',
+        iconType: 'docs',
+        status: 'pass',
+        row: 0,
+        col: 1,
+        tokens: scaleTokens(850),
+        latencyMs: 160,
+        httpStatus: 200,
+        url: `${target}/docs`,
+        thought: `Navigated to developer documentation portal looking for security and credential specifications.`,
+      });
+      nodes.push({
+        id: 'node_2',
+        parentId: 'node_1',
+        label: 'get-started',
+        iconType: 'docs',
+        status: 'pass',
+        row: 0,
+        col: 2,
+        tokens: scaleTokens(980),
+        latencyMs: 170,
+        httpStatus: 200,
+        url: `${target}/docs/quickstart`,
+        thought: `Inspected getting started guide for initial credential setup and environment variables.`,
+      });
+      nodes.push({
+        id: 'node_3',
+        parentId: 'node_2',
+        label: hasAuth ? 'auth.md' : 'auth',
+        iconType: 'auth',
+        status: 'pass',
+        row: 0,
+        col: 3,
+        tokens: scaleTokens(hasAuth ? 560 : 1200),
+        latencyMs: 180,
+        httpStatus: 200,
+        url: hasAuth ? `${target}/auth.md` : `${target}/docs/authentication`,
+        thought: hasAuth
+          ? `Discovered /auth.md agent credential specification. Parsing Bearer token schema and scopes.`
+          : `Inspecting authentication documentation; extracting header requirements and key format.`,
+      });
+      nodes.push({
+        id: 'node_4',
+        parentId: 'node_3',
+        label: 'token-spec',
+        iconType: 'auth',
+        status: 'pass',
+        row: 0,
+        col: 4,
+        tokens: scaleTokens(720),
+        latencyMs: 140,
+        httpStatus: 200,
+        url: `${target}/docs/api-keys`,
+        thought: `Verified HTTP authorization scheme (Authorization: Bearer <API_KEY>) and token lifecycle.`,
+      });
+      nodes.push({
+        id: 'node_5',
+        parentId: 'node_4',
+        label: 'ready',
+        iconType: 'sparkles',
+        status: 'pass',
+        row: 0,
+        col: 5,
+        tokens: scaleTokens(520),
+        latencyMs: 120,
+        httpStatus: 200,
+        url: `${target}/auth/verified`,
+        thought: `Authentication handshake requirements verified for ${domain}. Ready for authenticated requests.`,
+      });
+
+      return {
+        nodes,
+        summary: `Agent traversed ${domain} exploring authentication protocol for "${intent}". Successfully extracted API key formats and authorization headers.`,
+        bulletPoints: [
+          `> Located developer authentication guide and header standards.`,
+          `> Verified machine credential format and Bearer token transmission scheme.`,
+          `> Validated zero-friction authentication protocol for ${harness}.`,
+        ],
+      };
+    }
+
     if (isPricingIntent) {
+      // 5-Hop Pricing & Subscription Trajectory
       nodes.push({
         id: 'node_1',
         parentId: 'node_0',
@@ -1200,35 +1423,21 @@ Keep label to 1-2 words.`;
         status: 'pass',
         row: 0,
         col: 1,
-        tokens: 1100,
-        latencyMs: 180,
+        tokens: scaleTokens(1050),
+        latencyMs: 170,
         httpStatus: 200,
         url: `${target}/pricing`,
-        thought: `Discovered pricing tier anchor in navigation; parsed subscription tiers, rates, and free quotas.`,
+        thought: `Discovered pricing tier anchor; parsed subscription tiers, usage rates, and free quotas.`,
       });
       nodes.push({
         id: 'node_2',
-        parentId: 'node_1',
-        label: 'checkout',
-        iconType: 'api',
-        status: 'pass',
-        row: 0,
-        col: 2,
-        tokens: 1450,
-        latencyMs: 210,
-        httpStatus: 200,
-        url: `${target}/checkout`,
-        thought: `Tested checkout flow; verified customer portal session redirect and currency support.`,
-      });
-      nodes.push({
-        id: 'node_3',
         parentId: 'node_1',
         label: 'plans.api',
         iconType: 'openapi',
         status: hasOpenApi ? 'pass' : 'fail',
         row: 1,
         col: 2,
-        tokens: 650,
+        tokens: scaleTokens(620),
         latencyMs: 190,
         httpStatus: hasOpenApi ? 200 : 404,
         url: `${target}/api/v1/plans`,
@@ -1247,20 +1456,47 @@ Keep label to 1-2 words.`;
           : undefined,
       });
       nodes.push({
+        id: 'node_3',
+        parentId: 'node_1',
+        label: 'checkout',
+        iconType: 'api',
+        status: 'pass',
+        row: 0,
+        col: 2,
+        tokens: scaleTokens(1150),
+        latencyMs: 200,
+        httpStatus: 200,
+        url: `${target}/checkout`,
+        thought: `Tested checkout flow; verified customer portal session redirect and payment currency support.`,
+      });
+      nodes.push({
         id: 'node_4',
-        parentId: 'node_2',
+        parentId: 'node_3',
         label: 'ready',
         iconType: 'sparkles',
         status: 'pass',
         row: 0,
         col: 3,
-        tokens: 720,
-        latencyMs: 120,
+        tokens: scaleTokens(580),
+        latencyMs: 110,
         httpStatus: 200,
         url: `${target}/pricing/confirmed`,
         thought: `Pricing exploration confirmed. Agent successfully resolved cost structure for "${intent}".`,
       });
-    } else if (isSchemaIntent || harness === 'hermes') {
+
+      return {
+        nodes,
+        summary: `Agent traversed ${domain} exploring subscription tiers and checkout flows for "${intent}".`,
+        bulletPoints: [
+          `> Scanned pricing tiers, rate limits, and enterprise plans.`,
+          `> Checked machine-readable billing API availability.`,
+          `> Resolved payment and checkout protocols for autonomous procurement.`,
+        ],
+      };
+    }
+
+    if (isSchemaIntent || harness === 'hermes') {
+      // 5-Hop Schema & Tool Calling Trajectory
       nodes.push({
         id: 'node_1',
         parentId: 'node_0',
@@ -1269,11 +1505,11 @@ Keep label to 1-2 words.`;
         status: 'pass',
         row: 0,
         col: 1,
-        tokens: 950,
-        latencyMs: 170,
+        tokens: scaleTokens(920),
+        latencyMs: 160,
         httpStatus: 200,
         url: `${target}/docs`,
-        thought: `Accessed developer documentation; searching for machine-to-machine schemas and API specifications.`,
+        thought: `Accessed developer documentation portal searching for machine-to-machine schemas and OpenAPI specs.`,
       });
       nodes.push({
         id: 'node_2',
@@ -1283,7 +1519,7 @@ Keep label to 1-2 words.`;
         status: hasOpenApi ? 'pass' : 'fail',
         row: 0,
         col: 2,
-        tokens: hasOpenApi ? 2400 : 250,
+        tokens: scaleTokens(hasOpenApi ? 2300 : 250),
         latencyMs: 190,
         httpStatus: hasOpenApi ? 200 : 404,
         url: `${target}/openapi.json`,
@@ -1309,7 +1545,7 @@ Keep label to 1-2 words.`;
         status: hasLlms ? 'pass' : 'fail',
         row: 1,
         col: 2,
-        tokens: hasLlms ? 450 : 210,
+        tokens: scaleTokens(hasLlms ? 450 : 210),
         latencyMs: 150,
         httpStatus: hasLlms ? 200 : 404,
         url: `${target}/llms.txt`,
@@ -1335,13 +1571,26 @@ Keep label to 1-2 words.`;
         status: 'pass',
         row: 0,
         col: 3,
-        tokens: 680,
-        latencyMs: 130,
+        tokens: scaleTokens(640),
+        latencyMs: 120,
         httpStatus: 200,
         url: `${target}/api/ready`,
         thought: `Schema validation complete for ${domain}. Intent fulfilled.`,
       });
-    } else {
+
+      return {
+        nodes,
+        summary: `Agent traversed ${domain} exploring machine schemas and tool definitions for "${intent}".`,
+        bulletPoints: [
+          `> Inspected API catalog and machine discovery endpoints.`,
+          `> Validated OpenAPI 3.1 specification and parameter contracts.`,
+          `> Compiled function calling signatures for automated execution.`,
+        ],
+      };
+    }
+
+    if (isIntegrationIntent) {
+      // 6-Hop Integration / SDK Trajectory
       nodes.push({
         id: 'node_1',
         parentId: 'node_0',
@@ -1350,81 +1599,139 @@ Keep label to 1-2 words.`;
         status: 'pass',
         row: 0,
         col: 1,
-        tokens: 880,
-        latencyMs: 170,
+        tokens: scaleTokens(860),
+        latencyMs: 160,
         httpStatus: 200,
         url: `${target}/docs`,
-        thought: `Discovered developer anchor in navigation; dispatched navigation to documentation portal.`,
+        thought: `Navigated to documentation hub to identify SDKs and client packages.`,
       });
       nodes.push({
         id: 'node_2',
         parentId: 'node_1',
-        label: 'get-started',
+        label: 'quickstart',
         iconType: 'docs',
         status: 'pass',
         row: 0,
         col: 2,
-        tokens: 1600,
-        latencyMs: 190,
+        tokens: scaleTokens(1100),
+        latencyMs: 170,
         httpStatus: 200,
-        url: `${target}/docs/get-started`,
-        thought: `Reached quickstart section; extracted installation commands, dependencies, and environment setup.`,
+        url: `${target}/docs/quickstart`,
+        thought: `Extracted installation instructions, package dependencies, and environment variable setup.`,
       });
       nodes.push({
         id: 'node_3',
         parentId: 'node_2',
-        label: 'auth',
-        iconType: 'auth',
+        label: 'sdk-install',
+        iconType: 'api',
         status: 'pass',
         row: 0,
         col: 3,
-        tokens: 1100,
-        latencyMs: 160,
+        tokens: scaleTokens(750),
+        latencyMs: 150,
         httpStatus: 200,
-        url: `${target}/docs/authentication`,
-        thought: `Verified API Key Bearer authentication format (Authorization: Bearer <KEY>) and token scopes.`,
+        url: `${target}/docs/sdks`,
+        thought: `Verified official client library installation command and TypeScript bindings.`,
       });
       nodes.push({
         id: 'node_4',
-        parentId: 'node_1',
-        label: 'openapi',
-        iconType: 'openapi',
-        status: hasOpenApi ? 'pass' : 'fail',
-        row: 1,
-        col: 2,
-        tokens: hasOpenApi ? 2200 : 240,
+        parentId: 'node_3',
+        label: 'first-call',
+        iconType: 'api',
+        status: 'pass',
+        row: 0,
+        col: 4,
+        tokens: scaleTokens(920),
         latencyMs: 180,
-        httpStatus: hasOpenApi ? 200 : 404,
-        url: `${target}/openapi.json`,
-        thought: hasOpenApi
-          ? 'Found OpenAPI 3.1 specification for zero-shot tool calling.'
-          : 'Probed /openapi.json for automated REST schema (HTTP 404). Dead end reached—no machine schema available. Backtracking to documentation portal.',
-        isDeadEnd: !hasOpenApi,
-        backtrackToId: 'node_1',
-        remediation: !hasOpenApi
-          ? {
-              title: 'Mount OpenAPI 3.1 Specification',
-              manualInstruction:
-                'Export your API endpoints to an OpenAPI 3.1 JSON schema and host it at public/openapi.json so AI agents can generate type-safe tool calls automatically.',
-              fixCommand: 'glintbase scan --fix',
-            }
-          : undefined,
+        httpStatus: 200,
+        url: `${target}/docs/examples`,
+        thought: `Tested boilerplate client initialization and verified hello-world API response.`,
       });
       nodes.push({
         id: 'node_5',
-        parentId: 'node_3',
+        parentId: 'node_4',
         label: 'ready',
         iconType: 'sparkles',
         status: 'pass',
         row: 0,
-        col: 4,
-        tokens: 580,
+        col: 5,
+        tokens: scaleTokens(540),
         latencyMs: 110,
         httpStatus: 200,
-        url: `${target}/ready`,
-        thought: `Mission complete. Developer integration and setup instructions extracted for ${domain}.`,
+        url: `${target}/integration/ready`,
+        thought: `Integration workflow verified successfully for ${domain}. Client ready for production.`,
       });
+
+      return {
+        nodes,
+        summary: `Agent executed complete client onboarding and SDK integration workflow for "${intent}".`,
+        bulletPoints: [
+          `> Extracted official SDK package setup and dependencies.`,
+          `> Configured client credentials and environment variables.`,
+          `> Executed sample API call with verified handshake.`,
+        ],
+      };
     }
+
+    // Default Fallback: 5 Distinct General Hops
+    nodes.push({
+      id: 'node_1',
+      parentId: 'node_0',
+      label: 'docs',
+      iconType: 'docs',
+      status: 'pass',
+      row: 0,
+      col: 1,
+      tokens: scaleTokens(850),
+      latencyMs: 160,
+      httpStatus: 200,
+      url: `${target}/docs`,
+      thought: `Discovered developer anchor in navigation; dispatched navigation to documentation portal.`,
+    });
+    nodes.push({
+      id: 'node_2',
+      parentId: 'node_1',
+      label: 'api-routes',
+      iconType: 'api',
+      status: 'pass',
+      row: 0,
+      col: 2,
+      tokens: scaleTokens(1250),
+      latencyMs: 180,
+      httpStatus: 200,
+      url: `${target}/docs/api`,
+      thought: `Inspected available REST API endpoints and data routes matching "${intent}".`,
+    });
+    nodes.push({
+      id: 'node_3',
+      parentId: 'node_2',
+      label: 'data-models',
+      iconType: 'openapi',
+      status: hasOpenApi ? 'pass' : 'warn',
+      row: 0,
+      col: 3,
+      tokens: scaleTokens(980),
+      latencyMs: 170,
+      httpStatus: hasOpenApi ? 200 : 200,
+      url: `${target}/docs/models`,
+      thought: hasOpenApi
+        ? 'Cross-referenced request/response data models against OpenAPI schemas.'
+        : 'Parsed documentation tables for payload shapes; schema partially inferred.',
+    });
+    nodes.push({
+      id: 'node_4',
+      parentId: 'node_3',
+      label: 'ready',
+      iconType: 'sparkles',
+      status: 'pass',
+      row: 0,
+      col: 4,
+      tokens: scaleTokens(580),
+      latencyMs: 110,
+      httpStatus: 200,
+      url: `${target}/ready`,
+      thought: `Mission complete. Developer integration and setup instructions extracted for ${domain}.`,
+    });
 
     return {
       nodes,
@@ -1432,7 +1739,7 @@ Keep label to 1-2 words.`;
       bulletPoints: [
         `> Scanned apex domain (${domain}) and followed discovered navigation routes.`,
         `> Probed machine endpoints (/openapi.json, /llms.txt) to verify agent interoperability.`,
-        `> Extracted authentication headers and setup guides for immediate developer use.`,
+        `> Extracted endpoint schemas and setup guides for immediate developer use.`,
       ],
     };
   }

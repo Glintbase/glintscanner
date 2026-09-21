@@ -44,9 +44,9 @@ export function generateJourneyTreeSvg(
   const displayTarget = truncate(target.replace(/^https?:\/\//i, '').replace(/\/$/, ''), 38);
 
   const rawSteps = telemetry.steps || [];
-  const displaySteps = rawSteps.length <= 5
+  const displaySteps = rawSteps.length <= 8
     ? rawSteps
-    : [rawSteps[0], ...rawSteps.slice(Math.max(1, rawSteps.length - 4))];
+    : [rawSteps[0], ...rawSteps.slice(1, 4), ...rawSteps.slice(rawSteps.length - 3)];
 
   const startX = 60;
   const endX = 820;
@@ -81,7 +81,13 @@ export function generateJourneyTreeSvg(
       `;
     }
 
-    const actionBadge = truncate(step.action?.toUpperCase() || 'STEP', 12);
+    const rawAction = (step.action || '').toUpperCase();
+    const sanitizedAction = ['SPARKLES', 'READY', 'SUCCESS'].includes(rawAction)
+      ? (idx === displaySteps.length - 1 && isSuccess ? 'GOAL' : 'READY')
+      : rawAction === 'HOME'
+      ? 'INDEX'
+      : rawAction;
+    const actionBadge = truncate(sanitizedAction || 'STEP', 12);
     const detailLabel = truncate(step.details || '', 22);
     const statusText = step.status === 'ok' ? '200 OK' : step.status?.toUpperCase() || 'FAIL';
 
@@ -192,3 +198,94 @@ export function svgToBase64(svg: string): string {
   }
   return btoa(unescape(encodeURIComponent(svg)));
 }
+
+/**
+ * Generates an interactive Mermaid flowchart diagram representing
+ * the agent's flight trajectory. Rendered natively in Claude Desktop and Claude Web.
+ */
+export function generateJourneyMermaid(
+  telemetry: any,
+  persona: string,
+  target: string
+): string {
+  const steps = telemetry.steps || [];
+  if (steps.length === 0) {
+    return '```mermaid\nflowchart LR\n  Start["No steps recorded"]\n```';
+  }
+
+  const isCompleted = telemetry.outcome === 'completed';
+
+  const lines: string[] = [];
+  lines.push('```mermaid');
+  lines.push('flowchart LR');
+  lines.push('  %% Glintbase Agent Flight Trajectory');
+  lines.push('  classDef pass fill:#064e3b,stroke:#10b981,stroke-width:2px,color:#ffffff;');
+  lines.push('  classDef warn fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#ffffff;');
+  lines.push('  classDef fail fill:#450a0a,stroke:#ef4444,stroke-width:2px,color:#ffffff;');
+  lines.push('  classDef goal fill:#042f2e,stroke:#14b8a6,stroke-width:2px,color:#ffffff;');
+
+  steps.forEach((step: any, idx: number) => {
+    const stepNum = idx + 1;
+    const isLast = idx === steps.length - 1;
+    const rawAction = (step.action || '').toUpperCase();
+    const action = ['SPARKLES', 'READY', 'SUCCESS'].includes(rawAction)
+      ? (isLast && isCompleted ? 'GOAL' : 'READY')
+      : rawAction === 'HOME'
+      ? 'INDEX'
+      : rawAction || `STEP ${stepNum}`;
+
+    const detail = (step.details || '').replace(/["[\]()]/g, ' ');
+    const shortDetail = detail.length > 22 ? detail.slice(0, 21) + '…' : detail;
+    const isPass = step.status === 'ok' || step.status === 'pass';
+    const isWarn = step.status === 'warn';
+    const statusText = isPass ? '200 OK' : isWarn ? 'WARN' : 'FAIL';
+    const nodeClass = isLast && isCompleted ? 'goal' : isPass ? 'pass' : isWarn ? 'warn' : 'fail';
+
+    const nodeLabel = `"${stepNum}. ${escapeXml(action)}<br/>${escapeXml(shortDetail)}<br/>${statusText}"`;
+    lines.push(`  N${stepNum}[${nodeLabel}]:::${nodeClass}`);
+  });
+
+  for (let i = 1; i < steps.length; i++) {
+    lines.push(`  N${i} --> N${i + 1}`);
+  }
+
+  lines.push('```');
+  return lines.join('\n');
+}
+
+/**
+ * Generates a clean Flight Telemetry HUD Markdown Card with KPI table.
+ */
+export function generateFlightHud(
+  telemetry: any,
+  persona: string,
+  target: string,
+  replayUrl?: string
+): string {
+  const isCompleted = telemetry.outcome === 'completed';
+  const outcomeBadge = isCompleted ? '🟢 COMPLETED' : telemetry.outcome === 'partial' ? '🟡 PARTIAL' : '🔴 BLOCKED';
+  const friction = telemetry.schemaFrictionScore ?? 0;
+  const riskBadge = friction > 50 ? '🔴 HIGH RISK' : friction > 25 ? '🟡 MEDIUM' : '🟢 LOW RISK';
+  const hops = telemetry.steps?.length || 0;
+  const tokens = (telemetry.totalTokensBurned || 0).toLocaleString();
+
+  let md = `### 🕹️ Glintbase Visual Flight Simulator (${persona})\n\n`;
+  md += `| Target | Mission Outcome | Navigation Hops | Tokens Burned | Schema Friction | Risk Assessment |\n`;
+  md += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
+  md += `| \`${target}\` | **${outcomeBadge}** | **${hops} hops** | **${tokens}** | **${friction}/100** | **${riskBadge}** |\n\n`;
+
+  if (replayUrl) {
+    md += `[🕹️ Open Full Interactive Cockpit Replay](${replayUrl})\n\n`;
+  }
+
+  if (!isCompleted && telemetry.failureBottleneck) {
+    md += `> ⚠️ **Bottleneck**: ${telemetry.failureBottleneck}\n`;
+    if (telemetry.suggestedRemediation) {
+      md += `> 💡 **Suggested Fix**: \`${telemetry.suggestedRemediation}\`\n`;
+    }
+    md += `\n`;
+  }
+
+  return md;
+}
+

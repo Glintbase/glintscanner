@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { runArs3Probes } from '@/lib/scanner/v2/probes';
 import { E2BRunner } from '@/lib/scanner/simulator/e2bRunner';
-import { generateJourneyTreeSvg, svgToBase64 } from '@/lib/scanner/simulator/journeyTreeSvg';
+import { generateJourneyTreeSvg, svgToBase64, generateJourneyMermaid, generateFlightHud } from '@/lib/scanner/simulator/journeyTreeSvg';
 import { deflateSync } from 'node:zlib';
 import { BUNDLED_SKILLS, BundledSkill } from '@/lib/scanner/mcp/skills';
 
@@ -612,12 +612,32 @@ export async function POST(req: NextRequest) {
           totalDurationMs: (simResult.telemetry?.durationSeconds || 3) * 1000,
           totalTokensBurned: simResult.telemetry?.tokensBurned || 4200,
           schemaFrictionScore: Math.round(100 - (simResult.kpis?.answerEfficiency || 70)),
-          steps: (simResult.nodes || []).map(n => ({
-            action: (n as any).type || n.iconType || 'explore',
-            details: n.label,
-            status: n.status === 'pass' ? 'ok' : 'error',
-            tokensConsumed: n.tokens,
-          })),
+          steps: (simResult.nodes || []).map((n, idx, arr) => {
+            const raw = ((n as any).action || (n as any).type || n.iconType || n.label || 'step').toLowerCase();
+            let action = raw.toUpperCase();
+            if (raw === 'sparkles' || raw === 'ready' || raw === 'success') {
+              action = idx === arr.length - 1 ? 'GOAL' : 'READY';
+            } else if (raw === 'home') {
+              action = 'INDEX';
+            } else if (raw === 'openapi') {
+              action = 'API SPEC';
+            } else if (raw === 'llms' || raw === 'llms.txt') {
+              action = 'LLMS.TXT';
+            } else if (raw === 'auth') {
+              action = 'AUTH';
+            } else if (raw === 'api') {
+              action = 'API';
+            } else if (raw === 'docs') {
+              action = 'DOCS';
+            }
+
+            return {
+              action,
+              details: n.label,
+              status: n.status === 'pass' ? 'ok' : n.status === 'warn' ? 'warn' : 'error',
+              tokensConsumed: n.tokens,
+            };
+          }),
           failureBottleneck: simResult.status === 'failed' ? simResult.insight?.summary : undefined,
           suggestedRemediation: simResult.insight?.remediations?.[0]?.description,
         };
@@ -633,8 +653,8 @@ export async function POST(req: NextRequest) {
         const compressed = deflateSync(Buffer.from(JSON.stringify(payload), 'utf-8'), { level: 9 }).toString('base64url');
         const replayUrl = `https://scan.glintbase.dev/simulate#data=${compressed}`;
 
-        const svg = generateJourneyTreeSvg(telemetry, persona, targetUrl, replayUrl);
-        const svgBase64 = svgToBase64(svg);
+        const mermaidDiagram = generateJourneyMermaid(telemetry, persona, targetUrl);
+        const flightHud = generateFlightHud(telemetry, persona, targetUrl, replayUrl);
 
         const summaryText = {
           persona,
@@ -648,14 +668,8 @@ export async function POST(req: NextRequest) {
           failureBottleneck: telemetry.failureBottleneck || null,
         };
 
-        const markdownVisual = `### 🕹️ Glintbase Visual Flight Simulator (${persona})
-**Target**: \`${targetUrl}\` | **Outcome**: **${telemetry.outcome.toUpperCase()}** | **Tokens**: ${telemetry.totalTokensBurned.toLocaleString()}
-
-[🕹️ Open Full Interactive Cockpit Replay](${replayUrl})
-
-\`\`\`xml
-${svg}
-\`\`\``;
+        const markdownVisual = `${flightHud}
+${mermaidDiagram}`;
 
         rpcResponse = {
           jsonrpc: '2.0',
@@ -663,7 +677,6 @@ ${svg}
           result: {
             content: [
               { type: 'text', text: JSON.stringify(summaryText, null, 2) },
-              { type: 'image', data: svgBase64, mimeType: 'image/svg+xml' },
               { type: 'text', text: markdownVisual },
             ],
           },

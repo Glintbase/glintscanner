@@ -4,7 +4,7 @@
  */
 
 export type PersonaType = 'claude-code' | 'cursor' | 'perplexity';
-export type HarnessType = 'claude-code' | 'hermes' | 'openclaw' | 'opencode';
+export type HarnessType = 'claude-code' | 'hermes' | 'openclaw' | 'opencode' | 'cursor' | 'perplexity';
 export type SimulationMode = 'deterministic' | 'live' | 'e2b';
 export type StepStatus = 'pass' | 'warn' | 'fail' | 'skip';
 export type TrajectoryOutcome = 'completed' | 'blocked' | 'hallucinated' | 'timed_out' | 'failed' | 'partial';
