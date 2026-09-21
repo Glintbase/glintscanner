@@ -1,0 +1,15 @@
+# Smithery configuration file
+# https://smithery.ai/docs/config#smitheryyaml
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      apiKey:
+        type: string
+        description: Glintbase API Key (optional for public audits)
+  command: npx
+  args:
+    - "-y"
+    - "@glintbase/mcp"

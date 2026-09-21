@@ -123,13 +123,13 @@ export async function runArs3Probes(
     baseMax: number,
     applicable: boolean = true
   ): LayerScoreSummary => {
-    const layerBonus = checks.filter(c => c.isBonus && c.status === 'pass').reduce((sum, c) => sum + c.earnedPoints, 0);
+    const layerBonus = layer === 'payments' ? 0 : checks.filter(c => c.isBonus && c.status === 'pass').reduce((sum, c) => sum + c.earnedPoints, 0);
     return {
       layer,
       name,
       baseEarned: layerBase,
       bonusEarned: layerBonus,
-      totalEarned: layerBase,
+      totalEarned: layerBase + layerBonus,
       baseMax,
       statusText: baseMax > 0 && layerBase >= Math.round(baseMax * 0.75) ? 'Optimal' : baseMax > 0 && layerBase >= Math.round(baseMax * 0.4) ? 'Needs attention' : 'Remediate',
       applicable,

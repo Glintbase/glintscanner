@@ -7,7 +7,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: [
       {
         userAgent: '*',
-        allow: ['/', '/leaderboard', '/scan/'],
+        allow: ['/', '/leaderboard', '/scan/', '/api/mcp', '/.well-known/'],
         disallow: ['/api/', '/dashboard/', '/admin/'],
       },
       {
@@ -27,11 +27,23 @@ export default function robots(): MetadataRoute.Robots {
         allow: '/',
       },
       {
+        userAgent: 'Claude-Web',
+        allow: '/',
+      },
+      {
         userAgent: 'PerplexityBot',
         allow: '/',
       },
       {
         userAgent: 'Google-Extended',
+        allow: '/',
+      },
+      {
+        userAgent: 'Antigravity',
+        allow: '/',
+      },
+      {
+        userAgent: 'cohere-ai',
         allow: '/',
       },
     ],

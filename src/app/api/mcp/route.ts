@@ -1,9 +1,9 @@
 import { NextRequest } from 'next/server';
 import { runArs3Probes } from '@/lib/scanner/v2/probes';
-import { validateScanUrl } from '@/lib/scanner/v2/urlPolicy';
 import { E2BRunner } from '@/lib/scanner/simulator/e2bRunner';
 import { generateJourneyTreeSvg, svgToBase64 } from '@/lib/scanner/simulator/journeyTreeSvg';
 import { deflateSync } from 'node:zlib';
+import { BUNDLED_SKILLS, BundledSkill } from '@/lib/scanner/mcp/skills';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -39,34 +39,56 @@ function checkRateLimit(ip: string, limit = 60, windowMs = 60 * 1000): boolean {
   return valid.length <= limit;
 }
 
-const BUNDLED_SKILLS: Record<string, { title: string; description: string; content: string }> = {
-  'glintbase-agent-readiness': {
-    title: 'Glintbase Agent Readiness Playbook',
-    description: 'Master ARS 3.0 specification & remediation strategies',
-    content: '# Glintbase Agent Readiness (ARS 3.0)\nAudit and elevate your codebase for AI agents.',
-  },
-  'living-artifacts-architect': {
-    title: 'Living Artifacts Architect',
-    description: 'How to author llms.txt, llms-full.txt, and ard.json',
-    content: '# Living Artifacts Architecture\nDeclare machine entrypoints with llms.txt and ard.json.',
-  },
-  'agent-auth-handbook': {
-    title: 'Agent Authentication Handbook',
-    description: 'RFC 9728, WorkOS machine authentication, & auth.md',
-    content: '# Agent Authentication Handbook\nMachine credentials, auth.md, and scoped API keys.',
-  },
-};
+/**
+ * Fuzzy skill resolver supporting aliases, prefixes, and partial matches
+ */
+function resolveSkill(nameOrQuery?: string): BundledSkill | undefined {
+  if (!nameOrQuery) return BUNDLED_SKILLS['glintbase-agent-readiness'];
+  const q = nameOrQuery.toLowerCase().trim().replace(/^skill:\/\/glintbase\//, '').replace(/^glintbase-/, '');
+
+  if (BUNDLED_SKILLS[nameOrQuery]) return BUNDLED_SKILLS[nameOrQuery];
+  if (BUNDLED_SKILLS[`glintbase-${q}`]) return BUNDLED_SKILLS[`glintbase-${q}`];
+  if (BUNDLED_SKILLS[q]) return BUNDLED_SKILLS[q];
+
+  for (const [key, skill] of Object.entries(BUNDLED_SKILLS)) {
+    const k = key.toLowerCase();
+    const t = skill.title.toLowerCase();
+    if (k.includes(q) || q.includes(k) || t.includes(q) || skill.tags.some(tag => tag.includes(q))) {
+      return skill;
+    }
+  }
+  return undefined;
+}
 
 const TOOLS_MANIFEST = [
   {
     name: 'glintbase_audit',
-    description: 'Execute full ARS 3.0 agent-readiness audit on a target URL. Evaluates Discovery, Access, Usability, Semantic, Architecture, and Safety.',
+    description: 'Execute full ARS 3.0 agent-readiness audit on a target URL. Evaluates Discovery, Access, Usability, Semantic, Architecture, and Safety across 119 discrete open protocol checks.',
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Target URL to audit (e.g. "https://docs.example.com")' },
+        target: { type: 'string', description: 'Target URL to audit (e.g. "https://docs.stripe.com")' },
       },
       required: ['target'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        score: { type: 'number' },
+        grade: { type: 'string' },
+        archetype: { type: 'object' },
+        layers: { type: 'object' },
+        passedChecks: { type: 'number' },
+        totalChecks: { type: 'number' },
+        remediations: { type: 'array' },
+      },
+      required: ['target', 'score', 'grade', 'layers'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
     },
   },
   {
@@ -75,9 +97,25 @@ const TOOLS_MANIFEST = [
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Target URL to evaluate' },
+        target: { type: 'string', description: 'Target URL to evaluate (e.g. "https://docs.github.com")' },
       },
       required: ['target'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        score: { type: 'number' },
+        grade: { type: 'string' },
+        archetype: { type: 'string' },
+        layers: { type: 'object' },
+      },
+      required: ['target', 'score', 'grade', 'layers'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
     },
   },
   {
@@ -88,32 +126,122 @@ const TOOLS_MANIFEST = [
       properties: {
         target: { type: 'string', description: 'Target URL to simulate (e.g. "https://stripe.com")' },
         persona: { type: 'string', enum: ['claude-code', 'cursor', 'perplexity'], description: 'Agent persona (default: claude-code)' },
-        intent: { type: 'string', description: 'User intent to simulate' },
+        intent: { type: 'string', description: 'User intent to simulate (e.g. "Find API reference and create an API key")' },
       },
       required: ['target'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        persona: { type: 'string' },
+        target: { type: 'string' },
+        outcome: { type: 'string', enum: ['completed', 'blocked'] },
+        success: { type: 'boolean' },
+        totalHops: { type: 'number' },
+        totalTokensBurned: { type: 'number' },
+        schemaFrictionScore: { type: 'number' },
+        replayUrl: { type: 'string' },
+        failureBottleneck: { type: 'string' },
+      },
+      required: ['target', 'outcome', 'success', 'totalTokensBurned', 'replayUrl'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
     },
   },
   {
     name: 'glintbase_discover_surfaces',
-    description: 'Discover machine-readable entrypoints (robots.txt, llms.txt, ard.json, auth.md, OpenAPI).',
+    description: 'Discover machine-readable entrypoints (robots.txt, llms.txt, ard.json, auth.md, OpenAPI, sitemap). Probes availability, syntax, and compliance.',
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Target URL' },
+        target: { type: 'string', description: 'Target URL to inspect (e.g. "https://docs.stripe.com")' },
       },
       required: ['target'],
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string' },
+        discoveredSurfacesCount: { type: 'number' },
+        totalSurfaceTypes: { type: 'number' },
+        surfaces: { type: 'object' },
+        summary: { type: 'string' },
+      },
+      required: ['target', 'surfaces', 'discoveredSurfacesCount'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
     },
   },
   {
     name: 'glintbase_get_skill',
-    description: 'Retrieve full markdown skill playbook for agent readiness.',
+    description: 'Retrieve full markdown skill playbook for agent readiness (e.g. "agent-readiness", "living-artifacts-architect", "agent-auth-handbook", "mcp-server-hardening").',
     inputSchema: {
       type: 'object',
       properties: {
-        skillName: { type: 'string', description: 'Skill name (e.g. "living-artifacts-architect")' },
+        skillName: { type: 'string', description: 'Skill name or query (e.g. "agent-readiness", "living-artifacts", "auth", "mcp")' },
       },
       required: ['skillName'],
     },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        skill: { type: 'string' },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        uri: { type: 'string' },
+        content: { type: 'string' },
+      },
+      required: ['skill', 'title', 'content'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
+    },
+  },
+];
+
+const PROMPTS_MANIFEST = Object.values(BUNDLED_SKILLS).map(skill => ({
+  name: `optimize_${skill.name.replace(/^glintbase-/, '')}`,
+  description: skill.description,
+  arguments: [
+    {
+      name: 'target',
+      description: 'Target URL or codebase repository to optimize',
+      required: false,
+    },
+    {
+      name: 'notes',
+      description: 'Specific context, framework (e.g. Next.js, FastAPI), or constraints',
+      required: false,
+    },
+  ],
+}));
+
+const RESOURCES_MANIFEST = [
+  ...Object.values(BUNDLED_SKILLS).map(skill => ({
+    uri: skill.uri,
+    name: skill.title,
+    description: skill.description,
+    mimeType: 'text/markdown',
+  })),
+  {
+    uri: 'glintbase://schemas/ars3-spec',
+    name: 'ARS 3.0 Check Registry Specification',
+    description: '119 discrete open protocol checks across 6 layers (Discovery, Access, Usability, Semantic, Architecture, Safety)',
+    mimeType: 'application/json',
+  },
+  {
+    uri: 'glintbase://standards/auth-contract',
+    name: 'RFC 9728 Machine Auth Contract Template',
+    description: 'WorkOS machine-to-machine authentication template for auth.md',
+    mimeType: 'text/markdown',
   },
 ];
 
@@ -154,9 +282,11 @@ export async function GET(req: NextRequest) {
           server: 'glintbase-hosted-mcp',
           version: '3.0.0',
           protocol: '2024-11-05',
-          description: 'Hosted Glintbase MCP Endpoint for AI Chat Apps (Claude Desktop, ChatGPT, Cursor)',
+          description: 'Hosted Glintbase MCP Endpoint for AI Agents (Claude Desktop, Cursor, Windsurf, ChatGPT)',
           endpoint: 'https://scan.glintbase.dev/api/mcp',
           supportedTools: TOOLS_MANIFEST.map(t => t.name),
+          supportedPrompts: PROMPTS_MANIFEST.map(p => p.name),
+          supportedResources: RESOURCES_MANIFEST.map(r => r.uri),
           instructions: {
             claudeDesktop: {
               url: 'https://scan.glintbase.dev/api/mcp',
@@ -243,7 +373,6 @@ export async function POST(req: NextRequest) {
   }
 
   const sessionId = url.searchParams.get('sessionId') || body.sessionId;
-
   const id = body.id ?? null;
   const method = body.method;
   const params = body.params || {};
@@ -257,9 +386,10 @@ export async function POST(req: NextRequest) {
       result: {
         protocolVersion: '2024-11-05',
         capabilities: {
-          tools: {},
-          prompts: {},
-          resources: {},
+          tools: { listChanged: false },
+          prompts: { listChanged: false },
+          resources: { subscribe: false, listChanged: false },
+          logging: {},
         },
         serverInfo: {
           name: 'glintbase',
@@ -269,6 +399,138 @@ export async function POST(req: NextRequest) {
     };
   } else if (method === 'notifications/initialized') {
     return new Response(null, { status: 204 });
+  } else if (method === 'ping') {
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result: {},
+    };
+  } else if (method === 'logging/setLevel') {
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result: {},
+    };
+  } else if (method === 'prompts/list') {
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        prompts: PROMPTS_MANIFEST,
+      },
+    };
+  } else if (method === 'prompts/get') {
+    const promptName = params.name || '';
+    const cleanName = promptName.replace(/^optimize_/, '').toLowerCase();
+    const skill = resolveSkill(cleanName);
+
+    if (skill) {
+      const target = params.arguments?.target || 'the target codebase or API';
+      const notes = params.arguments?.notes || '';
+      rpcResponse = {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          description: skill.description,
+          messages: [
+            {
+              role: 'user',
+              content: {
+                type: 'text',
+                text: `You are executing the Glintbase ARS 3.0 Playbook: **${skill.title}**.\n\nTarget: ${target}\n${notes ? `Notes: ${notes}\n` : ''}\n## Playbook Reference Manual\n\n${skill.content}`,
+              },
+            },
+          ],
+        },
+      };
+    } else {
+      rpcResponse = {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32602, message: `Prompt "${promptName}" not found` },
+      };
+    }
+  } else if (method === 'resources/list') {
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        resources: RESOURCES_MANIFEST,
+      },
+    };
+  } else if (method === 'resources/templates/list') {
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        resourceTemplates: [],
+      },
+    };
+  } else if (method === 'resources/read') {
+    const uri = params.uri || '';
+    const matchedSkill = Object.values(BUNDLED_SKILLS).find(
+      s => s.uri === uri || uri.endsWith(s.name) || uri.includes(s.name.replace('glintbase-', ''))
+    );
+
+    if (matchedSkill) {
+      rpcResponse = {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          contents: [
+            {
+              uri,
+              mimeType: 'text/markdown',
+              text: matchedSkill.content,
+            },
+          ],
+        },
+      };
+    } else if (uri === 'glintbase://schemas/ars3-spec') {
+      rpcResponse = {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          contents: [
+            {
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(
+                {
+                  specification: 'ARS 3.0',
+                  version: '3.0.0',
+                  totalChecks: 119,
+                  pillars: ['discovery', 'access', 'usability', 'semantic', 'architecture', 'safety'],
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        },
+      };
+    } else if (uri === 'glintbase://standards/auth-contract') {
+      const authSkill = BUNDLED_SKILLS['agent-auth-handbook'];
+      rpcResponse = {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          contents: [
+            {
+              uri,
+              mimeType: 'text/markdown',
+              text: authSkill?.content || '# Machine Auth Contract\nRefer to RFC 9728 & auth.md',
+            },
+          ],
+        },
+      };
+    } else {
+      rpcResponse = {
+        jsonrpc: '2.0',
+        id,
+        error: { code: -32002, message: `Resource "${uri}" not found` },
+      };
+    }
   } else if (method === 'tools/list') {
     rpcResponse = {
       jsonrpc: '2.0',
@@ -278,11 +540,12 @@ export async function POST(req: NextRequest) {
       },
     };
   } else if (method === 'tools/call') {
-    const toolName = params.name;
+    const rawToolName = params.name || '';
+    const normalizedName = rawToolName.replace(/^glintbase_/, '').toLowerCase();
     const toolArgs = params.arguments || {};
 
     try {
-      if (toolName === 'glintbase_get_score') {
+      if (normalizedName === 'get_score') {
         const rawTarget = toolArgs.target || 'https://stripe.com';
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const scorecard = await runArs3Probes(targetUrl);
@@ -304,7 +567,7 @@ export async function POST(req: NextRequest) {
             content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
           },
         };
-      } else if (toolName === 'glintbase_audit') {
+      } else if (normalizedName === 'audit') {
         const rawTarget = toolArgs.target || 'https://stripe.com';
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const scorecard = await runArs3Probes(targetUrl);
@@ -316,7 +579,7 @@ export async function POST(req: NextRequest) {
             content: [{ type: 'text', text: JSON.stringify(scorecard, null, 2) }],
           },
         };
-      } else if (toolName === 'glintbase_simulate_flight') {
+      } else if (normalizedName === 'simulate_flight') {
         const rawTarget = toolArgs.target || 'https://stripe.com';
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const persona = toolArgs.persona || 'claude-code';
@@ -395,22 +658,130 @@ ${svg}
             ],
           },
         };
-      } else if (toolName === 'glintbase_get_skill') {
-        const skillName = toolArgs.skillName || 'glintbase-agent-readiness';
-        const skill = BUNDLED_SKILLS[skillName] || BUNDLED_SKILLS['glintbase-agent-readiness'];
+      } else if (normalizedName === 'discover_surfaces') {
+        const rawTarget = toolArgs.target || 'https://stripe.com';
+        const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
+        const scorecard = await runArs3Probes(targetUrl);
+
+        const discoveryChecks = scorecard.layers.discovery?.checks || [];
+        const usabilityChecks = scorecard.layers.usability?.checks || [];
+        const accessChecks = scorecard.layers.access?.checks || [];
+        const paymentChecks = scorecard.layers.payments?.checks || [];
+        const allChecks = [...discoveryChecks, ...usabilityChecks, ...accessChecks, ...paymentChecks];
+
+        const findCheck = (checks: any[], idPrefix: string) =>
+          checks.find(c => (c.checkId || c.id || '').toLowerCase().includes(idPrefix.toLowerCase()) || (c.name || '').toLowerCase().includes(idPrefix.toLowerCase()));
+
+        const robotsCheck = findCheck(discoveryChecks, 'robots');
+        const ardCheck = findCheck(discoveryChecks, 'ard');
+        const aiCatalogCheck = findCheck(discoveryChecks, 'ai-catalog') || findCheck(discoveryChecks, 'catalog');
+        const mcpCheck = findCheck(discoveryChecks, 'mcp') || findCheck(discoveryChecks, 'registry-branding');
+        const sitemapCheck = findCheck(discoveryChecks, 'sitemap');
+        const llmsCheck = findCheck(usabilityChecks, 'llms-txt') || findCheck(usabilityChecks, 'llms');
+        const llmsFullCheck = findCheck(usabilityChecks, 'llms-full');
+        const authCheck = findCheck(accessChecks, 'auth') || findCheck(usabilityChecks, 'auth');
+        const openapiCheck = findCheck(allChecks, 'openapi') || findCheck(allChecks, 'swagger') || findCheck(allChecks, 'spec');
+
+        const surfaces = {
+          robots: {
+            found: Boolean(robotsCheck && robotsCheck.status !== 'fail'),
+            status: robotsCheck?.status || 'untested',
+            evidence: robotsCheck?.message || (robotsCheck?.evidence ? JSON.stringify(robotsCheck.evidence) : 'No robots.txt detected'),
+          },
+          llmsTxt: {
+            found: Boolean(llmsCheck && llmsCheck.status !== 'fail'),
+            status: llmsCheck?.status || 'untested',
+            evidence: llmsCheck?.message || 'No /llms.txt entrypoint detected',
+          },
+          llmsFullTxt: {
+            found: Boolean(llmsFullCheck && llmsFullCheck.status !== 'fail'),
+            status: llmsFullCheck?.status || 'untested',
+            evidence: llmsFullCheck?.message || 'No /llms-full.txt detected',
+          },
+          ardCatalog: {
+            found: Boolean(ardCheck && ardCheck.status !== 'fail'),
+            status: ardCheck?.status || 'untested',
+            evidence: ardCheck?.message || 'No /.well-known/ard.json detected',
+          },
+          aiCatalog: {
+            found: Boolean(aiCatalogCheck && aiCatalogCheck.status !== 'fail'),
+            status: aiCatalogCheck?.status || 'untested',
+            evidence: aiCatalogCheck?.message || 'No /.well-known/ai-catalog.json detected',
+          },
+          mcpManifest: {
+            found: Boolean(mcpCheck && mcpCheck.status !== 'fail'),
+            status: mcpCheck?.status || 'untested',
+            evidence: mcpCheck?.message || 'No /.well-known/mcp/manifest.json detected',
+          },
+          authContract: {
+            found: Boolean(authCheck && authCheck.status !== 'fail'),
+            status: authCheck?.status || 'untested',
+            evidence: authCheck?.message || 'No /auth.md or RFC 9728 endpoint detected',
+          },
+          openapiSpec: {
+            found: Boolean(openapiCheck && openapiCheck.status !== 'fail'),
+            status: openapiCheck?.status || 'untested',
+            evidence: openapiCheck?.message || 'No OpenAPI / Swagger specification detected',
+          },
+          sitemap: {
+            found: Boolean(sitemapCheck && sitemapCheck.status !== 'fail'),
+            status: sitemapCheck?.status || 'untested',
+            evidence: sitemapCheck?.message || 'No sitemap.xml detected',
+          },
+        };
+
+        const discoveredCount = Object.values(surfaces).filter(s => s.found).length;
+
+        const responseData = {
+          target: targetUrl,
+          discoveredSurfacesCount: discoveredCount,
+          totalSurfaceTypes: Object.keys(surfaces).length,
+          surfaces,
+          summary: `Discovered ${discoveredCount}/${Object.keys(surfaces).length} machine entrypoint surfaces for ${targetUrl}.`,
+        };
 
         rpcResponse = {
           jsonrpc: '2.0',
           id,
           result: {
-            content: [{ type: 'text', text: skill.content }],
+            content: [{ type: 'text', text: JSON.stringify(responseData, null, 2) }],
           },
         };
+      } else if (normalizedName === 'get_skill') {
+        const skillQuery = toolArgs.skillName || toolArgs.skill || 'agent-readiness';
+        const skill = resolveSkill(skillQuery);
+
+        if (skill) {
+          rpcResponse = {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [{ type: 'text', text: skill.content }],
+            },
+          };
+        } else {
+          const available = Object.values(BUNDLED_SKILLS)
+            .map(s => `- **${s.name}**: ${s.description} (uri: ${s.uri})`)
+            .join('\n');
+          rpcResponse = {
+            jsonrpc: '2.0',
+            id,
+            result: {
+              content: [
+                {
+                  type: 'text',
+                  text: `Skill "${skillQuery}" not found. Available ARS 3.0 playbooks:\n\n${available}\n\nCall get_skill with any of the skill names above.`,
+                },
+              ],
+              isError: true,
+            },
+          };
+        }
       } else {
         rpcResponse = {
           jsonrpc: '2.0',
           id,
-          error: { code: -32601, message: `Tool "${toolName}" not found` },
+          error: { code: -32601, message: `Tool "${rawToolName}" not found` },
         };
       }
     } catch (err: any) {

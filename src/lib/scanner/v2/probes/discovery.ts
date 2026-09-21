@@ -111,11 +111,47 @@ export async function probeDiscovery(
   if (robotsRes.ok && robotsRes.body) {
     robotsPolicy.found = true;
     const body = robotsRes.body.toLowerCase();
+    const lines = body.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
 
     const targetBots = ['claudebot', 'gptbot', 'perplexitybot', 'google-extended', 'anthropic-ai', 'cohere-ai'];
+    const botRules = new Map<string, { allow: boolean; disallowRoot: boolean }>();
+
+    let currentAgents: string[] = [];
+    let inDirectives = false;
+    for (const line of lines) {
+      if (line.startsWith('user-agent:')) {
+        if (inDirectives) {
+          currentAgents = [];
+          inDirectives = false;
+        }
+        const agent = line.slice(11).trim();
+        currentAgents.push(agent);
+      } else {
+        inDirectives = true;
+        if (currentAgents.length > 0) {
+          const isDisallowRoot = /^disallow:\s*\/(\s*|\s*#.*)$/.test(line);
+          const isAllowRoot = /^allow:\s*\/(\s*|\s*#.*)$/.test(line);
+          for (const agent of currentAgents) {
+            const existing = botRules.get(agent) || { allow: false, disallowRoot: false };
+            if (isDisallowRoot) existing.disallowRoot = true;
+            if (isAllowRoot) existing.allow = true;
+            botRules.set(agent, existing);
+          }
+        }
+      }
+    }
+
+    const wildcardRule = botRules.get('*');
     for (const bot of targetBots) {
-      if (body.includes(`user-agent: ${bot}`) || body.includes(`user-agent: *`)) {
-        if (body.includes(`disallow: /`) && body.includes(`user-agent: ${bot}`)) {
+      const specificRule = botRules.get(bot);
+      if (specificRule) {
+        if (specificRule.disallowRoot && !specificRule.allow) {
+          robotsPolicy.botsBlocked.push(bot);
+        } else {
+          robotsPolicy.botsAllowed.push(bot);
+        }
+      } else if (wildcardRule) {
+        if (wildcardRule.disallowRoot && !wildcardRule.allow) {
           robotsPolicy.botsBlocked.push(bot);
         } else {
           robotsPolicy.botsAllowed.push(bot);
@@ -128,8 +164,11 @@ export async function probeDiscovery(
       details.push('Found Content-Signals policy in robots.txt (search=yes / ai-train)');
     }
 
-    if (robotsPolicy.botsBlocked.length === 0 || robotsPolicy.botsAllowed.length > 0 || robotsPolicy.hasContentSignals) {
+    // Strict evaluation: Any blocked AI answer engine invalidates friendly pass
+    if (robotsPolicy.botsBlocked.length === 0 && (robotsPolicy.botsAllowed.length > 0 || robotsPolicy.hasContentSignals)) {
       robotsPolicy.aiFriendly = true;
+    } else {
+      robotsPolicy.aiFriendly = false;
     }
   } else {
     // No robots.txt detected
@@ -138,16 +177,20 @@ export async function probeDiscovery(
   }
 
   const robotsPassed = robotsPolicy.found && robotsPolicy.aiFriendly;
+  const isPartial = robotsPolicy.found && robotsPolicy.botsBlocked.length > 0 && robotsPolicy.botsAllowed.length > 0;
+
   results.push({
     checkId: 'robots-ai-policy-quality',
-    status: robotsPassed ? 'pass' : (robotsPolicy.found ? 'fail' : 'warn'),
-    earnedPoints: robotsPassed ? 2 : 0,
+    status: robotsPassed ? 'pass' : (isPartial ? 'warn' : (robotsPolicy.found ? 'fail' : 'warn')),
+    earnedPoints: robotsPassed ? 2 : (isPartial ? 1 : 0),
     maxPoints: 2,
     isBonus: false,
     message: robotsPassed
       ? `robots.txt permits AI answer engines (${robotsPolicy.botsAllowed.join(', ') || 'explicit allow'})`
       : (robotsPolicy.found
-        ? `robots.txt blocks AI answer bots (${robotsPolicy.botsBlocked.join(', ')})`
+        ? (robotsPolicy.botsBlocked.length > 0
+          ? `robots.txt blocks AI answer bots (${robotsPolicy.botsBlocked.join(', ')})${robotsPolicy.botsAllowed.length > 0 ? ` while allowing ${robotsPolicy.botsAllowed.join(', ')}` : ''}`
+          : 'robots.txt found but lacks explicit AI crawler permissions')
         : 'No robots.txt detected; explicit AI crawler permissions recommended'),
     evidence: { robotsPolicy },
     remediation: !robotsPassed ? {

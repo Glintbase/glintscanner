@@ -1,0 +1,10 @@
+{
+  "name": "glintbase",
+  "displayName": "Glintbase ARS 3.0",
+  "description": "Open ARS 3.0 Agent-Readiness MCP Server",
+  "version": "3.0.0",
+  "icon": "https://scan.glintbase.dev/favicon.ico",
+  "homepage": "https://glintbase.dev",
+  "endpoint": "https://scan.glintbase.dev/api/mcp",
+  "schemaVersion": "2024-11-05"
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json.schemastore.org/mcp-server-card.json",
+  "name": "glintbase",
+  "displayName": "Glintbase ARS 3.0",
+  "description": "Autonomous Agent-Readiness Audit Suite, Machine Entrypoint Discovery, ARS 3.0 Playbooks, and Interactive Visual Flight Simulator.",
+  "version": "3.0.0",
+  "homepage": "https://glintbase.dev",
+  "repository": "https://github.com/athertech/glintbase",
+  "endpoint": "https://scan.glintbase.dev/api/mcp",
+  "protocolVersion": "2024-11-05",
+  "transport": "streamable-http",
+  "capabilities": {
+    "tools": true,
+    "prompts": true,
+    "resources": true,
+    "logging": true
+  },
+  "authentication": {
+    "type": "none",
+    "description": "Public anonymous access with rate limits (60 req/min). Optional Bearer token or API key for higher limits."
+  },
+  "tools": [
+    {
+      "name": "glintbase_audit",
+      "description": "Execute full ARS 3.0 agent-readiness audit on a target URL."
+    },
+    {
+      "name": "glintbase_get_score",
+      "description": "Fetch ultra-compact ARS 3.0 score card (<200 tokens)."
+    },
+    {
+      "name": "glintbase_simulate_flight",
+      "description": "Run the Glintbase Agent Flight Simulator across synthetic coding personas."
+    },
+    {
+      "name": "glintbase_discover_surfaces",
+      "description": "Discover machine-readable entrypoints (robots.txt, llms.txt, ard.json, auth.md, OpenAPI)."
+    },
+    {
+      "name": "glintbase_get_skill",
+      "description": "Retrieve full markdown skill playbook for agent readiness."
+    }
+  ]
+}
