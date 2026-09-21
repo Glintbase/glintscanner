@@ -1,18 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    outputFileTracingExcludes: {
-      '*': [
-        './.git/**/*',
-        './.next/**/*',
-        './fixtures/**/*',
-        './docs/**/*',
-        './mcp/**/*',
-        './cli/**/*',
-        './skills/**/*',
-      ],
-    },
-  },
   async rewrites() {
     // Local fallback storage proxy — only in development
     if (process.env.NODE_ENV === 'production' && process.env.ENABLE_FALLBACK_STORAGE !== 'true') {
