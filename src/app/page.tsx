@@ -215,16 +215,6 @@ export default function Home() {
     loadScans();
   }, []);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const search = new URLSearchParams(window.location.search);
-      const urlParam = search.get("url") || search.get("rescan");
-      if (urlParam) {
-        setRawInput(urlParam);
-      }
-    }
-  }, []);
-
   // Shared completion path for both stream-parse sites in handleScan.
   // Known lead → silently link scan + redirect; new visitor → open the gate.
   const completeScan = (data: any, url: string) => {
@@ -234,10 +224,11 @@ export default function Home() {
       ...data.checks,
       score_version: data.score_version || data.checks?.score_version,
     });
-    if (data.id) setScanId(data.id);
-    else if (data.scanId) setScanId(data.scanId);
+    const freshScanId = data.id || data.scanId || null;
+    if (freshScanId) setScanId(freshScanId);
     setScanComplete(true);
     const slug = deriveCompanySlug(url);
+    const targetUrl = freshScanId ? `/scan/${slug}?id=${freshScanId}` : `/scan/${slug}`;
 
     let storedEmail: string | null = null;
     try {
@@ -253,15 +244,16 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           email: storedEmail,
-          scanId: data.id || undefined,
+          scanId: freshScanId || undefined,
           companySlug: slug,
           url,
           score: data.score,
         }),
       }).catch(() => {});
-      router.push(`/scan/${slug}`);
+      router.push(targetUrl);
+      router.refresh();
     } else {
-      setPendingLead({ slug, scanId: data.id || null, url, score: data.score });
+      setPendingLead({ slug, scanId: freshScanId, url, score: data.score });
       setGateOpen(true);
     }
   };
@@ -274,13 +266,16 @@ export default function Home() {
     }
     setGateOpen(false);
     if (pendingLead) {
-      router.push(`/scan/${pendingLead.slug}`);
+      const targetUrl = pendingLead.scanId
+        ? `/scan/${pendingLead.slug}?id=${pendingLead.scanId}`
+        : `/scan/${pendingLead.slug}`;
+      router.push(targetUrl);
+      router.refresh();
     }
   };
 
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const url = normalizeUrl(rawInput);
+  const startScan = async (targetUrl?: string) => {
+    const url = normalizeUrl(targetUrl || rawInput);
     if (!url) return;
     setRawInput(url);
     setErrorMsg(null);
@@ -383,6 +378,26 @@ export default function Home() {
       setScanComplete(true);
     }
   };
+
+  const handleScan = async (e?: React.FormEvent) => {
+    if (e && e.preventDefault) e.preventDefault();
+    await startScan();
+  };
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const search = new URLSearchParams(window.location.search);
+      const urlParam = search.get("url") || search.get("rescan");
+      const isRescan = search.get("rescan") === "true" || search.get("auto") === "true";
+      if (urlParam) {
+        setRawInput(urlParam);
+        if (isRescan) {
+          startScan(urlParam);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleReset = () => {
     setRawInput("");

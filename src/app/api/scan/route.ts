@@ -105,37 +105,44 @@ export async function POST(req: Request) {
           },
         };
 
-        // 1. Immediately emit completion to the client so UI unlocks in sub-5s!
-        send({
-          type: 'complete',
-          score: result.score,
-          score_version: result.score_version,
-          grade: result.grade,
-          gradeLabel: result.gradeLabel,
-          archetype: result.archetype,
-          scorecard: result.scorecard,
-          scanId,
-          checks: checksPayload,
-          id: scanId,
-        });
-
-        // 2. Persist to Supabase and revalidate with strict 3.5s timeout (never blocking client)
+        // 1. Persist to Supabase and revalidate with strict 3.5s timeout BEFORE emitting complete
         if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
           const persistPromise = (async () => {
             try {
               const supabaseAdmin = createAdminSupabaseClient();
 
-              const { error: softErr } = await supabaseAdmin
-                .from('public_scans')
-                .update({ is_latest: false })
-                .eq('company_slug', companySlug)
-                .eq('is_latest', true);
-
-              if (softErr && !/is_latest|company_slug|column/i.test(softErr.message)) {
-                scanLog('warn', 'soft_history_update_failed', { scanId, error: softErr.message });
+              // Soft-mark older scans for this company / URL as not latest.
+              // Update both by company_slug and url to catch legacy rows where company_slug was NULL.
+              try {
+                await supabaseAdmin
+                  .from('public_scans')
+                  .update({ is_latest: false })
+                  .eq('company_slug', companySlug)
+                  .eq('is_latest', true);
+              } catch (e: any) {
+                scanLog('warn', 'soft_history_slug_update_failed', { scanId, error: e?.message });
               }
-              if (softErr && /column/i.test(softErr.message || '')) {
-                await supabaseAdmin.from('public_scans').update({ is_latest: false }).eq('url', url);
+
+              try {
+                await supabaseAdmin
+                  .from('public_scans')
+                  .update({ is_latest: false })
+                  .eq('url', url)
+                  .eq('is_latest', true);
+              } catch (e: any) {
+                scanLog('warn', 'soft_history_url_update_failed', { scanId, error: e?.message });
+              }
+
+              if (result.url && result.url !== url) {
+                try {
+                  await supabaseAdmin
+                    .from('public_scans')
+                    .update({ is_latest: false })
+                    .eq('url', result.url)
+                    .eq('is_latest', true);
+                } catch {
+                  // Non-fatal fallback
+                }
               }
 
               const insertRow: Record<string, unknown> = {
@@ -239,6 +246,11 @@ export async function POST(req: Request) {
 
                 try {
                   revalidatePath('/leaderboard');
+                  if (companySlug) {
+                    revalidatePath(`/scan/${companySlug}`);
+                    revalidatePath(`/${companySlug}`);
+                  }
+                  revalidatePath('/');
                 } catch {
                   // Non-fatal if called in an environment without active request context
                 }
@@ -254,6 +266,20 @@ export async function POST(req: Request) {
             new Promise((resolve) => setTimeout(resolve, 3500)),
           ]);
         }
+
+        // 2. Emit completion to the client AFTER Supabase persistence completes
+        send({
+          type: 'complete',
+          score: result.score,
+          score_version: result.score_version,
+          grade: result.grade,
+          gradeLabel: result.gradeLabel,
+          archetype: result.archetype,
+          scorecard: result.scorecard,
+          scanId,
+          checks: checksPayload,
+          id: scanId,
+        });
 
         scanLog('info', 'scan_complete', {
           scanId,

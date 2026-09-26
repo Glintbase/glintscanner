@@ -35,7 +35,25 @@ function attachGraph(match: any, nodes: any[] | null, edges: any[] | null) {
   return match;
 }
 
-export async function getScanBySlug(slug: string) {
+export function pickBestScan(candidates: any[]): any {
+  if (!candidates || candidates.length === 0) return null;
+  // Priority 1: ARS 3.0 scan explicitly marked as latest
+  const latestArs3 = candidates.find((r) => r.score_version === 'ars-3.0.0' && r.is_latest === true);
+  if (latestArs3) return latestArs3;
+
+  // Priority 2: Any ARS 3.0 scan (ordered by created_at DESC)
+  const anyArs3 = candidates.find((r) => r.score_version === 'ars-3.0.0');
+  if (anyArs3) return anyArs3;
+
+  // Priority 3: Scan marked as is_latest
+  const latestAny = candidates.find((r) => r.is_latest === true);
+  if (latestAny) return latestAny;
+
+  // Priority 4: Most recent candidate
+  return candidates[0];
+}
+
+export async function getScanBySlug(slug: string, preferredScanId?: string) {
   if (!slug || slug.includes('.')) {
     return null;
   }
@@ -52,22 +70,37 @@ export async function getScanBySlug(slug: string) {
   }
   const supabase = createAdminSupabaseClient();
 
-  // Fast path: company_slug column (Phase 5)
-  const { data: bySlug, error: slugErr } = await supabase
-    .from('public_scans')
-    .select('*')
-    .eq('company_slug', companyName)
-    .order('created_at', { ascending: false })
-    .limit(5);
-
   let match: any = null;
 
-  if (!slugErr && bySlug && bySlug.length > 0) {
-    // Prefer is_latest when present
-    match = bySlug.find((r: any) => r.is_latest === true) || bySlug[0];
-  } else {
-    // Fallback: latest by derived company (legacy rows without company_slug)
-    // Bounded fetch instead of full table when possible
+  // 1. If preferredScanId is provided, attempt direct fetch first
+  if (preferredScanId) {
+    const { data: byId } = await supabase
+      .from('public_scans')
+      .select('*')
+      .eq('id', preferredScanId)
+      .maybeSingle();
+
+    if (byId) {
+      match = byId;
+    }
+  }
+
+  // 2. Fast path: company_slug column (Phase 5)
+  if (!match) {
+    const { data: bySlug, error: slugErr } = await supabase
+      .from('public_scans')
+      .select('*')
+      .eq('company_slug', companyName)
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    if (!slugErr && bySlug && bySlug.length > 0) {
+      match = pickBestScan(bySlug);
+    }
+  }
+
+  // 3. Fallback: latest by derived company (legacy rows without company_slug)
+  if (!match) {
     const { data, error } = await supabase
       .from('public_scans')
       .select('*')
@@ -80,10 +113,12 @@ export async function getScanBySlug(slug: string) {
     }
     if (!data || data.length === 0) return null;
 
-    match = data.find((item: any) => {
-      if (item.company_slug) return item.company_slug === companyName;
-      return deriveCompany(item.url).toLowerCase() === companyName;
+    const candidates = data.filter((item: any) => {
+      if (item.company_slug) return item.company_slug.toLowerCase() === companyName;
+      return deriveCompany(item.url).toLowerCase() === companyName || deriveCompanySlug(item.url) === companyName;
     });
+
+    match = pickBestScan(candidates);
   }
 
   if (!match) return null;

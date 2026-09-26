@@ -9,13 +9,20 @@ import ShareScorecard from "@/components/scanner/ShareScorecard";
 
 export const dynamic = 'force-dynamic';
 
-export async function generateMetadata({ params }: { params: { slug: string } }): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+  searchParams,
+}: {
+  params: { slug: string };
+  searchParams?: { [key: string]: string | string[] | undefined };
+}): Promise<Metadata> {
   // Prevent catching system files or assets
   if (params.slug.includes('.') || ['favicon.ico', 'robots.txt', 'sitemap.xml', 'icon.svg', 'leaderboard', 'api'].includes(params.slug)) {
     return {};
   }
 
-  const data = await getScanBySlug(params.slug);
+  const preferredScanId = typeof searchParams?.id === 'string' ? searchParams.id : undefined;
+  const data = await getScanBySlug(params.slug, preferredScanId);
 
   if (!data) {
     return {
@@ -50,13 +57,20 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   };
 }
 
-export default async function DynamicSlugScanPage({ params }: { params: { slug: string } }) {
+export default async function DynamicSlugScanPage({
+  params,
+  searchParams,
+}: {
+  params: { slug: string };
+  searchParams?: { [key: string]: string | string[] | undefined };
+}) {
   // Prevent matching static or layout assets
   if (params.slug.includes('.') || ['favicon.ico', 'robots.txt', 'sitemap.xml', 'icon.svg'].includes(params.slug)) {
     notFound();
   }
 
-  const data = await getScanBySlug(params.slug);
+  const preferredScanId = typeof searchParams?.id === 'string' ? searchParams.id : undefined;
+  const data = await getScanBySlug(params.slug, preferredScanId);
 
   if (!data) {
     return (
@@ -144,7 +158,7 @@ export default async function DynamicSlugScanPage({ params }: { params: { slug: 
             </div>
           </div>
           <Link
-            href={`/?url=${encodeURIComponent(url)}`}
+            href={`/?url=${encodeURIComponent(url)}&rescan=true`}
             className="shrink-0 px-4 py-2 rounded-lg bg-[#FF3300] hover:bg-[#FF3300]/90 text-white text-xs font-bold uppercase tracking-wider transition shadow-md whitespace-nowrap"
           >
             Re-scan with ARS 3.0
