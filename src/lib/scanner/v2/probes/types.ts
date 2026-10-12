@@ -64,6 +64,8 @@ export interface LayerScoreSummary {
 
 /** How much of the rubric a scan actually measured. */
 export interface ScanEvidenceSummary {
+  /** False when the target's homepage never answered; such scans must not be scored. */
+  targetReachable: boolean;
   checksRegistered: number;
   /** Checks with a pass / warn / fail verdict (na and skip excluded). */
   checksEvaluated: number;

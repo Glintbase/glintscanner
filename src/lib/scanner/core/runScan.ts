@@ -477,6 +477,14 @@ export async function runScan(
     throw err;
   }
 
+  // A site that never answered can't be scored: every check would read as missing.
+  if (probeScorecard.evidence && probeScorecard.evidence.targetReachable === false) {
+    emit({ type: 'progress', check: 'probes', status: 'error', message: 'Target did not respond' });
+    const err = new Error(`${url} did not respond (connection failed or timed out), so no score was produced. Please retry later.`);
+    (err as any).code = 'TARGET_UNREACHABLE';
+    throw err;
+  }
+
   if (probeScorecard) {
     emit({
       type: 'archetype',

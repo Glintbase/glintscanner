@@ -9,6 +9,8 @@ import { getChecksForLayer } from './registry';
 import type { CheckResult } from './types';
 
 export interface AccessProbeResult {
+  /** False when the homepage request got no HTTP response at all (DNS/TLS/connect failure or timeout). */
+  targetReachable: boolean;
   score: number;
   baseEarned: number;
   bonusEarned: number;
@@ -108,6 +110,7 @@ export async function probeAccess(
       });
     }
     return {
+      targetReachable: false,
       score: 0,
       baseEarned: 0,
       bonusEarned: 0,
@@ -134,6 +137,8 @@ export async function probeAccess(
   }
   // Remote homepage fetch produced neither a successful response nor a body.
   const homepageFailed = !localContext?.isLocalCodebase && !homeRes.ok && !rawHtml;
+  // No HTTP status at all means the server never answered (as opposed to a 4xx/5xx or a bot wall).
+  const targetReachable = !homepageFailed || homeRes.httpStatus !== undefined;
 
   // 2. Zero-JS Prose & Heading Analysis (content-no-js)
   const noScriptHtml = rawHtml
@@ -947,6 +952,7 @@ export async function probeAccess(
   const score = baseEarned + bonusEarned;
 
   return {
+    targetReachable,
     score,
     baseEarned,
     bonusEarned,

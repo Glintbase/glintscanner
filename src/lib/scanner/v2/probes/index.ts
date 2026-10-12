@@ -331,6 +331,7 @@ export async function runArs3ProbesDetailed(
     { verified: 0, registered: 0 }
   );
   const evidence: ScanEvidenceSummary = {
+    targetReachable: access.targetReachable !== false,
     checksRegistered: getAllChecks().length,
     checksEvaluated: allResults.filter((c) => c.status === 'pass' || c.status === 'warn' || c.status === 'fail').length,
     baseCoverage: coverageTotals.registered > 0 ? Math.min(1, coverageTotals.verified / coverageTotals.registered) : 0,
@@ -410,6 +411,7 @@ export async function runArs2Probes(
         maxScore: scorecard.layers.access.baseMax,
         details: scorecard.layers.access.checks.map((c: CheckResult) => c.message),
         data: {
+          targetReachable: access.targetReachable,
           score: scorecard.layers.access.totalEarned,
           baseEarned: scorecard.layers.access.baseEarned,
           bonusEarned: scorecard.layers.access.bonusEarned,
