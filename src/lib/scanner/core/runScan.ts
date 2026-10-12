@@ -358,6 +358,18 @@ function buildArs3Dimensions(scorecard: Ars3Scorecard): ScoreDimension[] {
  * Sub-5 second parallel execution. Completely free of slow Puppeteer crawling.
  * Throws on invalid URL / SSRF / unreachable targets.
  */
+/** Discovery time budget; probes run in parallel and typically take 20-40 s. */
+const DISCOVERY_BUDGET_MS = 25_000;
+
+/** Probe checks whose pass proves a surface exists: [checkId, surface type, default path, label]. */
+const PROBE_SURFACES: Array<[string, DiscoveredSurface['type'], string, string]> = [
+  ['sitemap-xml-present', 'sitemap', '/sitemap.xml', 'sitemap.xml'],
+  ['llms-txt-exists', 'llms_txt', '/llms.txt', 'llms.txt'],
+  ['llms-full-txt-present', 'llms_full_txt', '/llms-full.txt', 'llms-full.txt'],
+  ['openapi-spec', 'openapi', '/openapi.json', 'OpenAPI specification'],
+  ['developer-portal', 'docs', '/docs', 'Developer documentation'],
+];
+
 export async function runScan(
   input: { url: string; options?: ScanOptions },
   hooks: RunScanHooks = {}
@@ -412,7 +424,8 @@ export async function runScan(
   });
 
   // Parallel execution of surface discovery & ARS 3.0 4-layer probe suite with real-time layer streaming
-  // Cap discovery at 7 s; clear the timer so it doesn't keep the process (CLI) alive.
+  // Cap discovery; clear the timer so it doesn't keep the process (CLI) alive. The probes run in
+  // parallel and usually take longer, so a short cap only throws away discovery results.
   let discoveryTimer: ReturnType<typeof setTimeout> | undefined;
   const safeDiscovery: Promise<{ url: string; score: number; surfaces: DiscoveredSurface[] }> = Promise.race([
     discoverEcosystem(url, (log) => emit(log), enabledSurfaces),
@@ -423,7 +436,7 @@ export async function runScan(
           score: 0,
           surfaces: [] as DiscoveredSurface[],
         });
-      }, 7000);
+      }, DISCOVERY_BUDGET_MS);
     }),
   ])
     .finally(() => clearTimeout(discoveryTimer))
@@ -510,6 +523,29 @@ export async function runScan(
         description: `Active streamable HTTP MCP server verified (${toolCount} tools declared).`,
         fix: null,
       });
+    }
+  }
+
+  // Fill in surfaces the probes verified but discovery missed (e.g. discovery hit its time budget),
+  // so the surface inventory never contradicts the scorecard.
+  if (probeScorecard) {
+    const origin = new URL(url).origin;
+    for (const [checkId, type, path, label] of PROBE_SURFACES) {
+      const check = probeScorecard.results.find((c) => c.checkId === checkId);
+      if (check?.status !== 'pass') continue;
+      const existing = report.surfaces.find((s) => s.type === type);
+      if (existing?.found) continue;
+      const surface: DiscoveredSurface = {
+        type,
+        url: existing?.url || `${origin}${path}`,
+        found: true,
+        status: 'verified',
+        confidence: 'high',
+        description: `${label} verified by the ARS probe suite.`,
+        fix: null,
+      };
+      if (existing) Object.assign(existing, surface);
+      else report.surfaces.push(surface);
     }
   }
 
