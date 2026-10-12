@@ -219,7 +219,7 @@ function extractRscFlight(html: string): EmbeddedExtraction | null {
 
 function extractJsonLd(html: string): EmbeddedExtraction | null {
   const regex =
-    /<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+    /<script\b[^>]*\btype=["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi;
   let m: RegExpExecArray | null;
   const texts: string[] = [];
   let title = '';

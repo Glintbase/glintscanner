@@ -473,7 +473,8 @@ export async function discoverEcosystem(
       emitProgress('discovery', 'running', 'Analyzing homepage HTML links for ecosystem surfaces...');
       const landingRes = await fetchWithTimeout(origin, 3000);
       const landingHtml = landingRes && landingRes.status === 200 ? await landingRes.text().catch(() => '') : '';
-      const linkRegex = /href=["'](https?:\/\/[^\s"']+|[^\s"'>]+)["']/gi;
+      // Quotes are optional: minified HTML emits href=/docs.
+      const linkRegex = /href=["']?(https?:\/\/[^\s"'>]+|[^\s"'>]+)/gi;
       let match;
       while ((match = linkRegex.exec(landingHtml)) !== null) {
         let link = match[1];

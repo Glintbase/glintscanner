@@ -75,7 +75,7 @@ export class Classifier {
     }
 
     // 3. Structured Data (<script type="application/ld+json">)
-    const ldJsonRegex = /<script\s+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+    const ldJsonRegex = /<script\b[^>]*\btype=["']?application\/ld\+json["']?[^>]*>([\s\S]*?)<\/script>/gi;
     let match;
     while ((match = ldJsonRegex.exec(html)) !== null) {
       try {

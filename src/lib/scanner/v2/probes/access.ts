@@ -624,7 +624,8 @@ export async function probeAccess(
     message: !skipsHeading ? 'Valid heading progression' : 'Skipped heading levels detected',
   });
 
-  const hasMetaDesc = /<meta\b[^>]*name=["']description["'][^>]*>/i.test(rawHtml);
+  // Minified HTML often drops attribute quotes (name=description), so quotes are optional.
+  const hasMetaDesc = /<meta\b[^>]*\bname=["']?description["']?[\s/>]/i.test(rawHtml);
   results.push({
     checkId: 'meta-description-quality',
     status: hasMetaDesc ? 'pass' : 'warn',
@@ -634,7 +635,7 @@ export async function probeAccess(
     message: hasMetaDesc ? 'Authoritative meta description found' : 'Missing meta description tag',
   });
 
-  const hasJsonLd = /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>/i.test(rawHtml);
+  const hasJsonLd = /<script\b[^>]*\btype=["']?application\/ld\+json["']?[\s>]/i.test(rawHtml);
   results.push({
     checkId: 'json-ld-structured-data',
     status: hasJsonLd ? 'pass' : 'warn',
@@ -644,8 +645,9 @@ export async function probeAccess(
     message: hasJsonLd ? 'JSON-LD schema.org structured metadata found' : 'JSON-LD structured data not declared',
   });
 
-  const sitemapRes = await fetchResource(`${origin}/sitemap.xml`, { timeoutMs: 2500, maxBytes: 20000 });
-  const sitemapPassed = Boolean(sitemapRes.ok && sitemapRes.body && (sitemapRes.body.includes('<urlset') || sitemapRes.body.includes('<sitemapindex') || sitemapRes.body.includes('http')));
+  // Real sitemaps are often megabytes; a 20 KB cap made large sitemaps fail as "not accessible".
+  const sitemapRes = await fetchResource(`${origin}/sitemap.xml`, { timeoutMs: 4000, maxBytes: 5_000_000 });
+  const sitemapPassed = Boolean(sitemapRes.ok && sitemapRes.body && (sitemapRes.body.includes('<urlset') || sitemapRes.body.includes('<sitemapindex')));
   results.push({
     checkId: 'sitemap-xml-present',
     status: sitemapPassed ? 'pass' : 'warn',
@@ -666,7 +668,7 @@ export async function probeAccess(
     message: utf8Declared ? 'Explicit UTF-8 charset declaration verified' : 'UTF-8 charset declaration not detected',
   });
 
-  const hasCanonical = /<link\b[^>]*rel=["']canonical["'][^>]*>/i.test(rawHtml);
+  const hasCanonical = /<link\b[^>]*\brel=["']?canonical["']?[\s/>]/i.test(rawHtml);
   results.push({
     checkId: 'canonical-url-present',
     status: hasCanonical ? 'pass' : 'warn',

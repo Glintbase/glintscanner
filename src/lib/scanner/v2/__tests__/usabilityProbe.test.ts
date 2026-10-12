@@ -158,3 +158,24 @@ describe('probeUsability MCP host discovery', () => {
     expect(byId(checks).get('mcp-tools-listing')!.status).toBe('warn'); // tools hidden behind auth
   });
 });
+
+describe('probeAccess with minified HTML', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('recognises unquoted attributes and large sitemaps', async () => {
+    const { probeAccess } = await import('../probes/access');
+    const html = '<!doctype html><html><head><meta name=description content="x"><link rel=canonical href=https://min.example.com/><script type=application/ld+json>{"@type":"Organization"}</script></head><body><main><h1>Hi</h1></main></body></html>';
+    const bigSitemap = '<?xml version="1.0"?><urlset>' + '<url><loc>https://min.example.com/p</loc></url>'.repeat(2000) + '</urlset>';
+    mockFetch((url) => {
+      if (url === 'https://min.example.com' || url === 'https://min.example.com/') return { body: html, contentType: 'text/html; charset=utf-8' };
+      if (url === 'https://min.example.com/sitemap.xml') return { body: bigSitemap, contentType: 'application/xml' };
+      return undefined;
+    });
+    const { checks } = await probeAccess('https://min.example.com');
+    const c = byId(checks);
+    expect(c.get('meta-description-quality')!.status).toBe('pass');
+    expect(c.get('canonical-url-present')!.status).toBe('pass');
+    expect(c.get('json-ld-structured-data')!.status).toBe('pass');
+    expect(c.get('sitemap-xml-present')!.status).toBe('pass');
+  });
+});
