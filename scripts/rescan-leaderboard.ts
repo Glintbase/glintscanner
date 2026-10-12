@@ -29,6 +29,11 @@ const option = (name: string, fallback: number) => {
 const APPLY = flag('apply');
 const FORCE = flag('force');
 const LIMIT = option('limit', Infinity);
+// --only host1,host2 rescans just those hosts (matched against the stored URL's hostname).
+const ONLY = (() => {
+  const i = args.indexOf('--only');
+  return i >= 0 && args[i + 1] ? args[i + 1].split(',').map((h) => h.trim().toLowerCase().replace(/^www\./, '')).filter(Boolean) : null;
+})();
 const CONCURRENCY = Math.max(1, option('concurrency', 2));
 
 async function main() {
@@ -48,7 +53,16 @@ async function main() {
   const latest = dedupeLatestBySlug(data || []);
 
   const queue = latest
-    .filter((row) => FORCE || !isCurrentArsVersion(row.score_version))
+    .filter((row) => FORCE || ONLY !== null || !isCurrentArsVersion(row.score_version))
+    .filter((row) => {
+      if (!ONLY) return true;
+      try {
+        const host = new URL(row.url).hostname.toLowerCase().replace(/^www\./, '');
+        return ONLY.some((h) => host === h || row.url.toLowerCase().includes(h));
+      } catch {
+        return false;
+      }
+    })
     .slice(0, LIMIT);
 
   console.log(`${latest.length} companies on the leaderboard; rescanning ${queue.length} with ${ARS_SCORE_VERSION}${APPLY ? '' : ' (dry run, nothing saved)'}\n`);
