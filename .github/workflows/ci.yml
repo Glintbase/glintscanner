@@ -7,7 +7,23 @@ on:
     branches: [main]
 
 jobs:
-  mcp-test:
+  web:
+    name: Web app (typecheck, test, lint, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci --legacy-peer-deps
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run lint
+      - run: npm run build
+
+  mcp:
+    name: MCP package (typecheck, test, build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -19,12 +35,18 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: mcp/package-lock.json
-      - run: npm cache clean --force
-      - run: rm -rf node_modules package-lock.json
-      - run: npm install --legacy-peer-deps
+      # The package bundles ../src/lib/scanner, whose dependencies live in the root install.
+      - run: npm ci --legacy-peer-deps
+        working-directory: .
+      - run: npm ci --legacy-peer-deps
+      - run: npx tsc --noEmit -p .
       - run: npm test
+      - run: npm run build
+      # stdio server: it waits on stdin, so only check the bundle was produced.
+      - run: test -s dist/index.js
 
-  cli-test:
+  cli:
+    name: CLI package (typecheck, test, build)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,35 +58,10 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: cli/package-lock.json
-      - run: npm cache clean --force
-      - run: rm -rf node_modules package-lock.json
-      - run: npm install --legacy-peer-deps
+      - run: npm ci --legacy-peer-deps
+        working-directory: .
+      - run: npm ci --legacy-peer-deps
+      - run: npx tsc --noEmit -p .
       - run: npm test
-
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Build MCP
-        working-directory: mcp
-        run: |
-          npm cache clean --force
-          rm -rf node_modules package-lock.json
-          npm install --legacy-peer-deps
-          npm run build
-      - name: Build CLI
-        working-directory: cli
-        run: |
-          npm cache clean --force
-          rm -rf node_modules package-lock.json
-          npm install --legacy-peer-deps
-          npm run build
-      - name: Verify MCP binary
-        working-directory: mcp
-        run: node dist/index.js --help || true
-      - name: Verify CLI binary
-        working-directory: cli
-        run: node dist/index.js --help
+      - run: npm run build
+      - run: node dist/index.js --version

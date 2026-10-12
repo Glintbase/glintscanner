@@ -7,6 +7,7 @@ import { discoverEcosystem } from '../v2/discovery';
 import { classifySurfaces } from '../v2/classification';
 import { detectEcosystemFramework } from '../v2/framework';
 import { runArs3Probes, Ars3Scorecard } from '../v2/probes';
+import { ARS_SCORE_VERSION } from '../version';
 import { classifyArchetype, type ArchetypeProfile } from '../v2/archetype';
 import { validateScanUrl } from '../v2/urlPolicy';
 import type {
@@ -400,7 +401,7 @@ export async function runScan(
     type: 'progress',
     check: 'probes',
     status: 'running',
-    message: 'Executing ARS 3.0 119-check probe suite & surface discovery (sub-5s)...',
+    message: 'Executing ARS 3.2 probe suite & surface discovery...',
   });
 
   // Parallel execution of surface discovery & ARS 3.0 4-layer probe suite with real-time layer streaming
@@ -501,7 +502,7 @@ export async function runScan(
   const journeys = buildProbeJourneys(classifiedSurfaces, probeScorecard);
 
   const finalScore = probeScorecard ? probeScorecard.score : report.score;
-  const finalScoreVersion = probeScorecard ? probeScorecard.version : 'ars-3.0.0';
+  const finalScoreVersion = probeScorecard ? probeScorecard.version : ARS_SCORE_VERSION;
   const dimensions = probeScorecard ? buildArs3Dimensions(probeScorecard) : [];
 
   emit({

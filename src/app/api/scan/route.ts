@@ -3,6 +3,7 @@ import { validateScanRequest } from '@/lib/scanner/v2/scanRequest';
 import { scanLog } from '@/lib/scanner/v2/scanLogger';
 import { deriveCompanySlug } from '@/lib/scanner/shared';
 import { createAdminSupabaseClient } from '@/lib/supabase/service';
+import { buildChecksPayload, persistScan } from '@/lib/scanner/persistScan';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 
@@ -81,169 +82,14 @@ export async function POST(req: Request) {
           }
         );
 
-        const checksPayload = {
-          surfaces: result.surfaces,
-          pages: result.pages,
-          framework: result.framework,
-          graph: result.graph,
-          journeys: result.journeys,
-          dimensions: result.dimensions,
-          score_version: result.score_version,
-          grade: result.grade,
-          gradeLabel: result.gradeLabel,
-          archetype: result.archetype,
-          scorecard: result.scorecard,
-          meta: {
-            duration_ms: result.duration_ms,
-            score_version: result.score_version,
-            discovery_score: result.discovery_score,
-            scan_id: scanId,
-            status: 'complete',
-            company_slug: companySlug,
-            grade: result.grade,
-            archetype: result.archetype?.label || result.archetype?.archetype,
-          },
-        };
+        const checksPayload = buildChecksPayload(result, scanId, companySlug);
 
         // 1. Persist to Supabase and revalidate with strict 3.5s timeout BEFORE emitting complete
         if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
           const persistPromise = (async () => {
             try {
-              const supabaseAdmin = createAdminSupabaseClient();
-
-              // Soft-mark older scans for this company / URL as not latest.
-              // Update both by company_slug and url to catch legacy rows where company_slug was NULL.
-              try {
-                await supabaseAdmin
-                  .from('public_scans')
-                  .update({ is_latest: false })
-                  .eq('company_slug', companySlug)
-                  .eq('is_latest', true);
-              } catch (e: any) {
-                scanLog('warn', 'soft_history_slug_update_failed', { scanId, error: e?.message });
-              }
-
-              try {
-                await supabaseAdmin
-                  .from('public_scans')
-                  .update({ is_latest: false })
-                  .eq('url', url)
-                  .eq('is_latest', true);
-              } catch (e: any) {
-                scanLog('warn', 'soft_history_url_update_failed', { scanId, error: e?.message });
-              }
-
-              if (result.url && result.url !== url) {
-                try {
-                  await supabaseAdmin
-                    .from('public_scans')
-                    .update({ is_latest: false })
-                    .eq('url', result.url)
-                    .eq('is_latest', true);
-                } catch {
-                  // Non-fatal fallback
-                }
-              }
-
-              const insertRow: Record<string, unknown> = {
-                id: scanId,
-                url: result.url,
-                score: result.score,
-                checks: checksPayload,
-                score_version: result.score_version,
-                dimension_scores: Object.fromEntries(
-                  result.dimensions.map((d) => [d.name, d.score])
-                ),
-                duration_ms: result.duration_ms,
-                company_slug: companySlug,
-                is_latest: true,
-                status: 'complete',
-              };
-
-              let { data, error: dbError } = await supabaseAdmin
-                .from('public_scans')
-                .insert([insertRow])
-                .select('id')
-                .single();
-
-              if (
-                dbError &&
-                /column|score_version|company_slug|is_latest|status|dimension/i.test(dbError.message)
-              ) {
-                const attempts = [
-                  {
-                    id: scanId,
-                    url: result.url,
-                    score: result.score,
-                    checks: checksPayload,
-                    score_version: result.score_version,
-                    company_slug: companySlug,
-                    is_latest: true,
-                  },
-                  {
-                    id: scanId,
-                    url: result.url,
-                    score: result.score,
-                    checks: checksPayload,
-                    company_slug: companySlug,
-                  },
-                  { id: scanId, url: result.url, score: result.score, checks: checksPayload },
-                  { url: result.url, score: result.score, checks: checksPayload },
-                ];
-                for (const row of attempts) {
-                  const res = await supabaseAdmin.from('public_scans').insert([row]).select('id').single();
-                  if (!res.error && res.data) {
-                    data = res.data;
-                    dbError = null;
-                    break;
-                  }
-                  dbError = res.error;
-                }
-              }
-
-              if (dbError) {
-                scanLog('error', 'db_insert_failed', { scanId, error: dbError.message });
-              } else if (data) {
-                const g = result.graph;
-
-                if (g.relationalNodes && g.relationalNodes.length > 0) {
-                  const nodeRows = g.relationalNodes.map((n: any) => ({
-                    scan_id: scanId,
-                    node_id: n.id,
-                    type: n.type || 'page',
-                    source_url: n.source_url || result.url,
-                    source_strategy: n.source_strategy || 'generic',
-                    title: n.title || '',
-                    properties: n.properties || {},
-                    content_hash: n.content_hash || null,
-                    confidence: n.confidence ?? 1.0,
-                    extracted_at: n.extracted_at || new Date().toISOString(),
-                    synthetic:
-                      n.properties?.synthetic === true || n.properties?.autoGenerated === true || false,
-                    evidence: n.properties?.evidence || null,
-                  }));
-                  let { error: nodeErr } = await supabaseAdmin.from('scan_nodes').insert(nodeRows);
-                  if (nodeErr && /synthetic|evidence|column/i.test(nodeErr.message)) {
-                    const slim = nodeRows.map(({ synthetic, evidence, ...rest }: any) => rest);
-                    const retry = await supabaseAdmin.from('scan_nodes').insert(slim);
-                    nodeErr = retry.error;
-                  }
-                  if (nodeErr) scanLog('error', 'nodes_insert_failed', { scanId, error: nodeErr.message });
-                }
-
-                if (g.relationalEdges && g.relationalEdges.length > 0) {
-                  const edgeRows = g.relationalEdges.map((e: any) => ({
-                    scan_id: scanId,
-                    from_id: e.from_id,
-                    to_id: e.to_id,
-                    relation: e.relation || 'page_references_page',
-                    source_url: e.source_url || result.url,
-                    properties: e.properties || {},
-                  }));
-                  const { error: edgeErr } = await supabaseAdmin.from('scan_edges').insert(edgeRows);
-                  if (edgeErr) scanLog('error', 'edges_insert_failed', { scanId, error: edgeErr.message });
-                }
-
+              const saved = await persistScan(createAdminSupabaseClient(), { result, url, scanId, companySlug });
+              if (saved) {
                 try {
                   revalidatePath('/leaderboard');
                   if (companySlug) {

@@ -1,6 +1,6 @@
 {
   "name": "@glintbase/cli",
-  "version": "0.1.0",
+  "version": "3.3.0",
   "description": "Glintbase Agent Readiness Scanner — beautiful CLI for terminal and CI",
   "license": "Apache-2.0",
   "type": "module",

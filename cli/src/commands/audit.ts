@@ -1,6 +1,6 @@
 /**
  * CLI Command: glintbase audit <url>
- * Full ARS 2.0 audit with Claude Code / OpenCode aesthetics and CI gate support.
+ * Full ARS 3.x audit with Claude Code / OpenCode aesthetics and CI gate support.
  */
 
 import { Command } from 'commander';
@@ -17,7 +17,7 @@ import {
 } from '../output/terminal.js';
 
 export const auditCommand = new Command('audit')
-  .description('Run a full ARS 2.0 agent readiness audit against a domain')
+  .description('Run a full ARS 3.x agent readiness audit against a domain')
   .argument('<url>', 'URL to audit (e.g. https://stripe.com or https://supabase.com)')
   .option('--profile <profile>', 'Audit depth: quick | deep', 'deep')
   .option('--fail-under <n>', 'Exit code 3 if ARS score is below threshold', parseInt)
@@ -180,7 +180,7 @@ export const auditCommand = new Command('audit')
         if (process.env.GITHUB_STEP_SUMMARY) {
           const fs = await import('fs');
           const summaryMarkdown = `
-## Glintbase Agent Readiness Report (ARS 2.0)
+## Glintbase Agent Readiness Report (ARS 3.x)
 | Target | ARS Score | Archetype | Denominator |
 | :--- | :--- | :--- | :--- |
 | **${url}** | **${scorecard.score} / 100** | ${scorecard.archetype.label} | ${scorecard.activeDenominator} pts |

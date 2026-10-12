@@ -1,12 +1,22 @@
 /**
- * ARS 3.0 Layer 3 Probe: Usability & Interoperability (56 Checks | 40 Base Pts)
+ * ARS 3.0 Layer 3 Probe: Usability & Interoperability
  * Evaluates Kind-Aware MCP Rubrics (Docs Focus vs Product Breadth),
  * WorkOS auth.md 8-stage parser & GET simulation, WebMCP, and API contracts.
+ *
+ * Status rules (shared with the scoring in ./index.ts):
+ * - pass: the evidence was observed; earns the registry points.
+ * - warn / fail: checked and missing; base checks count against the layer.
+ * - na: the surface the check inspects does not exist (e.g. no MCP server, no OpenAPI).
+ *   Existence is scored once by its own check, so quality checks are not applicable.
+ * - skip: the surface exists but this scan could not verify the check.
+ * Points and bonus status always come from the registry.
  */
 
 import { fetchResource } from '../fetchResource';
+import { probeMcpServer, type McpLiveProbeResult } from '../mcpProbe';
+import { inspectOpenApi } from '../openapiInspect';
 import { getChecksForLayer } from './registry';
-import type { CheckResult } from './types';
+import type { CheckDefinition, CheckRemediation, CheckResult, CheckStatus } from './types';
 
 export interface UsabilityProbeResult {
   score: number;
@@ -76,6 +86,38 @@ function extractJsonPayload(body: string | undefined): any {
   return null;
 }
 
+const STATIC_CARD_RE = /(server-card\.json|manifest\.json|mcp\.json)$/i;
+
+function isMcpLikePath(endpoint: string): boolean {
+  try {
+    const u = new URL(endpoint);
+    // Dedicated MCP hosts often serve at the root (https://mcp.stripe.com).
+    return /mcp|sse/i.test(u.pathname) || /^mcp\./i.test(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** Endpoint URL declared inside a static MCP server card / manifest, if any. */
+function endpointFromCard(json: any, base: string): string | undefined {
+  const candidates = [
+    json?.url,
+    json?.endpoint,
+    json?.remotes?.[0]?.url,
+    json?.transport?.url,
+    json?.servers?.[0]?.url,
+  ];
+  for (const c of candidates) {
+    if (typeof c !== 'string' || !c) continue;
+    try {
+      return new URL(c, base).href;
+    } catch {
+      /* ignore */
+    }
+  }
+  return undefined;
+}
+
 export async function probeUsability(
   targetUrl: string,
   options?: {
@@ -96,22 +138,36 @@ export async function probeUsability(
 ): Promise<UsabilityProbeResult> {
   const details: string[] = [];
   const checkDefs = getChecksForLayer('usability');
+  const defsById = new Map<string, CheckDefinition>(checkDefs.map((d) => [d.id, d]));
   const results: CheckResult[] = [];
   const kind = options?.kind || 'generic';
+  const isLocal = Boolean(options?.localContext?.isLocalCodebase);
+
+  const record = (
+    checkId: string,
+    status: CheckStatus,
+    message: string,
+    extra: { evidence?: Record<string, any>; remediation?: CheckRemediation } = {}
+  ) => {
+    const def = defsById.get(checkId);
+    const maxPoints = def?.points ?? 0;
+    results.push({
+      checkId,
+      status,
+      earnedPoints: status === 'pass' ? maxPoints : 0,
+      maxPoints,
+      isBonus: def?.isBonus ?? true,
+      message,
+      ...extra,
+    });
+  };
 
   let u: URL;
   try {
     u = new URL(targetUrl);
   } catch {
     for (const def of checkDefs) {
-      results.push({
-        checkId: def.id,
-        status: 'fail',
-        earnedPoints: 0,
-        maxPoints: def.points,
-        isBonus: def.isBonus,
-        message: 'Invalid target URL for usability probe',
-      });
+      record(def.id, 'fail', 'Invalid target URL for usability probe');
     }
     return {
       score: 0,
@@ -128,7 +184,7 @@ export async function probeUsability(
   const origin = u.origin;
 
   // ========================================================
-  // 1. MCP Server Probing & Kind-Aware Rubric
+  // 1. MCP Server Discovery
   // ========================================================
   const endpointCandidates: string[] = [];
 
@@ -171,16 +227,17 @@ export async function probeUsability(
     '/.well-known/mcp/server-card.json',
     '/.well-known/mcp/manifest.json',
     '/.well-known/mcp.json',
-    '/.well-known/oauth-protected-resource',
     '/mcp.json',
   ];
 
-  if (!options?.localContext?.isLocalCodebase) {
+  if (!isLocal) {
     for (const host of candidateHosts) {
       if (!host) continue;
       const pathsForHost = (host === origin || host === origin.replace('://www.', '://'))
         ? standardPaths
-        : ['/mcp', '/api/mcp', '/docs/mcp', '/sse', '/.well-known/mcp/server-card.json', '/.well-known/oauth-protected-resource'];
+        : host.startsWith(`${proto}//mcp.`)
+        ? ['', '/mcp', '/sse', '/.well-known/mcp/server-card.json']
+        : ['/mcp', '/api/mcp', '/docs/mcp', '/sse', '/.well-known/mcp/server-card.json'];
 
       for (const p of pathsForHost) {
         const full = `${host}${p}`;
@@ -200,111 +257,78 @@ export async function probeUsability(
       }
     }
 
-    if (!endpointCandidates.includes(targetUrl)) {
+    // The target itself may be an MCP endpoint (e.g. https://mcp.example.com/mcp).
+    if (isMcpLikePath(targetUrl) && !endpointCandidates.includes(targetUrl)) {
       endpointCandidates.unshift(targetUrl);
     }
   }
 
+  // A local codebase can declare an MCP route, but nothing about it can be verified remotely.
   let mcpLive = Boolean(options?.localContext?.hasMcpRoute);
-  let authRequired = false;
   let mcpEndpoint: string | undefined = mcpLive ? '/api/mcp' : undefined;
-  let isStreamableHttp = mcpLive;
+  let rpcEndpoint: string | undefined; // endpoint that speaks JSON-RPC (not a static card)
   let hasServerCard = false;
-  let toolCount = mcpLive ? 3 : 0;
-  let toolsList: any[] = mcpLive ? [{ name: 'get_api_status' }, { name: 'get_capabilities' }, { name: 'ping_service' }] : [];
-  const isPublicMcp = true;
-  let hasOAuthMetadata = false;
+  let legacySse = false;
+  let postSpeaksJsonRpc = false; // answered a POST with a JSON-RPC envelope (even an error)
+  let cardTools: any[] | undefined;
 
   const probeCandidate = async (ep: string) => {
     if (mcpLive) return;
     try {
-      // Step A: GET / SSE probe
+      // Step A: GET probe (legacy SSE stream, static card, or auth challenge)
       const res = await fetchResource(ep, {
         timeoutMs: 2500,
         headers: { Accept: 'application/json, text/event-stream' },
         allowErrorBody: true,
       });
+      if (mcpLive) return;
 
-      const isSseHeader = Boolean(
-        res.contentType?.toLowerCase().includes('text/event-stream') ||
-        res.headers?.['mcp-session-id'] ||
-        res.headers?.['mcp-protocol-version']
-      );
-
+      const getIsSse = Boolean(res.contentType?.toLowerCase().includes('text/event-stream'));
       const getJson = extractJsonPayload(res.body);
+      const mcpPath = isMcpLikePath(ep);
 
-      if (isSseHeader && (res.ok || res.httpStatus === 200 || res.httpStatus === 401)) {
+      if (getIsSse && res.httpStatus === 200) {
         mcpLive = true;
         mcpEndpoint = ep;
-        isStreamableHttp = true;
-        if (res.httpStatus === 401) {
-          authRequired = true;
-          hasOAuthMetadata = true;
-        }
-        if (getJson?.tools && Array.isArray(getJson.tools)) {
-          toolsList = getJson.tools;
-          toolCount = toolsList.length;
-        }
+        rpcEndpoint = ep;
+        legacySse = true;
         return;
       }
 
-      const isGetAuthProtected = (res.httpStatus === 401 || res.httpStatus === 403) && (
-        Boolean(res.headers?.['www-authenticate']) ||
-        Boolean(getJson && !res.body?.includes('<html') && (ep.includes('mcp') || getJson.code === 'missing_auth_header' || getJson.error))
+      const getAuthChallenge = (res.httpStatus === 401 || res.httpStatus === 403) && mcpPath && (
+        Boolean(res.headers?.['www-authenticate']) || Boolean(getJson?.error || getJson?.jsonrpc)
       );
-
-      if (isGetAuthProtected) {
+      if (getAuthChallenge) {
         mcpLive = true;
-        authRequired = true;
         mcpEndpoint = ep;
-        isStreamableHttp = true;
-        hasOAuthMetadata = true;
+        rpcEndpoint = ep;
         return;
       }
 
-      if (res.body && !res.body.includes('<html')) {
-        const json = getJson;
-        if (json) {
-          if (json.mcpServers || json.capabilities || json.tools || json.serverInfo || (ep.includes('mcp') && (json.name || json.version || json.jsonrpc))) {
-            mcpLive = true;
-            mcpEndpoint = ep;
-            if (ep.includes('server-card.json') || ep.includes('manifest.json') || ep.includes('mcp.json')) {
-              hasServerCard = true;
-            }
-            if (ep.endsWith('/api/mcp') || ep.endsWith('/mcp') || ep.includes('sse')) isStreamableHttp = true;
-            if (Array.isArray(json.tools)) {
-              toolsList = json.tools;
-              toolCount = toolsList.length;
-            } else if (Array.isArray(json.result?.tools)) {
-              toolsList = json.result.tools;
-              toolCount = toolsList.length;
-            } else if (json.mcpServers && typeof json.mcpServers === 'object') {
-              const declared = Object.keys(json.mcpServers);
-              toolCount = Math.max(toolCount, declared.length * 2);
-            }
-            if (json.authentication?.type === 'oauth2' || json.result?.authentication?.type === 'oauth2') {
-              hasOAuthMetadata = true;
-            }
-            return;
-          }
-        }
+      if (getJson && STATIC_CARD_RE.test(ep) && (getJson.mcpServers || getJson.capabilities || getJson.tools || getJson.serverInfo || getJson.name)) {
+        mcpLive = true;
+        mcpEndpoint = ep;
+        hasServerCard = true;
+        if (Array.isArray(getJson.tools)) cardTools = getJson.tools;
+        rpcEndpoint = endpointFromCard(getJson, ep);
+        return;
       }
+
+      if (!mcpPath) return;
 
       // Step B: POST JSON-RPC initialize handshake
-      const initPayload = JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-03-26',
-          capabilities: { tools: { listChanged: true } },
-          clientInfo: { name: 'glintbase-audit', version: '3.0.0' },
-        },
-      });
-
       const postRes = await fetchResource(ep, {
         method: 'POST',
-        body: initPayload,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'glintbase-audit', version: '3.1.0' },
+          },
+        }),
         timeoutMs: 3000,
         headers: {
           'Content-Type': 'application/json',
@@ -312,81 +336,18 @@ export async function probeUsability(
         },
         allowErrorBody: true,
       });
-
-      const postIsSse = Boolean(
-        postRes.contentType?.toLowerCase().includes('text/event-stream') ||
-        postRes.headers?.['mcp-session-id'] ||
-        postRes.headers?.['mcp-protocol-version']
-      );
+      if (mcpLive) return;
 
       const postJson = extractJsonPayload(postRes.body);
+      const isJsonRpc = postJson?.jsonrpc === '2.0';
+      const authChallenge = (postRes.httpStatus === 401 || postRes.httpStatus === 403) &&
+        (isJsonRpc || Boolean(postRes.headers?.['www-authenticate']));
 
-      const isJsonRpc = Boolean(postJson && postJson.jsonrpc === '2.0');
-      const hasMcpResult = Boolean(postJson?.result?.serverInfo || postJson?.result?.capabilities || postJson?.result?.protocolVersion);
-      const hasJsonRpcError = Boolean(postJson?.error && typeof postJson.error === 'object');
-      const hasJsonBody = Boolean(postJson && !postRes.body?.includes('<html'));
-      const isAuthProtectedMcp = (postRes.httpStatus === 401 || postRes.httpStatus === 403) && (
-        isJsonRpc ||
-        Boolean(postRes.headers?.['www-authenticate']) ||
-        Boolean(hasJsonBody && (ep.includes('mcp') || postJson.code === 'missing_auth_header' || postJson.error))
-      );
-
-      if (hasMcpResult || postIsSse || (isJsonRpc && !postRes.body?.includes('<html')) || isAuthProtectedMcp) {
+      if (isJsonRpc || authChallenge) {
         mcpLive = true;
         mcpEndpoint = ep;
-        isStreamableHttp = true;
-        if (isAuthProtectedMcp) {
-          authRequired = true;
-          hasOAuthMetadata = true;
-        }
-        if (ep.includes('server-card.json') || ep.includes('manifest.json')) hasServerCard = true;
-
-        if (postJson?.result?.serverInfo || postJson?.result?.capabilities) {
-          isStreamableHttp = true;
-        }
-        if (Array.isArray(postJson?.tools)) {
-          toolsList = postJson.tools;
-          toolCount = toolsList.length;
-        } else if (Array.isArray(postJson?.result?.tools)) {
-          toolsList = postJson.result.tools;
-          toolCount = toolsList.length;
-        }
-        if (postJson?.authentication?.type === 'oauth2' || postJson?.result?.authentication?.type === 'oauth2') {
-          hasOAuthMetadata = true;
-        }
-
-        // Step C: If toolCount is 0, attempt a quick tools/list query
-        if (toolCount === 0 && !hasJsonRpcError && !isAuthProtectedMcp) {
-          try {
-            const listPayload = JSON.stringify({
-              jsonrpc: '2.0',
-              id: 2,
-              method: 'tools/list',
-              params: {},
-            });
-            const listRes = await fetchResource(ep, {
-              method: 'POST',
-              body: listPayload,
-              timeoutMs: 2000,
-              headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json, text/event-stream',
-              },
-              allowErrorBody: true,
-            });
-            const listJson = extractJsonPayload(listRes.body);
-            if (Array.isArray(listJson?.result?.tools)) {
-              toolsList = listJson.result.tools;
-              toolCount = toolsList.length;
-            }
-          } catch {
-            /* ignore optional tools/list error */
-          }
-        }
-
-        if (toolCount === 0) {
-          toolCount = 2;
-        }
+        rpcEndpoint = ep;
+        postSpeaksJsonRpc = isJsonRpc;
       }
     } catch {
       /* ignore candidate probe error */
@@ -399,231 +360,217 @@ export async function probeUsability(
     await Promise.all(batch.map(probeCandidate));
   }
 
-  // mcp-server-manifest (2 pts)
-  results.push({
-    checkId: 'mcp-server-manifest',
-    status: mcpLive ? 'pass' : 'warn',
-    earnedPoints: mcpLive ? 2 : 0,
-    maxPoints: 2,
-    isBonus: false,
-    message: mcpLive ? `MCP server endpoint active at ${mcpEndpoint || 'codebase'}` : 'No active MCP server endpoint detected',
-    evidence: {
-      endpoint: mcpEndpoint,
-      toolCount,
-      isStreamableHttp,
-      hasServerCard,
-    },
-    remediation: !mcpLive ? {
-      title: 'Mount Streamable HTTP MCP Server',
-      file: 'app/api/mcp/route.ts',
-      diffSnippet: [
-        '+ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
-        '+ export async function POST(req: Request) { ... }',
-      ],
-      fixCommand: 'glintbase remediate mcp',
-    } : undefined,
-  });
+  // Live 4-step probe: handshake, tools/list, safe read-only call, error channel.
+  let live: McpLiveProbeResult | undefined;
+  if (rpcEndpoint && !isLocal) {
+    live = await probeMcpServer(rpcEndpoint).catch(() => undefined);
+  }
 
-  // mcp-tools-listing (3 pts)
-  results.push({
-    checkId: 'mcp-tools-listing',
-    status: mcpLive ? 'pass' : 'warn',
-    earnedPoints: mcpLive ? 3 : 0,
-    maxPoints: 3,
-    isBonus: false,
-    message: mcpLive ? `MCP tools catalog verified (${toolCount} tools declared)` : 'MCP tools listing unavailable',
-  });
+  const authGated = Boolean(live?.authGated);
+  const handshakeOk = Boolean(live?.handshakeAccepted);
+  const streamableHttp = handshakeOk || authGated || postSpeaksJsonRpc;
+  const tools = live?.toolsListed ? live.tools : undefined;
+  const listedToolCount = tools?.length ?? (cardTools ? cardTools.length : undefined);
+  const toolCount = listedToolCount ?? 0;
+  const canInspectTools = Boolean(tools && tools.length > 0);
+  const capabilities = live?.capabilities || {};
+
+  // Status for checks that inspect a running MCP server.
+  const unverifiable = (why: string): [CheckStatus, string] => [mcpLive ? 'skip' : 'na', mcpLive ? why : 'No MCP server detected'];
+  const notVerifiableReason = isLocal
+    ? 'MCP route declared in codebase; not verifiable without a running server'
+    : authGated
+    ? 'MCP server requires authentication; tools could not be inspected anonymously'
+    : 'MCP server did not complete a JSON-RPC handshake';
+
+  // mcp-server-manifest
+  record(
+    'mcp-server-manifest',
+    mcpLive ? 'pass' : 'warn',
+    mcpLive ? `MCP server endpoint found at ${mcpEndpoint}` : 'No active MCP server endpoint detected',
+    {
+      evidence: { endpoint: mcpEndpoint, rpcEndpoint, toolCount: listedToolCount, hasServerCard, authGated },
+      remediation: !mcpLive ? {
+        title: 'Mount Streamable HTTP MCP Server',
+        file: 'app/api/mcp/route.ts',
+        diffSnippet: [
+          '+ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";',
+          '+ export async function POST(req: Request) { ... }',
+        ],
+        fixCommand: 'glintbase remediate mcp',
+      } : undefined,
+    }
+  );
+
+  // mcp-tools-listing
+  if (!mcpLive) {
+    record('mcp-tools-listing', 'warn', 'MCP tools listing unavailable');
+  } else if (listedToolCount !== undefined && listedToolCount > 0) {
+    record('mcp-tools-listing', 'pass', `MCP tools catalog lists ${listedToolCount} tools${tools ? ' (tools/list)' : ' (server card)'}`);
+  } else if (authGated) {
+    record('mcp-tools-listing', 'warn', 'tools/list requires authentication; agents cannot discover tools before signing in');
+  } else if (isLocal) {
+    record('mcp-tools-listing', 'skip', notVerifiableReason);
+  } else {
+    record('mcp-tools-listing', 'warn', 'MCP endpoint found but tools/list returned no tools');
+  }
 
   // Kind-Aware Rubric: Docs focus vs Product breadth
   if (kind === 'docs') {
-    // Docs MCP Rubric: Reward 1-3 focused tools
-    const docsFocusPassed = toolCount >= 1 && toolCount <= 3;
-    results.push({
-      checkId: 'mcp-tools-focus',
-      status: docsFocusPassed ? 'pass' : 'na',
-      earnedPoints: docsFocusPassed ? 3 : (toolCount <= 5 ? 1 : 0),
-      maxPoints: 3,
-      isBonus: true,
-      message: docsFocusPassed
-        ? `Docs MCP rewards focused tool surface (${toolCount} search/retrieval tools)`
-        : `Docs MCP tool count (${toolCount}) outside optimal 1-3 tool focus window`,
-    });
-    // Product breadth check is skipped for docs
-    results.push({
-      checkId: 'mcp-tools-breadth',
-      status: 'skip',
-      earnedPoints: 0,
-      maxPoints: 3,
-      isBonus: false,
-      message: 'Skipped for Docs archetype (Docs MCP rewards focus)',
-    });
+    const [s, m] = listedToolCount !== undefined
+      ? (listedToolCount >= 1 && listedToolCount <= 3
+        ? ['pass', `Docs MCP keeps a focused tool surface (${listedToolCount} tools)`]
+        : ['warn', `Docs MCP tool count (${listedToolCount}) outside the focused 1-3 tool window`])
+      : unverifiable(notVerifiableReason);
+    record('mcp-tools-focus', s as CheckStatus, m);
+    record('mcp-tools-breadth', 'skip', 'Skipped for Docs archetype (Docs MCP rewards focus)');
   } else {
-    // Product MCP Rubric: Reward tool breadth (>=3 tools or dispatcher)
-    const productBreadthPassed = toolCount >= 3;
-    results.push({
-      checkId: 'mcp-tools-breadth',
-      status: productBreadthPassed ? 'pass' : 'warn',
-      earnedPoints: productBreadthPassed ? 3 : 1,
-      maxPoints: 3,
-      isBonus: false,
-      message: productBreadthPassed
-        ? `Product MCP provides rich action toolset (${toolCount} tools available)`
-        : 'Product MCP lacks tool breadth (<3 tools)',
-    });
-    // Docs focus check is skipped for product
-    results.push({
-      checkId: 'mcp-tools-focus',
-      status: 'skip',
-      earnedPoints: 0,
-      maxPoints: 3,
-      isBonus: true,
-      message: 'Skipped for Product archetype (Product MCP requires breadth)',
-    });
+    const [s, m] = listedToolCount !== undefined
+      ? (listedToolCount >= 3
+        ? ['pass', `Product MCP provides a rich toolset (${listedToolCount} tools)`]
+        : ['warn', `Product MCP lacks tool breadth (${listedToolCount} < 3 tools)`])
+      : unverifiable(notVerifiableReason);
+    record('mcp-tools-breadth', s as CheckStatus, m);
+    record('mcp-tools-focus', 'skip', 'Skipped for Product archetype (Product MCP requires breadth)');
   }
 
-  // mcp-tools-schema-strict (2 pts)
-  results.push({
-    checkId: 'mcp-tools-schema-strict',
-    status: mcpLive ? 'pass' : 'warn',
-    earnedPoints: mcpLive ? 2 : 0,
-    maxPoints: 2,
-    isBonus: false,
-    message: mcpLive ? 'Tool inputSchema parameters strictly typed' : 'Tool schema strict typing unverified',
-  });
+  // Tool schema & annotation checks inspect tools/list output.
+  if (canInspectTools && tools) {
+    const loose = tools.filter((t) => !t.schemaStrict).map((t) => t.name);
+    record(
+      'mcp-tools-schema-strict',
+      loose.length === 0 ? 'pass' : 'warn',
+      loose.length === 0
+        ? `All ${tools.length} tools declare object inputSchemas with typed properties`
+        : `${loose.length}/${tools.length} tools have loose or missing inputSchemas (${loose.slice(0, 5).join(', ')})`,
+      { evidence: { looseTools: loose } }
+    );
+    const readOnlyCount = tools.filter((t) => t.annotatedReadOnly).length;
+    record(
+      'mcp-tools-readonly-hint',
+      readOnlyCount > 0 ? 'pass' : 'warn',
+      readOnlyCount > 0 ? `${readOnlyCount} tools declare readOnlyHint: true` : 'No tool declares readOnlyHint annotations'
+    );
+    const destructiveCount = tools.filter((t) => t.annotatedDestructive).length;
+    record(
+      'mcp-tools-destructive-hint',
+      destructiveCount > 0 ? 'pass' : 'warn',
+      destructiveCount > 0 ? `${destructiveCount} tools declare destructiveHint` : 'No tool declares destructiveHint annotations'
+    );
+  } else {
+    for (const id of ['mcp-tools-schema-strict', 'mcp-tools-readonly-hint', 'mcp-tools-destructive-hint']) {
+      const [s, m] = unverifiable(notVerifiableReason);
+      record(id, s, m);
+    }
+  }
 
-  // mcp-tools-readonly-hint & destructive-hint (2 pts bonus each)
-  results.push({
-    checkId: 'mcp-tools-readonly-hint',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: mcpLive ? 'Tools declare readOnlyHint: true for safe automated query execution' : 'readOnlyHint not declared (bonus)',
-  });
-  results.push({
-    checkId: 'mcp-tools-destructive-hint',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: mcpLive ? 'Mutating tools declare destructiveHint: true for safety barriers' : 'destructiveHint not declared (bonus)',
-  });
+  // mcp-auth-requirement: is the server's auth posture right for its kind, and discoverable?
+  if (!mcpLive) {
+    record('mcp-auth-requirement', 'na', 'No MCP server detected');
+  } else if (isLocal) {
+    record('mcp-auth-requirement', 'skip', notVerifiableReason);
+  } else if (kind === 'docs') {
+    record(
+      'mcp-auth-requirement',
+      authGated ? 'warn' : 'pass',
+      authGated ? 'Docs MCP requires authentication; public knowledge should be zero-auth' : 'Docs MCP is publicly accessible without authentication'
+    );
+  } else if (authGated) {
+    const discoverable = Boolean(live?.wwwAuthenticate);
+    record(
+      'mcp-auth-requirement',
+      discoverable ? 'pass' : 'warn',
+      discoverable
+        ? 'Product MCP requires auth and advertises it via WWW-Authenticate'
+        : 'Product MCP rejects anonymous requests without a WWW-Authenticate challenge'
+    );
+  } else {
+    record('mcp-auth-requirement', 'pass', 'Product MCP accepts anonymous handshakes (public tools)');
+  }
 
-  // mcp-auth-requirement (2 pts)
-  const authPolicyPassed = kind === 'docs' ? isPublicMcp : (hasOAuthMetadata || mcpLive);
-  results.push({
-    checkId: 'mcp-auth-requirement',
-    status: authPolicyPassed ? 'pass' : 'warn',
-    earnedPoints: authPolicyPassed ? 2 : 0,
-    maxPoints: 2,
-    isBonus: false,
-    message: kind === 'docs'
-      ? 'Docs MCP maintains zero-auth public knowledge access'
-      : 'Product MCP authentication protocol verified',
-  });
+  // Transports
+  if (!mcpLive) {
+    record('mcp-transport-streamable', 'warn', 'No Streamable HTTP MCP transport detected');
+    record('mcp-transport-sse', 'warn', 'No SSE MCP transport detected');
+  } else if (isLocal) {
+    record('mcp-transport-streamable', 'skip', notVerifiableReason);
+    record('mcp-transport-sse', 'skip', notVerifiableReason);
+  } else {
+    record(
+      'mcp-transport-streamable',
+      streamableHttp ? 'pass' : 'warn',
+      handshakeOk
+        ? `Streamable HTTP JSON-RPC handshake accepted at ${rpcEndpoint}`
+        : authGated
+        ? `Streamable HTTP endpoint at ${rpcEndpoint} answered with an auth challenge`
+        : postSpeaksJsonRpc
+        ? `Streamable HTTP endpoint at ${rpcEndpoint} answers JSON-RPC over POST`
+        : 'MCP surface found but no endpoint speaks JSON-RPC over HTTP POST'
+    );
+    record(
+      'mcp-transport-sse',
+      legacySse ? 'pass' : 'warn',
+      legacySse ? 'Legacy SSE stream served on GET' : 'No legacy SSE stream served on GET'
+    );
+  }
 
-  // mcp-transport-streamable (3 pts) & mcp-transport-sse (2 pts)
-  results.push({
-    checkId: 'mcp-transport-streamable',
-    status: (isStreamableHttp || mcpLive) ? 'pass' : 'warn',
-    earnedPoints: (isStreamableHttp || mcpLive) ? 3 : 0,
-    maxPoints: 3,
-    isBonus: false,
-    message: 'Modern Streamable HTTP MCP transport handler active (/api/mcp)',
-  });
-  results.push({
-    checkId: 'mcp-transport-sse',
-    status: mcpLive ? 'pass' : 'warn',
-    earnedPoints: mcpLive ? 2 : 0,
-    maxPoints: 2,
-    isBonus: false,
-    message: 'SSE channel available for real-time progress streaming',
-  });
+  // MCP UI and App Specs (not yet probed)
+  record('mcp-app-registry', 'na', 'MCP App UI resource schemas not probed (bonus)');
+  record('mcp-apps-ui-quality', 'na', 'MCP App HTML profile compliance not probed (bonus)');
+  record('mcp-view-csp', 'na', 'MCP View CSP frame-ancestors not yet probed (bonus)');
 
-  // MCP UI and App Specs (Bonus)
-  results.push({
-    checkId: 'mcp-app-registry',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 4,
-    isBonus: true,
-    message: 'MCP App UI resource schemas not declared (bonus skipped)',
-  });
-  results.push({
-    checkId: 'mcp-apps-ui-quality',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 4,
-    isBonus: true,
-    message: 'MCP App HTML profile compliance skipped (bonus)',
-  });
-  const mcpCspPassed = mcpLive && hasServerCard;
-  results.push({
-    checkId: 'mcp-view-csp',
-    status: mcpCspPassed ? 'pass' : 'na',
-    earnedPoints: mcpCspPassed ? 4 : 0,
-    maxPoints: 4,
-    isBonus: true,
-    message: mcpCspPassed
-      ? 'CSP frame-ancestors verified for ChatGPT and Claude agent hosts'
-      : 'MCP View CSP header verification omitted (bonus)',
-  });
-  results.push({
-    checkId: 'mcp-prompts-listing',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 1 : 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: mcpLive ? 'Exposes curated prompt templates (prompts/list)' : 'Prompt templates omitted (bonus)',
-  });
-  results.push({
-    checkId: 'mcp-resources-listing',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 1 : 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: mcpLive ? 'Exposes dynamic data resources (resources/list)' : 'Dynamic resources omitted (bonus)',
-  });
-  results.push({
-    checkId: 'mcp-error-reporting',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !mcpLive,
-    message: mcpLive ? 'JSON-RPC 2.0 error standard format supported' : 'JSON-RPC 2.0 error reporting omitted (no active MCP server)',
-  });
-  results.push({
-    checkId: 'mcp-protocol-version',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !mcpLive,
-    message: mcpLive ? 'Protocol version negotiation compliant (2025-03-26 / 2024-11-05)' : 'MCP protocol version negotiation omitted (no active MCP server)',
-  });
-  results.push({
-    checkId: 'mcp-sampling-support',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: 'MCP sampling capability omitted (bonus)',
-  });
-  results.push({
-    checkId: 'mcp-roots-support',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'MCP roots capability omitted (bonus)',
-  });
-  results.push({
-    checkId: 'mcp-logging-notifications',
-    status: mcpLive ? 'pass' : 'na',
-    earnedPoints: mcpLive ? 1 : 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: mcpLive ? 'Structured tool progress notifications supported' : 'Tool progress notifications omitted (bonus)',
-  });
+  // Capabilities from the initialize result
+  if (handshakeOk) {
+    record('mcp-prompts-listing', capabilities.prompts ? 'pass' : 'warn', capabilities.prompts ? 'Server declares the prompts capability' : 'Server does not declare the prompts capability');
+    record('mcp-resources-listing', capabilities.resources ? 'pass' : 'warn', capabilities.resources ? 'Server declares the resources capability' : 'Server does not declare the resources capability');
+    record('mcp-logging-notifications', capabilities.logging ? 'pass' : 'warn', capabilities.logging ? 'Server declares the logging capability' : 'Server does not declare the logging capability');
+    record(
+      'mcp-protocol-version',
+      live?.protocolVersion ? 'pass' : 'warn',
+      live?.protocolVersion ? `Negotiated protocol version ${live.protocolVersion}` : 'initialize result did not include a protocolVersion'
+    );
+    record(
+      'mcp-wire-compatibility',
+      live?.dualWireCompatible ? 'pass' : 'warn',
+      live?.dualWireCompatible
+        ? 'Accepts both 2026-07-28 and legacy initialize wire forms'
+        : `Accepts only the ${live?.wireForm2026Supported ? '2026-07-28' : 'legacy'} initialize wire form`
+    );
+  } else {
+    for (const id of ['mcp-prompts-listing', 'mcp-resources-listing', 'mcp-logging-notifications', 'mcp-protocol-version', 'mcp-wire-compatibility']) {
+      const [s, m] = unverifiable(notVerifiableReason);
+      record(id, s, m);
+    }
+  }
+
+  // Error channel integrity (canary call to a non-existent tool)
+  if (handshakeOk && live) {
+    const ok = live.inChannelErrorsVerified;
+    record(
+      'mcp-error-reporting',
+      ok ? 'pass' : 'fail',
+      ok
+        ? 'Errors signalled in-channel (JSON-RPC error or isError: true) for an unknown-tool call'
+        : 'Unknown-tool call was not signalled in-channel (HTTP 200 text, HTML, or unparseable)'
+    );
+  } else {
+    const [s, m] = unverifiable(notVerifiableReason);
+    record('mcp-error-reporting', s, m);
+  }
+
+  // Schema honesty needs a safe (readOnlyHint, zero-argument) tool to call.
+  if (live?.dishonestSchemaDetected) {
+    record('mcp-honest-schemas', 'fail', `Tool "${live.safeCallTool}" declares no required arguments but rejects calls without them`);
+  } else if (live?.safeCallTool) {
+    record('mcp-honest-schemas', 'pass', `Tool "${live.safeCallTool}" executed with its declared schema`);
+  } else {
+    const [s, m] = unverifiable('No zero-argument tool annotated readOnlyHint: true to exercise safely');
+    record('mcp-honest-schemas', s, m);
+  }
+
+  record('mcp-ssrf-guard', mcpLive ? 'skip' : 'na', mcpLive ? 'SSRF guard not probed (requires sending private-network URLs to the server)' : 'No MCP server detected');
+  record('mcp-sampling-support', 'na', 'MCP sampling is a client capability; not probed (bonus)');
+  record('mcp-roots-support', 'na', 'MCP roots is a client capability; not probed (bonus)');
 
   // ========================================================
   // 2. WorkOS auth.md 8-Stage Parser & Non-Mutating GET Simulation
@@ -631,7 +578,6 @@ export async function probeUsability(
   const authChecks = [
     `${origin}/auth.md`,
     `${origin}/.well-known/auth.md`,
-    `${origin}/.well-known/oauth-protected-resource`,
     `${origin}/docs/auth.md`,
   ];
 
@@ -639,7 +585,7 @@ export async function probeUsability(
   let authUrl: string | undefined;
   let authContent = options?.localContext?.authContent || '';
 
-  if (!authContent && !options?.localContext?.isLocalCodebase) {
+  if (!authContent && !isLocal) {
     for (const checkUrl of authChecks) {
       const res = await fetchResource(checkUrl, { timeoutMs: 3000 });
       if (res.ok && res.body && !res.body.includes('<html')) {
@@ -667,173 +613,124 @@ export async function probeUsability(
   const detectedStagesCount = Object.values(stages).filter(Boolean).length;
   const isComplete8Stage = detectedStagesCount >= 6; // High standard threshold
 
-  // auth-md-structure (2 pts bonus)
-  results.push({
-    checkId: 'auth-md-structure',
-    status: isComplete8Stage ? 'pass' : 'na',
-    earnedPoints: isComplete8Stage ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: isComplete8Stage
+  record(
+    'auth-md-structure',
+    isComplete8Stage ? 'pass' : foundAuth ? 'warn' : 'na',
+    isComplete8Stage
       ? `WorkOS auth.md structure verified (${detectedStagesCount}/8 canonical stages present)`
-      : 'auth.md canonical 8-stage structure not satisfied (bonus skipped)',
-    remediation: !foundAuth ? {
-      title: 'Generate WorkOS auth.md Handbook',
-      file: 'public/auth.md',
-      diffSnippet: [
-        '+ # Machine Authentication Guide',
-        '+ ## 1. Discover Endpoints',
-        '+ ## 2. Pick a Method (service_auth / bearer)',
-        '+ ## 3. Register Machine Client',
-        '+ ## 4. Token Claim Protocol',
-        '+ ## 5. Token Exchange Grant',
-        '+ ## 6. Use Bearer Token',
-        '+ ## 7. Auth Errors',
-        '+ ## 8. Token Revocation',
-      ],
-      fixCommand: 'glintbase remediate auth.md',
-    } : undefined,
-  });
+      : foundAuth
+      ? `auth.md covers ${detectedStagesCount}/8 canonical stages`
+      : 'auth.md not published (bonus skipped)',
+    {
+      remediation: !foundAuth ? {
+        title: 'Generate WorkOS auth.md Handbook',
+        file: 'public/auth.md',
+        diffSnippet: [
+          '+ # Machine Authentication Guide',
+          '+ ## 1. Discover Endpoints',
+          '+ ## 2. Pick a Method (service_auth / bearer)',
+          '+ ## 3. Register Machine Client',
+          '+ ## 4. Token Claim Protocol',
+          '+ ## 5. Token Exchange Grant',
+          '+ ## 6. Use Bearer Token',
+          '+ ## 7. Auth Errors',
+          '+ ## 8. Token Revocation',
+        ],
+        fixCommand: 'glintbase remediate auth.md',
+      } : undefined,
+    }
+  );
 
-  // Individual Stage Checks
-  results.push({
-    checkId: 'auth-md-stage-discover',
-    status: stages.discover || foundAuth ? 'pass' : 'warn',
-    earnedPoints: stages.discover || foundAuth ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.discover || foundAuth ? 'auth.md Stage 1 (Discover Endpoints) verified' : 'Stage 1 (Discover) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-methods',
-    status: stages.methods || foundAuth ? 'pass' : 'warn',
-    earnedPoints: stages.methods || foundAuth ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.methods || foundAuth ? 'auth.md Stage 2 (Pick a Method) specified' : 'Stage 2 (Methods) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-register',
-    status: stages.register || foundAuth ? 'pass' : 'warn',
-    earnedPoints: stages.register || foundAuth ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.register || foundAuth ? 'auth.md Stage 3 (Client Registration) documented with curl/JSON' : 'Stage 3 (Register) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-claim',
-    status: stages.claim ? 'pass' : 'warn',
-    earnedPoints: stages.claim ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.claim ? 'auth.md Stage 4 (Token Claim Protocol) documented' : 'Stage 4 (Claim) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-exchange',
-    status: stages.exchange || foundAuth ? 'pass' : 'warn',
-    earnedPoints: stages.exchange || foundAuth ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.exchange || foundAuth ? 'auth.md Stage 5 (Token Exchange) documented' : 'Stage 5 (Exchange) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-use',
-    status: stages.use || foundAuth ? 'pass' : 'warn',
-    earnedPoints: stages.use || foundAuth ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.use || foundAuth ? 'auth.md Stage 6 (Bearer Token Usage) documented' : 'Stage 6 (Use) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-errors',
-    status: stages.errors ? 'pass' : 'warn',
-    earnedPoints: stages.errors ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.errors ? 'auth.md Stage 7 (Auth Errors) enumerated' : 'Stage 7 (Errors) missing',
-  });
-  results.push({
-    checkId: 'auth-md-stage-revocation',
-    status: stages.revocation ? 'pass' : 'warn',
-    earnedPoints: stages.revocation ? 1 : 0,
-    maxPoints: 1,
-    isBonus: false,
-    message: stages.revocation ? 'auth.md Stage 8 (Revocation) documented' : 'Stage 8 (Revocation) missing',
-  });
-
-  // auth-md-walkthrough-simulation (2 pts bonus)
-  // Non-mutating GET simulation: PRM hop -> AS metadata hop -> zero side effects
-  let getSimulationPassed = false;
-  const prmRes = options?.localContext?.isLocalCodebase ? { ok: false, body: '' } : await fetchResource(`${origin}/.well-known/oauth-protected-resource`, { timeoutMs: 2500 });
-  const asRes = options?.localContext?.isLocalCodebase ? { ok: false, body: '' } : await fetchResource(`${origin}/.well-known/oauth-authorization-server`, { timeoutMs: 2500 });
-  if (foundAuth || (prmRes.ok && asRes.ok)) {
-    getSimulationPassed = true;
+  // Individual stage checks: each stage must actually appear in auth.md.
+  const stageChecks: Array<[keyof typeof stages, string, string]> = [
+    ['discover', 'auth-md-stage-discover', 'Stage 1 (Discover Endpoints)'],
+    ['methods', 'auth-md-stage-methods', 'Stage 2 (Pick a Method)'],
+    ['register', 'auth-md-stage-register', 'Stage 3 (Client Registration with curl/JSON)'],
+    ['claim', 'auth-md-stage-claim', 'Stage 4 (Token Claim Protocol)'],
+    ['exchange', 'auth-md-stage-exchange', 'Stage 5 (Token Exchange)'],
+    ['use', 'auth-md-stage-use', 'Stage 6 (Bearer Token Usage)'],
+    ['errors', 'auth-md-stage-errors', 'Stage 7 (Auth Errors)'],
+    ['revocation', 'auth-md-stage-revocation', 'Stage 8 (Revocation)'],
+  ];
+  for (const [stage, checkId, label] of stageChecks) {
+    record(
+      checkId,
+      stages[stage] ? 'pass' : 'warn',
+      stages[stage] ? `auth.md ${label} documented` : foundAuth ? `auth.md missing ${label}` : `${label} missing (no auth.md published)`
+    );
   }
 
-  results.push({
-    checkId: 'auth-md-walkthrough-simulation',
-    status: getSimulationPassed ? 'pass' : 'na',
-    earnedPoints: getSimulationPassed ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: getSimulationPassed
+  // Non-mutating GET simulation: PRM hop -> AS metadata hop -> zero side effects
+  const readJsonDoc = async (url: string) => {
+    if (isLocal) return null;
+    const res = await fetchResource(url, { timeoutMs: 2500 });
+    if (!res.ok) return null;
+    const json = extractJsonPayload(res.body);
+    return json && typeof json === 'object' ? json : null;
+  };
+  const [prmDoc, asDoc] = await Promise.all([
+    readJsonDoc(`${origin}/.well-known/oauth-protected-resource`),
+    readJsonDoc(`${origin}/.well-known/oauth-authorization-server`),
+  ]);
+  const prmOk = Boolean(prmDoc?.resource || prmDoc?.authorization_servers);
+  const asOk = Boolean(asDoc?.issuer && (asDoc?.token_endpoint || asDoc?.authorization_endpoint));
+  const getSimulationPassed = prmOk && asOk;
+
+  record(
+    'auth-md-walkthrough-simulation',
+    getSimulationPassed ? 'pass' : 'na',
+    getSimulationPassed
       ? 'Read-only GET simulation succeeded (PRM hop -> AS metadata -> zero mutations)'
-      : 'GET simulation skipped (bonus)',
-  });
+      : 'PRM -> AS metadata walkthrough not available (bonus skipped)'
+  );
 
-  // agent-auth-www-authenticate (1 pt bonus)
-  results.push({
-    checkId: 'agent-auth-www-authenticate',
-    status: getSimulationPassed ? 'pass' : 'na',
-    earnedPoints: getSimulationPassed ? 1 : 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: getSimulationPassed
-      ? 'WWW-Authenticate resource metadata header verified on 401 routes'
-      : 'WWW-Authenticate metadata header unverified (bonus skipped)',
-  });
+  const wwwAuth = live?.wwwAuthenticate || '';
+  record(
+    'agent-auth-www-authenticate',
+    /resource_metadata=/i.test(wwwAuth) ? 'pass' : authGated ? 'warn' : 'na',
+    /resource_metadata=/i.test(wwwAuth)
+      ? 'WWW-Authenticate challenge links resource metadata (RFC 9728)'
+      : authGated
+      ? 'Auth-gated MCP endpoint omits resource_metadata in WWW-Authenticate'
+      : 'No auth-gated endpoint observed (bonus skipped)'
+  );
 
-  results.push({
-    checkId: 'oauth-rfc8414-metadata',
-    status: asRes.ok ? 'pass' : 'na',
-    earnedPoints: asRes.ok ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: asRes.ok ? 'RFC 8414 OAuth Authorization Server metadata verified' : 'RFC 8414 metadata not found (bonus)',
-  });
+  record('oauth-rfc8414-metadata', asOk ? 'pass' : 'na', asOk ? 'RFC 8414 OAuth Authorization Server metadata verified' : 'RFC 8414 metadata not found (bonus)');
+  record('oauth-rfc9728-prm', prmOk ? 'pass' : 'na', prmOk ? 'RFC 9728 Protected Resource Metadata (PRM) published' : 'RFC 9728 PRM not published (bonus)');
 
-  results.push({
-    checkId: 'oauth-rfc9728-prm',
-    status: prmRes.ok ? 'pass' : 'na',
-    earnedPoints: prmRes.ok ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: prmRes.ok ? 'RFC 9728 Protected Resource Metadata (PRM) published' : 'RFC 9728 PRM not published (bonus)',
-  });
+  const hasAuthSurface = Boolean(foundAuth || authGated || prmOk || asOk);
+  const bearerEvidence =
+    (Array.isArray(prmDoc?.bearer_methods_supported) && prmDoc.bearer_methods_supported.includes('header')) ||
+    /^bearer\b/i.test(wwwAuth) ||
+    stages.use;
+  record(
+    'auth-bearer-token-support',
+    !hasAuthSurface ? 'na' : bearerEvidence ? 'pass' : 'warn',
+    !hasAuthSurface
+      ? 'No machine auth surface published (excluded from score)'
+      : bearerEvidence
+      ? 'Authorization: Bearer usage declared (PRM, WWW-Authenticate, or auth.md)'
+      : 'Auth surface found but Bearer token usage is not declared'
+  );
 
-  const hasAuthSupport = Boolean(foundAuth || hasOAuthMetadata || authRequired || prmRes.ok);
-  results.push({
-    checkId: 'auth-bearer-token-support',
-    status: hasAuthSupport ? 'pass' : 'na',
-    earnedPoints: hasAuthSupport ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasAuthSupport,
-    message: hasAuthSupport ? 'Standard Authorization: Bearer token format supported' : 'Bearer token auth specification not verified (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'auth-scoped-permissions',
-    status: hasAuthSupport ? 'pass' : 'na',
-    earnedPoints: hasAuthSupport ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasAuthSupport,
-    message: hasAuthSupport ? 'Granular machine authorization scopes defined' : 'Machine authorization scopes not verified (excluded from score)',
-  });
+  const scopes = [
+    ...(Array.isArray(prmDoc?.scopes_supported) ? prmDoc.scopes_supported : []),
+    ...(Array.isArray(asDoc?.scopes_supported) ? asDoc.scopes_supported : []),
+  ];
+  record(
+    'auth-scoped-permissions',
+    !hasAuthSurface ? 'na' : scopes.length > 0 ? 'pass' : 'warn',
+    !hasAuthSurface
+      ? 'No machine auth surface published (excluded from score)'
+      : scopes.length > 0
+      ? `Machine authorization scopes declared (${Array.from(new Set(scopes)).slice(0, 6).join(', ')})`
+      : 'No scopes_supported declared in OAuth metadata'
+  );
 
   // ========================================================
   // 3. WebMCP & Browser Interaction
   // ========================================================
-  const homeRes = options?.localContext?.isLocalCodebase
+  const homeRes = isLocal
     ? { ok: Boolean(options?.localContext?.pageContent), body: options?.localContext?.pageContent || '' }
     : await fetchResource(targetUrl, { timeoutMs: 3000 });
   const homeBody = homeRes.body || '';
@@ -842,204 +739,86 @@ export async function probeUsability(
   const hasFormAttributes = /<form\b[^>]*\btoolname=/i.test(homeBody) || /<form\b[^>]*\btooldescription=/i.test(homeBody);
   const webMcpPassed = hasModelContext || hasFormAttributes;
 
-  results.push({
-    checkId: 'webmcp',
-    status: webMcpPassed ? 'pass' : 'na',
-    earnedPoints: webMcpPassed ? 5 : 0,
-    maxPoints: 5,
-    isBonus: true,
-    message: webMcpPassed
+  record(
+    'webmcp',
+    webMcpPassed ? 'pass' : 'na',
+    webMcpPassed
       ? 'W3C WebMCP declarations verified (modelContext & declarative tool attributes)'
-      : 'WebMCP in-browser tools not declared (bonus skipped)',
-  });
+      : 'WebMCP in-browser tools not declared (bonus skipped)'
+  );
+  record('webmcp-model-context', hasModelContext ? 'pass' : 'na', hasModelContext ? 'window.modelContext tool registration verified' : 'modelContext omitted (bonus)');
+  record('webmcp-form-attributes', hasFormAttributes ? 'pass' : 'na', hasFormAttributes ? 'Declarative HTML form tool attributes found' : 'Form tool attributes omitted (bonus)');
 
-  results.push({
-    checkId: 'webmcp-model-context',
-    status: hasModelContext ? 'pass' : 'na',
-    earnedPoints: hasModelContext ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: hasModelContext ? 'window.modelContext tool registration verified' : 'modelContext omitted (bonus)',
-  });
-
-  results.push({
-    checkId: 'webmcp-form-attributes',
-    status: hasFormAttributes ? 'pass' : 'na',
-    earnedPoints: hasFormAttributes ? 2 : 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: hasFormAttributes ? 'Declarative HTML form tool attributes found' : 'Form tool attributes omitted (bonus)',
-  });
+  const hasTopLevelJsRegistration = /registerTool\s*\(/i.test(homeBody) || /document\.modelContext\.registerTool/i.test(homeBody) || /window\.modelContext\.registerTool/i.test(homeBody);
+  record(
+    'webmcp-js-registration',
+    hasTopLevelJsRegistration ? 'pass' : (hasFormAttributes ? 'warn' : 'na'),
+    hasTopLevelJsRegistration
+      ? 'Top-level document.modelContext.registerTool registration verified for ChatGPT Site Tools'
+      : (hasFormAttributes
+        ? 'WebMCP tools defined only via HTML form attributes (visible to Chrome, but invisible to ChatGPT Site Tools)'
+        : 'WebMCP top-level JS registration omitted (bonus skipped)')
+  );
 
   // ========================================================
-  // 4. API Usability & Standard Contracts
+  // 4. API Usability & Standard Contracts (inspected from the OpenAPI document)
   // ========================================================
-  const hasOpenApi = Boolean(options?.localContext?.hasOpenApiFile || options?.localContext?.openApiSpec);
+  const spec = options?.localContext?.openApiSpec;
+  const hasOpenApi = Boolean(options?.localContext?.hasOpenApiFile || spec);
+  const api = spec ? inspectOpenApi(spec) : undefined;
 
-  results.push({
-    checkId: 'api-operation-ids',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Unique operationId tags verified across API routes' : 'OpenAPI specification not detected (excluded from score)',
-  });
+  type ApiVerdict = [boolean, string, string];
+  const apiChecks: Array<[string, (a: NonNullable<typeof api>) => ApiVerdict]> = [
+    ['api-operation-ids', (a) => [
+      a.operationCount > 0 && a.operationIds.withId === a.operationCount && a.operationIds.duplicates.length === 0,
+      `All ${a.operationCount} operations have unique operationIds`,
+      a.operationIds.duplicates.length
+        ? `Duplicate operationIds: ${a.operationIds.duplicates.slice(0, 5).join(', ')}`
+        : `${a.operationCount - a.operationIds.withId}/${a.operationCount} operations lack an operationId`,
+    ]],
+    ['api-json-schemas', (a) => [
+      a.requestBodies.total === 0 || a.requestBodies.withJsonSchema === a.requestBodies.total,
+      a.requestBodies.total === 0 ? 'No operations take a request body' : `All ${a.requestBodies.total} request bodies declare a JSON schema`,
+      `${a.requestBodies.total - a.requestBodies.withJsonSchema}/${a.requestBodies.total} request bodies lack a JSON schema`,
+    ]],
+    ['api-error-schemas', (a) => [
+      a.operationCount > 0 && a.errorResponses.operationsWithTypedError / a.operationCount >= 0.5,
+      `${a.errorResponses.operationsWithTypedError}/${a.operationCount} operations declare typed error responses`,
+      `Only ${a.errorResponses.operationsWithTypedError}/${a.operationCount} operations declare typed 4xx/5xx/default responses`,
+    ]],
+    ['api-idempotency-keys', (a) => [
+      a.idempotencyKey || Boolean(options?.localContext?.hasIdempotencyKey),
+      'Idempotency-Key header declared on mutation routes',
+      'No Idempotency-Key header parameter declared',
+    ]],
+    ['api-rate-limit-headers', (a) => [a.rateLimitHeaders, 'Rate limit / Retry-After headers documented', 'No RateLimit or Retry-After headers documented']],
+    ['api-curl-examples', (a) => [a.curlExamples, 'cURL examples embedded in the spec', 'No cURL examples in the spec']],
+    ['api-code-samples', (a) => [a.codeSamples, 'x-codeSamples declared', 'No x-codeSamples declared']],
+    ['api-versioning-in-uri', (a) => [a.versionedUris, 'Explicit URI version segment (/v1/...)', 'No version segment in server URLs or paths']],
+    ['api-search-endpoint', (a) => [a.searchEndpoint, 'Search / filter endpoint declared', 'No search or filter endpoint declared']],
+    ['api-rfc7807-problem-details', (a) => [a.problemDetails, 'application/problem+json error responses declared', 'No RFC 7807 problem+json responses declared']],
+    ['api-pagination-cursor', (a) => [a.cursorPagination, 'Cursor-style pagination parameters declared', 'No cursor pagination parameters declared']],
+    ['api-webhook-declarations', (a) => [a.webhooks, 'Webhooks or callbacks declared', 'No webhooks or callbacks declared']],
+    ['api-openapi-3-1-strict', (a) => [a.isOpenApi31, `OpenAPI ${a.version} document`, `Spec is ${a.version || 'unknown version'}, not OpenAPI 3.1`]],
+  ];
 
-  results.push({
-    checkId: 'api-json-schemas',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Strict JSON Schemas defined for API request payloads' : 'OpenAPI specification not detected (excluded from score)',
-  });
+  for (const [checkId, evaluate] of apiChecks) {
+    if (!hasOpenApi) {
+      record(checkId, 'na', 'OpenAPI specification not detected (excluded from score)');
+    } else if (!api) {
+      record(checkId, 'skip', 'OpenAPI spec found but not inspected (YAML or local file)');
+    } else {
+      const [passed, passMsg, failMsg] = evaluate(api);
+      record(checkId, passed ? 'pass' : 'warn', passed ? passMsg : failMsg);
+    }
+  }
 
-  results.push({
-    checkId: 'api-error-schemas',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Typed JSON error bodies with diagnostic codes' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  const hasIdempotency = Boolean(options?.localContext?.hasIdempotencyKey);
-  results.push({
-    checkId: 'api-idempotency-keys',
-    status: hasIdempotency ? 'pass' : (hasOpenApi ? 'warn' : 'na'),
-    earnedPoints: hasIdempotency ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasOpenApi && !hasIdempotency,
-    message: hasIdempotency
-      ? 'Mutation routes accept Idempotency-Key header'
-      : (hasOpenApi ? 'Idempotency-Key support not detected on mutation routes' : 'Idempotency key specification omitted (excluded from score)'),
-  });
-
-  results.push({
-    checkId: 'api-rate-limit-headers',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Standard RateLimit-* headers documented and emitted' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-curl-examples',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Executable cURL examples provided in documentation' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-code-samples',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Multi-language SDK code snippets (TS, Python, Go) available' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-versioning-in-uri',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: 'Explicit URI version segment (/v1/...) enforced',
-  });
-
-  results.push({
-    checkId: 'api-search-endpoint',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Queryable filter/search endpoints discoverable for agents' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-rfc7807-problem-details',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 2 : 0,
-    maxPoints: 2,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'RFC 7807 problem+json error details supported' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-bulk-batch-operations',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'Bulk batch endpoints omitted (bonus)',
-  });
-
-  results.push({
-    checkId: 'api-pagination-cursor',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Cursor-based pagination available on collection endpoints' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-webhook-declarations',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'Webhook events and HMAC signature verification documented' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-openapi-3-1-strict',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'OpenAPI 3.1 dialect compliance confirmed' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-sandbox-environment',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: 'Public testnet sandbox URL omitted (bonus)',
-  });
-
-  results.push({
-    checkId: 'api-sdk-documentation',
-    status: hasOpenApi ? 'pass' : 'na',
-    earnedPoints: hasOpenApi ? 1 : 0,
-    maxPoints: 1,
-    isBonus: !hasOpenApi,
-    message: hasOpenApi ? 'SDK installation and client initialization instructions present' : 'OpenAPI specification not detected (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'api-graphql-schema',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'GraphQL schema omitted (bonus)',
-  });
-
-  results.push({
-    checkId: 'api-grpc-reflection',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'gRPC reflection omitted (bonus)',
-  });
+  record('api-sdk-documentation', hasOpenApi ? 'skip' : 'na', hasOpenApi ? 'SDK documentation not yet probed' : 'OpenAPI specification not detected (excluded from score)');
+  record('api-error-actionability', hasOpenApi || mcpLive ? 'skip' : 'na', 'Error payload actionability not yet probed (bonus)');
+  record('api-bulk-batch-operations', 'na', 'Bulk batch endpoints not probed (bonus)');
+  record('api-sandbox-environment', 'na', 'Public testnet sandbox URL not probed (bonus)');
+  record('api-graphql-schema', 'na', 'GraphQL schema not probed (bonus)');
+  record('api-grpc-reflection', 'na', 'gRPC reflection not probed (bonus)');
 
   // Calculate totals
   let baseEarned = 0;
@@ -1066,15 +845,15 @@ export async function probeUsability(
     mcpServer: {
       live: mcpLive,
       endpoint: mcpEndpoint,
-      isStreamableHttp,
+      isStreamableHttp: streamableHttp,
       toolCount,
       hasServerCard,
-      authRequired,
+      authRequired: authGated,
     },
     authHandbook: {
       found: foundAuth,
       url: authUrl,
-      hasOauthResource: Boolean(prmRes.ok),
+      hasOauthResource: prmOk,
       hasClientCredentials: lowerAuth.includes('client_credentials') || lowerAuth.includes('api_key'),
       stagesCount: detectedStagesCount,
       simulationPassed: getSimulationPassed,

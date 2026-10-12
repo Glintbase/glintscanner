@@ -575,7 +575,7 @@ export default function Home() {
                     Sub-5s Machine Readiness Standard
                   </h2>
                   <p className="text-sm text-white/40 leading-relaxed font-sans">
-                    Deterministic 119-check parallel probe suite, dynamic archetype denominator scaling, and autonomous flight simulation.
+                    Deterministic parallel probe suite, dynamic archetype denominator scaling, and autonomous flight simulation.
                   </p>
                 </div>
 
@@ -589,7 +589,7 @@ export default function Home() {
                       <h3 className="text-sm font-bold text-white uppercase tracking-wider font-mono mt-2">Parallel 4-Layer Probing</h3>
                     </div>
                     <p className="text-xs text-white/45 leading-relaxed font-sans mt-2">
-                      Sub-5-second concurrent probe suite testing 119 discrete checks across Discovery, Access, Usability, and Payments without slow HTML crawler latency.
+                      Concurrent probe suite across Discovery, Access, Usability, and Payments. Only evidence the scanner actually observes earns points.
                     </p>
                   </div>
 

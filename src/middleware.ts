@@ -3,50 +3,96 @@ import type { NextRequest } from 'next/server';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
-let ratelimitInstance: Ratelimit | null = null;
-let leadRatelimitInstance: Ratelimit | null = null;
-
-function getRatelimit(): Ratelimit | null {
-  if (ratelimitInstance) return ratelimitInstance;
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    try {
-      ratelimitInstance = new Ratelimit({
-        redis: Redis.fromEnv(),
-        limiter: Ratelimit.slidingWindow(5, '1 h'),
-        prefix: 'glintscan',
-      });
-    } catch (e) {
-      console.warn('Failed to initialize Upstash Redis ratelimit:', e);
-    }
-  }
-  return ratelimitInstance;
-}
-
-function getLeadRatelimit(): Ratelimit | null {
-  if (leadRatelimitInstance) return leadRatelimitInstance;
-  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
-    try {
-      leadRatelimitInstance = new Ratelimit({
-        redis: Redis.fromEnv(),
-        limiter: Ratelimit.slidingWindow(20, '1 h'),
-        prefix: 'glintlead',
-      });
-    } catch (e) {
-      console.warn('Failed to initialize Upstash Redis lead ratelimit:', e);
-    }
-  }
-  return leadRatelimitInstance;
-}
-
 // Memory fallback settings (configurable via env)
 const MEMORY_LIMIT = Number(process.env.MEMORY_LIMIT) || 10;
 const MEMORY_LEAD_LIMIT = Number(process.env.MEMORY_LEAD_LIMIT) || 20;
 const MEMORY_WINDOW_MS = Number(process.env.MEMORY_WINDOW_MS) || 60 * 60 * 1000;
 
+type Duration = Parameters<typeof Ratelimit.slidingWindow>[1];
+
+interface LimitRule {
+  /** Upstash key prefix, also used as the memory-limiter namespace. */
+  prefix: string;
+  matches: (path: string) => boolean;
+  limit: number;
+  window: Duration;
+  memoryLimit: number;
+  memoryWindowMs: number;
+  message: string;
+  retryAfter: string;
+}
+
+const RULES: LimitRule[] = [
+  {
+    // Scans: expensive crawl + probes.
+    prefix: 'glintscan',
+    matches: (p) => p === '/api/scan' || p.startsWith('/api/scan/'),
+    limit: 5,
+    window: '1 h',
+    memoryLimit: MEMORY_LIMIT,
+    memoryWindowMs: MEMORY_WINDOW_MS,
+    message: 'Rate limit reached. Please try again later.',
+    retryAfter: '3600',
+  },
+  {
+    // Simulations: E2B microVMs + LLM spend.
+    prefix: 'glintsim',
+    matches: (p) => p === '/api/simulate' || p.startsWith('/api/simulate/'),
+    limit: 5,
+    window: '1 h',
+    memoryLimit: MEMORY_LIMIT,
+    memoryWindowMs: MEMORY_WINDOW_MS,
+    message: 'Simulation rate limit reached. Please try again later.',
+    retryAfter: '3600',
+  },
+  {
+    // Hosted MCP: JSON-RPC traffic, some tools run scans and simulations.
+    prefix: 'glintmcp',
+    matches: (p) => p === '/api/mcp' || p.startsWith('/api/mcp/'),
+    limit: 60,
+    window: '1 m',
+    memoryLimit: 60,
+    memoryWindowMs: 60 * 1000,
+    message: 'Rate limit exceeded. Max 60 requests per minute.',
+    retryAfter: '60',
+  },
+  {
+    // Lead capture (email gate) — generous abuse guard
+    prefix: 'glintlead',
+    matches: (p) => p === '/api/leads',
+    limit: 20,
+    window: '1 h',
+    memoryLimit: MEMORY_LEAD_LIMIT,
+    memoryWindowMs: MEMORY_WINDOW_MS,
+    message: 'Too many submissions. Please try again later.',
+    retryAfter: '3600',
+  },
+];
+
+const upstashLimiters = new Map<string, Ratelimit>();
+
+function getUpstashLimiter(rule: LimitRule): Ratelimit | null {
+  const cached = upstashLimiters.get(rule.prefix);
+  if (cached) return cached;
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) return null;
+  try {
+    const limiter = new Ratelimit({
+      redis: Redis.fromEnv(),
+      limiter: Ratelimit.slidingWindow(rule.limit, rule.window),
+      prefix: rule.prefix,
+    });
+    upstashLimiters.set(rule.prefix, limiter);
+    return limiter;
+  } catch (e) {
+    console.warn(`Failed to initialize Upstash Redis ratelimit (${rule.prefix}):`, e);
+    return null;
+  }
+}
+
 // Simple in-memory fallback for local/dev (not multi-instance safe)
 const memoryHits = new Map<string, { count: number; resetAt: number }>();
 
-function memoryLimit(key: string, limit: number = MEMORY_LIMIT): { success: boolean; remaining: number } {
+function memoryLimit(key: string, limit: number, windowMs: number): { success: boolean; remaining: number } {
   const now = Date.now();
 
   // Periodically sweep expired keys if memoryHits gets large to prevent memory growth
@@ -60,7 +106,7 @@ function memoryLimit(key: string, limit: number = MEMORY_LIMIT): { success: bool
 
   let entry = memoryHits.get(key);
   if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + MEMORY_WINDOW_MS };
+    entry = { count: 0, resetAt: now + windowMs };
     memoryHits.set(key, entry);
   }
   entry.count += 1;
@@ -85,135 +131,60 @@ function getIpFromRequest(request: NextRequest) {
   );
 }
 
+function rateLimited(rule: LimitRule, headers: Record<string, string>) {
+  return NextResponse.json(
+    { error: rule.message, code: 'RATE_LIMITED' },
+    { status: 429, headers: { 'Access-Control-Allow-Origin': '*', ...headers } }
+  );
+}
+
+async function applyRule(rule: LimitRule, ip: string): Promise<NextResponse | null> {
+  const upstash = getUpstashLimiter(rule);
+
+  // Prefer Upstash when configured. If Upstash call errors, fall back to memory guard.
+  if (upstash) {
+    try {
+      const { success, remaining, reset } = await upstash.limit(ip);
+      if (success) return null;
+      return rateLimited(rule, {
+        'X-RateLimit-Remaining': String(remaining),
+        'X-RateLimit-Reset': String(reset),
+        'X-RateLimit-Backend': 'upstash',
+        'Retry-After': rule.retryAfter,
+      });
+    } catch (err) {
+      // Log and gracefully degrade to in-memory guard. This avoids hard-failing all traffic
+      // if Upstash has a transient outage.
+      console.error(`Upstash ratelimit error (${rule.prefix}), falling back to memory limiter`, { err });
+      const { success, remaining } = memoryLimit(`fallback:${rule.prefix}:${ip}`, rule.memoryLimit, rule.memoryWindowMs);
+      if (success) return null;
+      return rateLimited(rule, {
+        'X-RateLimit-Remaining': String(remaining),
+        'X-RateLimit-Backend': 'memory-fallback',
+      });
+    }
+  }
+
+  // Without Redis: still apply in-memory guard (per instance only)
+  const { success, remaining } = memoryLimit(`${rule.prefix}:${ip}`, rule.memoryLimit, rule.memoryWindowMs);
+  if (success) return null;
+  return rateLimited(rule, {
+    'X-RateLimit-Remaining': String(remaining),
+    'X-RateLimit-Backend': 'memory',
+  });
+}
+
 export async function middleware(request: NextRequest) {
   try {
+    // CORS preflights are free; don't spend quota on them.
+    if (request.method === 'OPTIONS') return NextResponse.next();
+
     const path = request.nextUrl.pathname;
-    const ratelimit = getRatelimit();
-    const leadRatelimit = getLeadRatelimit();
+    const rule = RULES.find((r) => r.matches(path));
+    if (!rule) return NextResponse.next();
 
-    // Rate limit scan API only
-    if (path === '/api/scan' || path.startsWith('/api/scan/')) {
-      const ip = getIpFromRequest(request);
-
-      // Prefer Upstash when configured. If Upstash call errors, fall back to memory guard.
-      if (ratelimit) {
-        try {
-          const { success, remaining, reset } = await ratelimit.limit(ip);
-          if (!success) {
-            return NextResponse.json(
-              {
-                error: 'Rate limit reached. Please try again later.',
-                code: 'RATE_LIMITED',
-              },
-              {
-                status: 429,
-                headers: {
-                  'X-RateLimit-Remaining': String(remaining),
-                  'X-RateLimit-Reset': String(reset),
-                  'X-RateLimit-Backend': 'upstash',
-                  'Retry-After': '3600',
-                },
-              }
-            );
-          }
-        } catch (err) {
-          // Log and gracefully degrade to in-memory guard. This avoids hard-failing all traffic
-          // if Upstash has a transient outage.
-          console.error('Upstash ratelimit error, falling back to memory limiter', { err });
-
-          const { success, remaining } = memoryLimit(`fallback:${ip}`, MEMORY_LIMIT);
-          if (!success) {
-            return NextResponse.json(
-              {
-                error: 'Rate limit reached (fallback). Please try again later.',
-                code: 'RATE_LIMITED',
-              },
-              {
-                status: 429,
-                headers: {
-                  'X-RateLimit-Remaining': String(remaining),
-                  'X-RateLimit-Backend': 'memory-fallback',
-                },
-              }
-            );
-          }
-        }
-      } else {
-        // Production without Redis: still apply in-memory guard (warn via header)
-        const { success, remaining } = memoryLimit(ip, MEMORY_LIMIT);
-        if (!success) {
-          return NextResponse.json(
-            {
-              error: 'Rate limit reached. Configure Upstash Redis for distributed limits.',
-              code: 'RATE_LIMITED',
-            },
-            {
-              status: 429,
-              headers: {
-                'X-RateLimit-Remaining': String(remaining),
-                'X-RateLimit-Backend': 'memory',
-              },
-            }
-          );
-        }
-      }
-    }
-
-    // Rate limit lead capture (email gate) — generous abuse guard
-    if (path === '/api/leads') {
-      const ip = getIpFromRequest(request);
-
-      if (leadRatelimit) {
-        try {
-          const { success, remaining, reset } = await leadRatelimit.limit(ip);
-          if (!success) {
-            return NextResponse.json(
-              { error: 'Too many submissions. Please try again later.', code: 'RATE_LIMITED' },
-              {
-                status: 429,
-                headers: {
-                  'X-RateLimit-Remaining': String(remaining),
-                  'X-RateLimit-Reset': String(reset),
-                  'X-RateLimit-Backend': 'upstash',
-                  'Retry-After': '3600',
-                },
-              }
-            );
-          }
-        } catch (err) {
-          console.error('Upstash lead ratelimit error, falling back to memory limiter', { err });
-          const { success, remaining } = memoryLimit(`lead:${ip}`, MEMORY_LEAD_LIMIT);
-          if (!success) {
-            return NextResponse.json(
-              { error: 'Too many submissions. Please try again later.', code: 'RATE_LIMITED' },
-              {
-                status: 429,
-                headers: {
-                  'X-RateLimit-Remaining': String(remaining),
-                  'X-RateLimit-Backend': 'memory-fallback',
-                },
-              }
-            );
-          }
-        }
-      } else {
-        const { success, remaining } = memoryLimit(`lead:${ip}`, MEMORY_LEAD_LIMIT);
-        if (!success) {
-          return NextResponse.json(
-            { error: 'Too many submissions. Please try again later.', code: 'RATE_LIMITED' },
-            {
-              status: 429,
-              headers: {
-                'X-RateLimit-Remaining': String(remaining),
-                'X-RateLimit-Backend': 'memory',
-              },
-            }
-          );
-        }
-      }
-    }
-
-    return NextResponse.next();
+    const limited = await applyRule(rule, getIpFromRequest(request));
+    return limited ?? NextResponse.next();
   } catch (globalErr) {
     console.error('Unhandled middleware error, bypassing:', globalErr);
     return NextResponse.next();
@@ -221,5 +192,13 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/api/scan', '/api/scan/:path*', '/api/leads'],
+  matcher: [
+    '/api/scan',
+    '/api/scan/:path*',
+    '/api/simulate',
+    '/api/simulate/:path*',
+    '/api/mcp',
+    '/api/mcp/:path*',
+    '/api/leads',
+  ],
 };

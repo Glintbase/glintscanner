@@ -10,7 +10,7 @@ import { getSessionStatus, getNextSteps } from '../session.js';
 import { discoverEcosystem } from '@scanner/v2/discovery';
 import { classifySurfaces } from '@scanner/v2/classification';
 import { crawlEcosystem } from '@scanner/v2/crawler';
-import { ARS_VERSION } from '@scanner/v2/ars';
+import { ARS_SCORE_VERSION as ARS_VERSION } from '@scanner/version';
 
 export function registerCrawlPages(server: McpServer, session: ScanSession): void {
   server.tool(

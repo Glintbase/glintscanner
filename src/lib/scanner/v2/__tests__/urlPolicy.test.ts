@@ -13,6 +13,12 @@ describe('validateScanUrl (SPEC-01 SSRF)', () => {
     expect(validateScanUrl('http://127.0.0.1/').code).toBe('SSRF_BLOCKED');
     expect(validateScanUrl('http://localhost:3000').code).toBe('SSRF_BLOCKED');
     expect(validateScanUrl('http://[::1]/').code).toBe('SSRF_BLOCKED');
+    // Advanced SSRF notations
+    expect(validateScanUrl('http://0x7f000001/').code).toBe('SSRF_BLOCKED');
+    expect(validateScanUrl('http://2130706433/').code).toBe('SSRF_BLOCKED');
+    expect(validateScanUrl('http://127.1/').code).toBe('SSRF_BLOCKED');
+    expect(validateScanUrl('http://0177.0.0.1/').code).toBe('SSRF_BLOCKED');
+    expect(validateScanUrl('http://[::ffff:127.0.0.1]/').code).toBe('SSRF_BLOCKED');
   });
 
   it('blocks private and link-local ranges', () => {
@@ -22,6 +28,8 @@ describe('validateScanUrl (SPEC-01 SSRF)', () => {
     expect(validateScanUrl('http://169.254.169.254/latest/meta-data/').code).toBe(
       'SSRF_BLOCKED'
     );
+    expect(validateScanUrl('http://instance-data/').code).toBe('SSRF_BLOCKED');
+    expect(validateScanUrl('http://[fe80::1]/').code).toBe('SSRF_BLOCKED');
   });
 
   it('blocks credentials in URL', () => {

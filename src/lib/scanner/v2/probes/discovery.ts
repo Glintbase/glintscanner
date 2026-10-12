@@ -6,6 +6,7 @@
 
 import { fetchResource } from '../fetchResource';
 import { getChecksForLayer } from './registry';
+import { brandFromHostname, registrableDomain } from '../../shared/url';
 import type { CheckResult } from './types';
 
 export interface DiscoveryProbeResult {
@@ -92,7 +93,9 @@ export async function probeDiscovery(
 
   const origin = u.origin;
   const hostname = u.hostname.replace(/^www\./, '');
-  const brandName = hostname.split('.')[0];
+  // docs.stripe.com -> stripe.com / stripe (not "docs")
+  const apexDomain = registrableDomain(hostname);
+  const brandName = brandFromHostname(hostname);
 
   // ========================================================
   // 1. robots.txt AI Policy Analysis (robots-ai-policy-quality)
@@ -113,7 +116,7 @@ export async function probeDiscovery(
     const body = robotsRes.body.toLowerCase();
     const lines = body.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
 
-    const targetBots = ['claudebot', 'gptbot', 'perplexitybot', 'google-extended', 'anthropic-ai', 'cohere-ai'];
+    const targetBots = ['claudebot', 'gptbot', 'perplexitybot', 'google-extended', 'anthropic-ai', 'cohere-ai', 'oai-searchbot'];
     const botRules = new Map<string, { allow: boolean; disallowRoot: boolean }>();
 
     let currentAgents: string[] = [];
@@ -192,7 +195,6 @@ export async function probeDiscovery(
           ? `robots.txt blocks AI answer bots (${robotsPolicy.botsBlocked.join(', ')})${robotsPolicy.botsAllowed.length > 0 ? ` while allowing ${robotsPolicy.botsAllowed.join(', ')}` : ''}`
           : 'robots.txt found but lacks explicit AI crawler permissions')
         : 'No robots.txt detected; explicit AI crawler permissions recommended'),
-    evidence: { robotsPolicy },
     remediation: !robotsPassed ? {
       title: 'Update robots.txt for AI Answer Engines',
       file: 'public/robots.txt',
@@ -201,9 +203,24 @@ export async function probeDiscovery(
         '+ Allow: /',
         '+ User-agent: GPTBot',
         '+ Allow: /',
+        '+ User-agent: OAI-SearchBot',
+        '+ Allow: /',
       ],
       fixCommand: 'glintbase remediate robots.txt',
     } : undefined,
+  });
+
+  // robots-oai-searchbot (2 pts bonus)
+  const oaiSearchBotAllowed = !robotsPolicy.botsBlocked.includes('oai-searchbot') && (robotsPolicy.botsAllowed.includes('oai-searchbot') || robotsPassed);
+  results.push({
+    checkId: 'robots-oai-searchbot',
+    status: oaiSearchBotAllowed ? 'pass' : 'warn',
+    earnedPoints: oaiSearchBotAllowed ? 2 : 0,
+    maxPoints: 2,
+    isBonus: true,
+    message: oaiSearchBotAllowed
+      ? 'robots.txt explicitly permits or does not restrict OAI-SearchBot for search-indexed agent answers'
+      : 'OAI-SearchBot is blocked or restricted in robots.txt (preventing ChatGPT search answers)',
   });
 
   // ========================================================
@@ -354,8 +371,8 @@ export async function probeDiscovery(
   // 4. Wikidata P856 Official Website Claim (wikipedia-presence)
   // Strict 1500ms timeout with local caching & resilient fallback
   // ========================================================
-  let hasWikiP856 = false;
-  if (!localContext?.isLocalCodebase && hostname !== 'localhost') {
+  const lookupWikidata = async (): Promise<boolean> => {
+    if (localContext?.isLocalCodebase || hostname === 'localhost') return false;
     try {
       const wikiQueryUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(brandName)}&language=en&format=json`;
       const wikiSearch = await resilientFetch(wikiQueryUrl, 1500);
@@ -373,9 +390,8 @@ export async function probeDiscovery(
               if (Array.isArray(p856Claims)) {
                 for (const c of p856Claims) {
                   const val = c.mainsnak?.datavalue?.value;
-                  if (typeof val === 'string' && val.toLowerCase().includes(hostname)) {
-                    hasWikiP856 = true;
-                    break;
+                  if (typeof val === 'string' && val.toLowerCase().includes(apexDomain)) {
+                    return true;
                   }
                 }
               }
@@ -384,9 +400,31 @@ export async function probeDiscovery(
         }
       }
     } catch {
-      hasWikiP856 = false;
+      /* treat lookup failure as unverified */
     }
-  }
+    return false;
+  };
+
+  // npm package must exist under the brand name AND point back at the brand's domain or GitHub org,
+  // otherwise any unrelated package that happens to share the name would pass.
+  const lookupNpm = async (): Promise<boolean> => {
+    if (localContext?.packageName) return true;
+    if (localContext?.isLocalCodebase || hostname === 'localhost') return false;
+    try {
+      const npmRes = await resilientFetch(`https://registry.npmjs.org/${encodeURIComponent(brandName)}/latest`, 1500);
+      if (!npmRes.ok || !npmRes.body) return false;
+      const pkg = JSON.parse(npmRes.body);
+      if (!pkg?.name) return false;
+      const refs = [pkg.homepage, pkg.repository?.url, typeof pkg.repository === 'string' ? pkg.repository : '', pkg.bugs?.url]
+        .filter((v): v is string => typeof v === 'string')
+        .map((v) => v.toLowerCase());
+      return refs.some((r) => r.includes(apexDomain) || new RegExp(`github\\.com[/:]${brandName}[-/]`, 'i').test(r));
+    } catch {
+      return false;
+    }
+  };
+
+  const [hasWikiP856, hasNpmPackage] = await Promise.all([lookupWikidata(), lookupNpm()]);
 
   results.push({
     checkId: 'wikipedia-presence',
@@ -395,7 +433,7 @@ export async function probeDiscovery(
     maxPoints: 4,
     isBonus: true,
     message: hasWikiP856
-      ? `Wikidata official website claim (P856) confirmed mapped to ${hostname}`
+      ? `Wikidata official website claim (P856) confirmed mapped to ${apexDomain}`
       : 'Wikidata P856 official website claim unverified (bonus skipped)',
   });
 
@@ -403,21 +441,6 @@ export async function probeDiscovery(
   // 5. Official SDK Package (npm-sdk-package)
   // Check npm registry API with 1500ms timeout or local package.json
   // ========================================================
-  let hasNpmPackage = Boolean(localContext?.packageName);
-  if (!hasNpmPackage && !localContext?.isLocalCodebase && hostname !== 'localhost') {
-    try {
-      const npmRes = await resilientFetch(`https://registry.npmjs.org/${encodeURIComponent(brandName)}`, 1500);
-      if (npmRes.ok && npmRes.body) {
-        const pkgData = JSON.parse(npmRes.body);
-        if (pkgData && !pkgData.error && pkgData.name) {
-          hasNpmPackage = true;
-        }
-      }
-    } catch {
-      hasNpmPackage = false;
-    }
-  }
-
   results.push({
     checkId: 'npm-sdk-package',
     status: hasNpmPackage ? 'pass' : 'warn',
@@ -425,8 +448,8 @@ export async function probeDiscovery(
     maxPoints: 1,
     isBonus: false,
     message: hasNpmPackage
-      ? `Official SDK/CLI package published under ${brandName}`
-      : `No official SDK package found under scope ${brandName}`,
+      ? `Official SDK/CLI package "${localContext?.packageName || brandName}" links back to ${apexDomain}`
+      : `No npm package named "${brandName}" that links back to ${apexDomain}`,
   });
 
   // ========================================================
@@ -440,13 +463,16 @@ export async function probeDiscovery(
 
   results.push({
     checkId: 'agent-rules-repo',
-    status: hasRules ? 'pass' : 'warn',
+    // Rules files live in a repository; a remote URL scan cannot see them.
+    status: hasRules ? 'pass' : localContext?.isLocalCodebase ? 'warn' : 'skip',
     earnedPoints: hasRules ? 1 : 0,
     maxPoints: 1,
     isBonus: false,
     message: hasRules
       ? 'Repository includes explicit agent guidelines (.claude/, .cursor/, or .windsurf/)'
-      : 'Missing autonomous agent guideline rules (.claude/rules or .cursorrules)',
+      : localContext?.isLocalCodebase
+      ? 'Missing autonomous agent guideline rules (.claude/rules or .cursorrules)'
+      : 'Agent rules files are only checked when scanning a local codebase',
   });
 
   // ========================================================
@@ -510,11 +536,11 @@ export async function probeDiscovery(
   // skills-sh-listed
   results.push({
     checkId: 'skills-sh-listed',
-    status: 'warn',
+    status: 'na',
     earnedPoints: 0,
     maxPoints: 1,
     isBonus: false,
-    message: 'Not listed in skills.sh verified skills registry',
+    message: 'skills.sh registry listing not yet probed (excluded from score)',
   });
 
   // agentic-search-usecase (beta, held at N/A per spec)

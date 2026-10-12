@@ -17,8 +17,8 @@ import { resolveProvider } from '../providers.js';
 export const scanCommand = new Command('scan')
   .description('Run an agent-readiness scan against a URL')
   .argument('<url>', 'URL to scan (landing page, docs root, or API base)')
-  .option('--profile <profile>', 'Scan depth: quick | deep', 'quick')
-  .option('--agent', 'Use LLM agent harness (requires provider config)')
+  .option('--profile <profile>', 'Scan depth: quick | deep (not yet used by the ARS 3 probe engine)', 'quick')
+  .option('--agent', 'Use LLM agent harness (not yet used by the ARS 3 probe engine)')
   .option('--provider <name>', 'LLM provider: openai | anthropic | google | groq | ollama | openrouter')
   .option('--model <name>', 'Model name override')
   .option('--base-url <url>', 'Custom endpoint (Ollama, vLLM, LM Studio)')
@@ -26,7 +26,7 @@ export const scanCommand = new Command('scan')
   .option('--markdown', 'Output Markdown report')
   .option('--fail-under <n>', 'Exit 3 if score below threshold', parseInt)
   .option('--surfaces <csv>', 'Comma-separated surface types to check')
-  .option('--max-pages <n>', 'Crawl budget override', parseInt)
+  .option('--max-pages <n>', 'Crawl budget override (not yet used by the ARS 3 probe engine)', parseInt)
   .option('--save', 'Save result to .glintbase/results/')
   .option('--no-color', 'Disable colored output')
   .option('-q, --quiet', 'Minimal output')
@@ -56,6 +56,11 @@ export const scanCommand = new Command('scan')
       }
     }
 
+    // The ARS 3 engine runs deterministic HTTP probes only; say so instead of silently ignoring flags.
+    if (!opts.quiet && !opts.json && (opts.agent || opts.maxPages || config.profile === 'deep')) {
+      console.log(pc.yellow('  Note: --agent, --profile deep and --max-pages are not used by the ARS 3 probe engine yet; running the standard probe scan.\n'));
+    }
+
     // Build scan options
     const enabledSurfaces = opts.surfaces ? opts.surfaces.split(',').map((s: string) => s.trim()) : undefined;
     const scanOptions: any = {
@@ -67,14 +72,10 @@ export const scanCommand = new Command('scan')
     };
 
     // Progress tracking
+    // Mirrors the progress events runScan actually emits.
     const steps = [
       { id: 'validation', label: 'Validating URL policy' },
-      { id: 'discovery', label: 'Discovering surfaces' },
-      { id: 'classification', label: 'Classifying surfaces' },
-      { id: 'framework', label: 'Detecting framework' },
-      { id: 'crawl', label: 'Crawling ecosystem' },
-      { id: 'graph', label: 'Building knowledge graph' },
-      { id: 'journeys', label: 'Running agent journeys' },
+      { id: 'probes', label: 'Running ARS probes (discovery, access, usability, payments)' },
       { id: 'scoring', label: 'Computing ARS' },
     ];
 
@@ -123,11 +124,14 @@ export const scanCommand = new Command('scan')
         printScoreBox(result.score, result.score_version);
         printDimensions(result.dimensions);
 
-        // Journey summary
-        const passed = result.journeys.traces.filter((t) => t.success).length;
-        const total = result.journeys.traces.length;
-        console.log(pc.dim(`\n  Journeys: ${passed}/${total} passed · Avg hops: ${result.journeys.avgHopCount}`));
-        console.log(pc.dim(`  Duration: ${result.duration_ms}ms · Framework: ${result.framework}`));
+        const evidence = result.scorecard?.evidence;
+        if (evidence) {
+          console.log(pc.dim(`\n  Measured ${evidence.checksEvaluated} of ${evidence.checksRegistered} checks · ${Math.round(evidence.baseCoverage * 100)}% of scored points verified`));
+          if (evidence.lowConfidenceLayers.length) {
+            console.log(pc.yellow(`  Low evidence: ${evidence.lowConfidenceLayers.join(', ')} (under half of their scored checks could be verified)`));
+          }
+        }
+        console.log(pc.dim(`\n  Duration: ${result.duration_ms}ms · Framework: ${result.framework}`));
         console.log(pc.dim(`\n  Run \`glintbase scan ${url} --markdown\` for full report.\n`));
       } else {
         // Quiet mode: just score

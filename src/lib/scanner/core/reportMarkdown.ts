@@ -16,6 +16,15 @@ export function formatScanMarkdown(result: ScanResult): string {
   lines.push(`**score_version:** \`${result.score_version}\``);
   lines.push(`**Duration:** ${result.duration_ms}ms`);
   lines.push(`**Framework:** ${result.framework}`);
+  const evidence = result.scorecard?.evidence;
+  if (evidence) {
+    lines.push(
+      `**Evidence:** ${evidence.checksEvaluated} of ${evidence.checksRegistered} checks measured · ${Math.round(evidence.baseCoverage * 100)}% of scored points verified`
+    );
+    if (evidence.lowConfidenceLayers.length) {
+      lines.push(`**Low-evidence layers:** ${evidence.lowConfidenceLayers.join(', ')} (less than half of their scored checks could be verified)`);
+    }
+  }
   lines.push('');
   lines.push(`## Surfaces`);
   lines.push('');

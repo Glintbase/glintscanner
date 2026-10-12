@@ -1,130 +1,83 @@
 /**
  * MCP Tool: score_readiness
- * Calculate the composite Agent Readiness Score (ARS 1.0).
- * Auto-runs any missing pipeline stages.
+ * Calculate the Agent Readiness Score with the same ARS 3.x probe engine used by
+ * scan.glintbase.dev and the glintbase CLI, so every surface reports the same number.
  */
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ScanSession } from '../session.js';
 import { resetSession, getSessionStatus, getNextSteps } from '../session.js';
-import { discoverEcosystem } from '@scanner/v2/discovery';
-import { classifySurfaces } from '@scanner/v2/classification';
-import { crawlEcosystem } from '@scanner/v2/crawler';
-import { detectEcosystemFramework } from '@scanner/v2/framework';
-import { buildContextGraph } from '@scanner/v2/graph';
-import { simulateAgentJourneys } from '@scanner/v2/journey';
-import { calculateARS, ARS_VERSION } from '@scanner/v2/ars';
+import { runScan } from '@scanner/core/runScan';
 import { scoreBandLabel } from '@scanner/shared/scoreBand';
 import { cacheSession } from '../cache.js';
 
 export function registerScoreReadiness(server: McpServer, session: ScanSession): void {
   server.tool(
     'score_readiness',
-    `Calculate the composite Agent Readiness Score (ARS 1.0). Auto-runs any missing pipeline stages (discovery, crawl, graph, journeys) if not already completed. Returns the weighted score (0-100), band classification, per-dimension breakdown with observations, and score_version. This is the definitive readiness metric. Provide a url if starting fresh.`,
+    `Calculate the Agent Readiness Score (ARS 3.x) for a URL using the same probe engine as scan.glintbase.dev and the glintbase CLI. Returns the score (0-100), grade, archetype, per-layer breakdown (discovery, access, usability, payments) and the top remediations. Provide a url, or call discover_surfaces first.`,
     {
-      url: z.string().optional().describe('URL to scan (required if discover_surfaces has not been called)'),
-      profile: z.enum(['quick', 'deep']).optional().describe('Scan profile (default: quick)'),
+      url: z.string().optional().describe('URL to scan (defaults to the URL from discover_surfaces)'),
     },
-    async ({ url, profile }) => {
+    async ({ url }) => {
       try {
-        const started = Date.now();
-        const stagesRun: string[] = [];
-        const scanProfile = profile || 'quick';
-
-        // Stage 1: Discovery
-        if (!session.surfaces) {
-          const targetUrl = url || session.url;
-          if (!targetUrl) {
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify({
-                error: 'No URL available. Provide a url parameter or call discover_surfaces first.',
-              }) }],
-              isError: true,
-            };
-          }
-          if (session.url !== targetUrl) resetSession(session, targetUrl);
-          const report = await discoverEcosystem(targetUrl, () => {});
-          session.surfaces = report.surfaces;
-          stagesRun.push('discovery');
+        const targetUrl = url || session.url;
+        if (!targetUrl) {
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify({
+              error: 'No URL available. Provide a url parameter or call discover_surfaces first.',
+            }) }],
+            isError: true,
+          };
         }
+        // A different URL must never reuse the previous target's results.
+        if (session.url !== targetUrl) resetSession(session, targetUrl);
 
-        // Stage 2: Classification
-        if (stagesRun.includes('discovery')) {
-          session.surfaces = await classifySurfaces(session.surfaces!, () => {});
-          stagesRun.push('classification');
-        }
+        const result = await runScan({ url: targetUrl });
 
-        // Stage 3: Framework detection
-        if (!session.framework && session.surfaces) {
-          session.framework = await detectEcosystemFramework(session.surfaces, () => {});
-          stagesRun.push('framework');
-        }
-
-        // Stage 4: Crawl
-        if (!session.pages) {
-          const pages = await crawlEcosystem(session.surfaces!, () => {}, { seedUrl: session.url!, profile: scanProfile });
-          session.pages = pages.map(({ html, ...rest }) => rest);
-          stagesRun.push('crawl');
-        }
-
-        // Stage 5: Graph
-        if (!session.graph) {
-          session.graph = await buildContextGraph(session.surfaces!, session.pages!, () => {});
-          stagesRun.push('graph');
-        }
-
-        // Stage 6: Journeys
-        if (!session.journeys) {
-          session.journeys = await simulateAgentJourneys(session.graph!, () => {});
-          stagesRun.push('journeys');
-        }
-
-        // Stage 7: Score
-        const ars = calculateARS({
-          surfaces: session.surfaces!,
-          pages: session.pages!,
-          graph: session.graph!,
-          journeys: session.journeys!,
-        });
-
+        session.surfaces = session.surfaces ?? result.surfaces;
+        session.framework = session.framework ?? result.framework;
         session.score = {
-          score: ars.score,
-          version: ars.score_version,
-          dimensions: ars.dimensions,
+          score: result.score,
+          version: result.score_version,
+          dimensions: result.dimensions,
         };
-        stagesRun.push('scoring');
 
         // Persist to file cache for fast re-runs
         cacheSession(session);
 
-        const result = {
-          url: session.url,
-          score: ars.score,
-          band: scoreBandLabel(ars.score),
-          scoreVersion: ars.score_version,
-          framework: session.framework,
-          dimensions: ars.dimensions.map((d) => ({
+        const scorecard = result.scorecard;
+        const payload = {
+          url: result.url,
+          score: result.score,
+          grade: result.grade,
+          gradeLabel: result.gradeLabel,
+          band: scoreBandLabel(result.score),
+          archetype: result.archetype?.archetype,
+          scoreVersion: result.score_version,
+          framework: result.framework,
+          layers: result.dimensions.map((d) => ({
             name: d.name,
             score: d.score,
             maxScore: d.maxScore,
-            description: d.description,
             observations: d.observations,
           })),
-          journeySummary: {
-            completionRate: session.journeys!.overallCompletionRate,
-            avgHopCount: session.journeys!.avgHopCount,
-            highRiskJourneys: session.journeys!.highRiskJourneys,
-          },
-          durationMs: Date.now() - started,
-          pipelineStagesRun: stagesRun,
-          score_version: ARS_VERSION,
+          pillars: scorecard?.pillars,
+          topRemediations: (scorecard?.remediations || []).slice(0, 8).map((r) => ({
+            id: r.id,
+            severity: r.severity,
+            title: r.title,
+            fixCommand: r.fixCommand,
+            targetFile: r.targetFile,
+          })),
+          durationMs: result.duration_ms,
+          score_version: result.score_version,
           session_status: getSessionStatus(session),
           next_steps: getNextSteps(session),
         };
 
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
         };
       } catch (err: any) {
         return {

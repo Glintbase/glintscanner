@@ -12,8 +12,11 @@ import { probeAccess, AccessProbeResult } from './access';
 import { probeUsability, UsabilityProbeResult } from './usability';
 import { probePayments, PaymentsProbeResult } from './payments';
 import { getArsGrade } from '../../shared/scoreBand';
+import { getAllChecks, getCheckById, getChecksForLayer } from './registry';
+import { ARS_SCORE_VERSION } from '../../version';
 import type {
   Ars3Scorecard,
+  ScanEvidenceSummary,
   CheckResult,
   RemediationSummary,
   LayerId,
@@ -30,7 +33,7 @@ export type {
 
 export interface Ars2Scorecard {
   score: number;
-  version: 'ars-2.0.0' | 'ars-3.0.0';
+  version: string;
   grade?: string;
   archetype: ArchetypeProfile;
   earnedPoints: number;
@@ -91,10 +94,51 @@ export interface RunProbesOptions {
   onLayerComplete?: (layerId: LayerId, summary: LayerScoreSummary) => void;
 }
 
+/**
+ * The registry is the single source of truth for each check's points and bonus status.
+ * Probes only decide the status; earned points are the full registry value on pass, else 0
+ * (no partial credit for warn).
+ */
+function alignWithRegistry<T extends { checks: CheckResult[] }>(probe: T): T {
+  for (const check of probe.checks) {
+    const def = getCheckById(check.checkId);
+    if (!def) continue;
+    check.maxPoints = def.points;
+    check.isBonus = def.isBonus;
+    check.earnedPoints = check.status === 'pass' ? def.points : 0;
+  }
+  return probe;
+}
+
+/** Below this share of verified base points a layer is flagged lowConfidence. */
+export const MIN_LAYER_COVERAGE = 0.5;
+
+function layerCoverage(layer: LayerId, checks: CheckResult[]): { verified: number; registered: number } {
+  const registered = getChecksForLayer(layer).filter((d) => !d.isBonus).reduce((sum, d) => sum + d.points, 0);
+  const verified = checks
+    .filter((c) => !c.isBonus && c.status !== 'na' && c.status !== 'skip')
+    .reduce((sum, c) => sum + c.maxPoints, 0);
+  return { verified, registered };
+}
+
 export async function runArs3Probes(
   url: string,
   options: RunProbesOptions = {}
 ): Promise<Ars3Scorecard> {
+  return (await runArs3ProbesDetailed(url, options)).scorecard;
+}
+
+/** Same as runArs3Probes, but also returns each layer's raw probe output. */
+export async function runArs3ProbesDetailed(
+  url: string,
+  options: RunProbesOptions = {}
+): Promise<{
+  scorecard: Ars3Scorecard;
+  discovery: DiscoveryProbeResult;
+  access: AccessProbeResult;
+  usability: UsabilityProbeResult;
+  payments: PaymentsProbeResult;
+}> {
   const spec = options.spec || 'ars';
   const kind = options.kind || 'auto';
 
@@ -124,6 +168,8 @@ export async function runArs3Probes(
     applicable: boolean = true
   ): LayerScoreSummary => {
     const layerBonus = layer === 'payments' ? 0 : checks.filter(c => c.isBonus && c.status === 'pass').reduce((sum, c) => sum + c.earnedPoints, 0);
+    const { verified, registered } = layerCoverage(layer, checks);
+    const coverage = registered > 0 ? Math.min(1, verified / registered) : 1;
     return {
       layer,
       name,
@@ -133,6 +179,8 @@ export async function runArs3Probes(
       baseMax,
       statusText: baseMax > 0 && layerBase >= Math.round(baseMax * 0.75) ? 'Optimal' : baseMax > 0 && layerBase >= Math.round(baseMax * 0.4) ? 'Needs attention' : 'Remediate',
       applicable,
+      coverage,
+      lowConfidence: applicable && baseMax > 0 && coverage < MIN_LAYER_COVERAGE,
       checks,
     };
   };
@@ -149,14 +197,14 @@ export async function runArs3Probes(
   };
 
   // 2. Execute 4 Layer probes in parallel with real-time layer callbacks
-  const discoveryPromise = probeDiscovery(url, baseLocalContext).then((d) => {
+  const discoveryPromise = probeDiscovery(url, baseLocalContext).then(alignWithRegistry).then((d) => {
     const l1Base = computeLayerBase(d.checks, archetype.layerWeights.discovery);
     const s = makeLayerSummary('discovery', 'Layer 1: Discovery', l1Base, d.checks, archetype.layerWeights.discovery);
     options.onLayerComplete?.('discovery', s);
     return d;
   });
 
-  const accessPromise = probeAccess(url, baseLocalContext).then((a) => {
+  const accessPromise = probeAccess(url, baseLocalContext).then(alignWithRegistry).then((a) => {
     const l2Base = computeLayerBase(a.checks, archetype.layerWeights.access);
     const s = makeLayerSummary('access', 'Layer 2: Access & Understanding', l2Base, a.checks, archetype.layerWeights.access);
     options.onLayerComplete?.('access', s);
@@ -167,8 +215,11 @@ export async function runArs3Probes(
     const sharedContext = {
       ...baseLocalContext,
       hasOpenApiFile: Boolean(baseLocalContext.hasOpenApiFile || a.openapi?.found),
+      openApiSpec: a.openapi?.spec,
     };
-    const u = await probeUsability(url, { kind: kind === 'docs' ? 'docs' : 'product', localContext: sharedContext });
+    // Explicit kind wins; otherwise docs/knowledge-base sites get the docs MCP rubric.
+    const usabilityKind = kind === 'docs' || (kind === 'auto' && archetype.canonicalArchetype === 'docs_kb') ? 'docs' : 'product';
+    const u = alignWithRegistry(await probeUsability(url, { kind: usabilityKind, localContext: sharedContext }));
     const l3Base = archetype.layerWeights.usability > 0 ? computeLayerBase(u.checks, archetype.layerWeights.usability) : 0;
     const s = makeLayerSummary('usability', 'Layer 3: Usability & Interoperability', l3Base, u.checks, archetype.layerWeights.usability, archetype.layerWeights.usability > 0);
     options.onLayerComplete?.('usability', s);
@@ -257,8 +308,38 @@ export async function runArs3Probes(
     }
   }
 
-  return {
-    version: 'ars-3.0.0',
+  // Compute ARS 3.1 Decoupled Pillars
+  const discBase = layerSummaries.discovery.baseEarned + layerSummaries.access.baseEarned;
+  const discBonus = layerSummaries.discovery.bonusEarned + layerSummaries.access.bonusEarned;
+  const discMax = layerSummaries.discovery.baseMax + layerSummaries.access.baseMax;
+  const discScore = discMax > 0 ? Math.min(100, Math.round(((discBase + discBonus) / (discMax + discBonus)) * 100)) : 0;
+  const discGrade = getArsGrade(discScore).grade;
+
+  const runBase = layerSummaries.usability.baseEarned + (layerSummaries.payments.applicable ? layerSummaries.payments.baseEarned : 0);
+  const runBonus = layerSummaries.usability.bonusEarned + (layerSummaries.payments.applicable ? layerSummaries.payments.bonusEarned : 0);
+  const runMax = layerSummaries.usability.baseMax + (layerSummaries.payments.applicable ? layerSummaries.payments.baseMax : 0);
+  const runScore = runMax > 0 ? Math.min(100, Math.round(((runBase + runBonus) / (runMax + runBonus)) * 100)) : 0;
+  const runGrade = getArsGrade(runScore).grade;
+
+  const scoredLayers = (Object.keys(layerSummaries) as LayerId[]).filter(
+    (id) => layerSummaries[id].applicable && layerSummaries[id].baseMax > 0 && id !== 'payments'
+  );
+  const coverageTotals = scoredLayers.reduce(
+    (acc, id) => {
+      const { verified, registered } = layerCoverage(id, layerSummaries[id].checks);
+      return { verified: acc.verified + verified, registered: acc.registered + registered };
+    },
+    { verified: 0, registered: 0 }
+  );
+  const evidence: ScanEvidenceSummary = {
+    checksRegistered: getAllChecks().length,
+    checksEvaluated: allResults.filter((c) => c.status === 'pass' || c.status === 'warn' || c.status === 'fail').length,
+    baseCoverage: coverageTotals.registered > 0 ? Math.min(1, coverageTotals.verified / coverageTotals.registered) : 0,
+    lowConfidenceLayers: scoredLayers.filter((id) => layerSummaries[id].lowConfidence),
+  };
+
+  const scorecard: Ars3Scorecard = {
+    version: ARS_SCORE_VERSION,
     spec,
     score,
     grade: gradeInfo.grade,
@@ -269,10 +350,27 @@ export async function runArs3Probes(
     totalEarned,
     baseDenominator,
     activeDenominator,
+    pillars: {
+      discoverability: {
+        score: discScore,
+        grade: discGrade,
+        description:
+          'Measures how easily autonomous agents find, parse, and ingest documentation, sitemaps, and machine surfaces without hallucination.',
+      },
+      runtimeErgonomics: {
+        score: runScore,
+        grade: runGrade,
+        description:
+          'Measures live tool reliability, in-channel error diagnostics, protocol compliance (MCP 2026-07-28), and mutating idempotency.',
+      },
+    },
     layers: layerSummaries,
     results: allResults,
     remediations,
+    evidence,
   };
+
+  return { scorecard, discovery, access, usability, payments };
 }
 
 /**
@@ -282,11 +380,13 @@ export async function runArs2Probes(
   url: string,
   archetypeInput?: Partial<ArchetypeInput>
 ): Promise<Ars2Scorecard> {
-  const scorecard = await runArs3Probes(url, { archetypeInput });
+  const { scorecard, discovery, access, usability, payments } = await runArs3ProbesDetailed(url, { archetypeInput });
+  // Drop the parsed OpenAPI document: it can be megabytes and callers only need found/url.
+  const { spec: _spec, ...openapi } = access.openapi;
 
   return {
     score: scorecard.score,
-    version: 'ars-2.0.0',
+    version: scorecard.version,
     grade: scorecard.grade,
     archetype: scorecard.archetype,
     earnedPoints: scorecard.totalEarned,
@@ -301,9 +401,9 @@ export async function runArs2Probes(
           baseEarned: scorecard.layers.discovery.baseEarned,
           bonusEarned: scorecard.layers.discovery.bonusEarned,
           checks: scorecard.layers.discovery.checks,
-          details: [],
-          robotsPolicy: { found: true, aiFriendly: true, botsAllowed: [], botsBlocked: [], hasContentSignals: false },
-          agentRegistries: { foundArd: true, foundAiCatalog: false, foundAgentCard: false },
+          details: discovery.details,
+          robotsPolicy: discovery.robotsPolicy,
+          agentRegistries: discovery.agentRegistries,
         },
       },
       access: {
@@ -315,11 +415,11 @@ export async function runArs2Probes(
           baseEarned: scorecard.layers.access.baseEarned,
           bonusEarned: scorecard.layers.access.bonusEarned,
           checks: scorecard.layers.access.checks,
-          details: [],
-          markdownNegotiation: { supported: true, hasVaryAccept: true },
-          antiSpa404: { passed: true, isSoft200: false },
-          zeroJsReadability: { passed: true, charCount: 1000, textDensityPercent: 20 },
-          openapi: { found: true },
+          details: access.details,
+          markdownNegotiation: access.markdownNegotiation,
+          antiSpa404: access.antiSpa404,
+          zeroJsReadability: access.zeroJsReadability,
+          openapi,
         },
       },
       usability: {
@@ -331,10 +431,10 @@ export async function runArs2Probes(
           baseEarned: scorecard.layers.usability.baseEarned,
           bonusEarned: scorecard.layers.usability.bonusEarned,
           checks: scorecard.layers.usability.checks,
-          details: [],
-          mcpServer: { live: true, endpoint: `${url.replace(/\/$/, '')}/api/mcp`, isStreamableHttp: true, toolCount: 3, hasServerCard: true },
-          authHandbook: { found: true, url: `${url.replace(/\/$/, '')}/auth.md`, hasOauthResource: true, hasClientCredentials: true, stagesCount: 8, simulationPassed: true },
-          webmcp: { detected: false, hasModelContext: false, hasFormAttributes: false },
+          details: usability.details,
+          mcpServer: usability.mcpServer,
+          authHandbook: usability.authHandbook,
+          webmcp: usability.webmcp,
         },
       },
       payments: {
@@ -348,11 +448,11 @@ export async function runArs2Probes(
           bonusEarned: scorecard.layers.payments.bonusEarned,
           isApplicable: scorecard.layers.payments.applicable,
           checks: scorecard.layers.payments.checks,
-          details: [],
-          x402: { supported: false, headerPresent: false },
-          mpp: { supported: false },
-          ucp: { found: false },
-          acp: { supported: false },
+          details: payments.details,
+          x402: payments.x402,
+          mpp: payments.mpp,
+          ucp: payments.ucp,
+          acp: payments.acp,
         },
       },
     },

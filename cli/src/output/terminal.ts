@@ -1,8 +1,9 @@
 /**
- * Modern Terminal UI for Glintbase CLI (ARS 2.0)
+ * Modern Terminal UI for Glintbase CLI (ARS 3.x)
  * Inspired by Claude Code and OpenCode (hairline typography, HUD scorecard, step tree, remediation diff cards).
  */
 
+import { ARS_LABEL, ARS_SCORE_VERSION } from '@scanner/version';
 import pc from 'picocolors';
 import type { ResolvedConfig } from '../config.js';
 import { scoreBandLabel } from '@scanner/shared/scoreBand';
@@ -81,7 +82,7 @@ export function printStepTreeFooter(durationMs: number): void {
 
 export function printScorecardHud(
   score: number,
-  version = 'ars-2.0.0',
+  version: string = ARS_SCORE_VERSION,
   layers?: Array<{ name: string; score: number; maxScore: number; statusText?: string; applicable?: boolean }>
 ): void {
   const band = scoreBandLabel(score);
@@ -89,7 +90,7 @@ export function printScorecardHud(
   const scoreStr = `${score} / 100`;
   const width = 78;
 
-  console.log(pc.cyan(`╭─  ${pc.bold('AGENT READINESS SCORECARD (ARS 2.0)')}  ${'─'.repeat(width - 42)}╮`));
+  console.log(pc.cyan(`╭─  ${pc.bold(`AGENT READINESS SCORECARD (${ARS_LABEL})`)}  ${'─'.repeat(width - 42)}╮`));
   console.log(pc.cyan('│') + ' '.repeat(width - 2) + pc.cyan('│'));
   console.log(
     pc.cyan('│') +

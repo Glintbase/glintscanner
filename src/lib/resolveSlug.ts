@@ -1,4 +1,5 @@
 import { createAdminSupabaseClient } from "@/lib/supabase/service";
+import { isArs3Version, isCurrentArsVersion } from '@/lib/scanner/version';
 import { unstable_noStore as noStore } from 'next/cache';
 import { deriveCompany, deriveCompanySlug } from '@/lib/scanner/shared';
 
@@ -37,12 +38,16 @@ function attachGraph(match: any, nodes: any[] | null, edges: any[] | null) {
 
 export function pickBestScan(candidates: any[]): any {
   if (!candidates || candidates.length === 0) return null;
-  // Priority 1: ARS 3.0 scan explicitly marked as latest
-  const latestArs3 = candidates.find((r) => r.score_version === 'ars-3.0.0' && r.is_latest === true);
-  if (latestArs3) return latestArs3;
+  // Priority 1: current scoring model, marked latest, then any (ordered by created_at DESC)
+  const latestCurrent = candidates.find((r) => isCurrentArsVersion(r.score_version) && r.is_latest === true);
+  if (latestCurrent) return latestCurrent;
+  const anyCurrent = candidates.find((r) => isCurrentArsVersion(r.score_version));
+  if (anyCurrent) return anyCurrent;
 
-  // Priority 2: Any ARS 3.0 scan (ordered by created_at DESC)
-  const anyArs3 = candidates.find((r) => r.score_version === 'ars-3.0.0');
+  // Priority 2: any ARS 3.x scan (3.0 / 3.1), marked latest first
+  const latestArs3 = candidates.find((r) => isArs3Version(r.score_version) && r.is_latest === true);
+  if (latestArs3) return latestArs3;
+  const anyArs3 = candidates.find((r) => isArs3Version(r.score_version));
   if (anyArs3) return anyArs3;
 
   // Priority 3: Scan marked as is_latest

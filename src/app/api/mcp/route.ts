@@ -1,5 +1,7 @@
 import { NextRequest } from 'next/server';
 import { runArs3Probes } from '@/lib/scanner/v2/probes';
+import { getAllChecks } from '@/lib/scanner/v2/probes/registry';
+import { ARS_LABEL, ARS_SCORE_VERSION, GLINTBASE_VERSION } from '@/lib/scanner/version';
 import { E2BRunner } from '@/lib/scanner/simulator/e2bRunner';
 import { generateJourneyTreeSvg, svgToBase64, generateJourneyMermaid, generateFlightHud } from '@/lib/scanner/simulator/journeyTreeSvg';
 import { deflateSync } from 'node:zlib';
@@ -26,6 +28,16 @@ function cleanupStaleSessions() {
       activeSessions.delete(id);
     }
   }
+}
+
+// Bearer tokens and ?key= are not validated anywhere, so they must not bypass limits.
+// Prefer the platform-set header; only the first x-forwarded-for hop is client-supplied-safe on Vercel.
+function getClientIp(req: NextRequest): string {
+  const forwarded =
+    req.headers.get('x-vercel-forwarded-for') ||
+    req.headers.get('x-real-ip') ||
+    req.headers.get('x-forwarded-for');
+  return forwarded?.split(',')[0]?.trim() || '127.0.0.1';
 }
 
 // Simple sliding window rate limiter (60 requests per minute per IP)
@@ -63,7 +75,7 @@ function resolveSkill(nameOrQuery?: string): BundledSkill | undefined {
 const TOOLS_MANIFEST = [
   {
     name: 'glintbase_audit',
-    description: 'Execute full ARS 3.0 agent-readiness audit on a target URL. Evaluates Discovery, Access, Usability, Semantic, Architecture, and Safety across 119 discrete open protocol checks.',
+    description: 'Execute a full ARS 3.2 agent-readiness audit on a target URL. Probes Discovery, Access, Usability and Payments; checks that cannot be verified are reported as skipped and excluded from the score.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -234,7 +246,7 @@ const RESOURCES_MANIFEST = [
   {
     uri: 'glintbase://schemas/ars3-spec',
     name: 'ARS 3.0 Check Registry Specification',
-    description: '119 discrete open protocol checks across 6 layers (Discovery, Access, Usability, Semantic, Architecture, Safety)',
+    description: 'ARS 3.2 check registry across 4 layers (Discovery, Access, Usability, Payments)',
     mimeType: 'application/json',
   },
   {
@@ -260,12 +272,9 @@ export async function GET(req: NextRequest) {
   try {
     cleanupStaleSessions();
     const url = new URL(req.url);
-    const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-    const authHeader = req.headers.get('authorization') || '';
-    const apiKeyParam = url.searchParams.get('key') || '';
-    const hasAuth = Boolean(authHeader.startsWith('Bearer ') || apiKeyParam);
+    const ip = getClientIp(req);
 
-  if (!hasAuth && !checkRateLimit(ip)) {
+  if (!checkRateLimit(ip)) {
     return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 60 requests per minute.' }), {
       status: 429,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
@@ -282,7 +291,7 @@ export async function GET(req: NextRequest) {
         {
           status: 'ok',
           server: 'glintbase-hosted-mcp',
-          version: '3.0.0',
+          version: GLINTBASE_VERSION,
           protocol: '2024-11-05',
           description: 'Hosted Glintbase MCP Endpoint for AI Agents (Claude Desktop, Cursor, Windsurf, ChatGPT)',
           endpoint: 'https://scan.glintbase.dev/api/mcp',
@@ -349,7 +358,8 @@ export async function GET(req: NextRequest) {
     },
   });
   } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message || 'Internal Server Error', stack: err.stack }), {
+    console.error('[MCP_GET_ERROR]', err);
+    return new Response(JSON.stringify({ error: 'Internal Server Error' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
     });
@@ -360,12 +370,9 @@ export async function POST(req: NextRequest) {
   try {
     cleanupStaleSessions();
     const url = new URL(req.url);
-    const ip = req.headers.get('x-forwarded-for') || '127.0.0.1';
-    const authHeader = req.headers.get('authorization') || '';
-    const apiKeyParam = url.searchParams.get('key') || '';
-    const hasAuth = Boolean(authHeader.startsWith('Bearer ') || apiKeyParam);
+    const ip = getClientIp(req);
 
-    if (!hasAuth && !checkRateLimit(ip)) {
+    if (!checkRateLimit(ip)) {
       return new Response(JSON.stringify({ error: 'Rate limit exceeded. Max 60 requests per minute.' }), {
         status: 429,
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
@@ -403,7 +410,7 @@ export async function POST(req: NextRequest) {
         },
         serverInfo: {
           name: 'glintbase',
-          version: '3.0.0',
+          version: GLINTBASE_VERSION,
         },
       },
     };
@@ -507,10 +514,10 @@ export async function POST(req: NextRequest) {
               mimeType: 'application/json',
               text: JSON.stringify(
                 {
-                  specification: 'ARS 3.0',
-                  version: '3.0.0',
-                  totalChecks: 119,
-                  pillars: ['discovery', 'access', 'usability', 'semantic', 'architecture', 'safety'],
+                  specification: ARS_LABEL,
+                  version: ARS_SCORE_VERSION,
+                  totalChecks: getAllChecks().length,
+                  layers: ['discovery', 'access', 'usability', 'payments'],
                 },
                 null,
                 2
@@ -844,12 +851,12 @@ ${mermaidDiagram}`;
     },
   });
   } catch (err: any) {
+    console.error('[MCP_POST_ERROR]', err);
     return new Response(
       JSON.stringify({
         jsonrpc: '2.0',
         id: null,
-        error: { code: -32603, message: err.message || 'Internal Server Error' },
-        debug: { stack: err.stack },
+        error: { code: -32603, message: 'Internal Server Error' },
       }),
       {
         status: 200,

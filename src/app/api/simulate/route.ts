@@ -56,7 +56,8 @@ export async function POST(req: Request) {
       ? String(intent).slice(0, 500)
       : `I'm a developer. Find the API docs and how to authenticate for ${finalTarget.replace(/^https?:\/\//i, '').replace(/\/$/, '')}.`,
     mode: mode === 'deterministic' ? 'deterministic' : 'e2b',
-    allowMutations: Boolean(allowMutations),
+    // Live mutations against third-party sites are opt-in per deployment, never per request.
+    allowMutations: process.env.SIMULATE_ALLOW_MUTATIONS === 'true' && Boolean(allowMutations),
   };
 
   const stream = new ReadableStream({

@@ -9,7 +9,7 @@
 **Agent Readiness Scanner & Flight Simulator** for developer products.
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-84%20passing-brightgreen.svg)](tests/)
+[![CI](https://github.com/Glintbase/glintscanner/actions/workflows/ci.yml/badge.svg)](https://github.com/Glintbase/glintscanner/actions/workflows/ci.yml)
 [![npm @glintbase/mcp](https://img.shields.io/npm/v/@glintbase/mcp.svg?color=cb3837&label=@glintbase/mcp)](https://www.npmjs.com/package/@glintbase/mcp)
 [![Smithery Badge](https://smithery.ai/badge/@glintbase/mcp)](https://smithery.ai/server/@glintbase/mcp)
 [![Glama](https://glama.ai/mcp/servers/Glintbase/glintscanner/badges/score.svg)](https://glama.ai/mcp/servers/Glintbase/glintscanner)
@@ -20,48 +20,34 @@ Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discove
 - **Hosted:** [scan.glintbase.dev](https://scan.glintbase.dev)  
 - **Flight Simulator Cockpit:** [scan.glintbase.dev/simulate](https://scan.glintbase.dev/simulate)
 - **Resources:** [Developer Tools hub](https://scan.glintbase.dev/tools) · [MCP gateway](https://scan.glintbase.dev/mcp) · in-repo [`skills/`](./skills) agent skill  
-- **Methodology:** [docs/methodology/ars-1.0.md](./docs/methodology/ars-1.0.md)  
+- **Methodology:** [docs/methodology/ars-3.2.md](./docs/methodology/ars-3.2.md)  
 - **Roadmap / specs:** [docs/](./docs/)
 
 ## Features
 
 - **Surface discovery** — `llms.txt`, `OpenAPI`, `MCP`, `sitemap.xml`, `auth.md`, `ard.json`, `robots.txt`
 - **Content validation** — empty/HTML soft-404s don’t max machine scores
-- **Budgeted crawl** — priority seeds, dual HTML/Markdown parse, link expansion
-- **Knowledge graph** — pages, concepts, operations, evidence-backed edges
-- **Deterministic pathfinder & Flight Simulator** — multi-agent journey simulations with visual DAGs and state replay (`#data=`)
-- **ARS 3.0 Engine** — 119 checks, 6 evaluation pillars, and fair Dynamic Denominator scoring
+- **ARS 3.x probe engine** — 130 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
+- **Live MCP probing** — handshake (2026-07-28 + legacy wire forms), `tools/list`, schema and annotation inspection, error-channel canary, and a read-only call only on tools annotated `readOnlyHint: true`
+- **OpenAPI inspection** — operationIds, request/error schemas, pagination, rate-limit headers, problem+json and more, read from the spec itself
+- **Flight Simulator** — separate agent journey simulations with visual DAGs and state replay (`#data=`) at `/simulate`; not part of the ARS score
 - **Authoritative MCP Endpoint** — `/api/mcp` supporting JSON-RPC 2.0 and Server-Sent Events (SSE)
 - **CLI & Web** — Real-time telemetry, visual terminal graphs, shareable reports, and automated CI quality gates
 
 ## Web vs CLI vs MCP — which should I use?
 
-All three surfaces run the **same scanner core** ([`runScan`](./src/lib/scanner/core/runScan.ts) / the shared `v2` pipeline). They differ in **who supplies the AI reasoning**, **how page content is extracted**, and **how results are delivered** — which is why *the same URL can score differently* depending on the surface and profile you choose.
+All three surfaces score with the **same engine**: [`runScan`](./src/lib/scanner/core/runScan.ts), which runs the ARS 3.x probes in [`src/lib/scanner/v2/probes`](./src/lib/scanner/v2/probes). The same URL gets the same score on each; they differ only in how results are delivered.
 
 | | **Web** — [scan.glintbase.dev](https://scan.glintbase.dev) | **CLI** — `@glintbase/cli` | **MCP** — `@glintbase/mcp` |
 |---|---|---|---|
 | **Best for** | One-click hosted scan, sharing, leaderboard | Local runs + CI gates | Driving from inside a coding agent |
 | **Setup** | None (hosted) | `npm i -g`, optional `init` wizard | Zero-config — no `.env`, no keys |
-| **Journey engine** | Deterministic (`quick`) · **LLM Multi-Agent Harness auto-on for `deep`** | Deterministic · **`--agent` opts into the harness** | **Always deterministic** — the calling agent *is* the reasoning layer |
-| **LLM provider / cost** | Hosted (Google/Gemini), paid by us | **Yours** — cloud key or local model (Ollama / LM Studio) | None — your agent already reasons over the JSON |
-| **Content extraction** | Raw HTML + **Firecrawl** (if key set) | Raw HTML + **Firecrawl** (if key set) | Raw HTML + zero-dep **`deep_crawl`** embedded extraction; Firecrawl optional |
-| **Crawl budget** | `quick` 15 / `deep` 50 pages | `quick` 15 / `deep` 50 pages | `quick` 15 / `deep` 50 pages |
-| **Granularity** | Full pipeline, one call | Full pipeline, one call | **9 composable tools** over a cached session |
-| **Output** | Interactive UI, graph viz, saved report, badge | Terminal + JSON/Markdown, exit codes | Structured JSON per tool |
+| **Scoring** | ARS 3.x probes (`runScan`) | ARS 3.x probes (`runScan`) | ARS 3.x probes (`score_readiness` calls `runScan`) |
+| **Extra tools** | Flight Simulator (`/simulate`) | `audit`, `check`, `mcp lint`, `remediate` | Diagnostic crawl / graph / journey tools (not part of the score) |
+| **Output** | Interactive UI, saved report, badge | Terminal + JSON/Markdown, exit codes | Structured JSON per tool |
 | **Persistence** | Supabase (history, leaderboard) | Local files | In-memory session (+ file cache) |
 
-### Why the same site can score differently
-
-The most common surprise is that a **hosted `deep` scan and a default MCP scan disagree** (e.g. 80% vs 30% journey pass rate on a JS-heavy site like Vercel). Both are correct for their configuration — they simply run different engines:
-
-- **Hosted `deep`** = Firecrawl-cleaned content **+** the LLM Multi-Agent Harness actually executing tool-use journeys. Highest fidelity, highest cost.
-- **MCP default** = raw-HTML crawl **+** deterministic pathfinder. Fast and free, but a JS-rendered docs site returns a near-empty shell over raw HTTP, so journeys fail and the score drops.
-
-To make an MCP run comparable to the hosted deep scan:
-
-1. Call **`deep_crawl`** first (recovers JS-rendered content with **no API key**), *then* `score_readiness` — it reuses the recovered pages already in the session.
-2. Or set `FIRECRAWL_API_KEY` in the MCP `env` **and** pass `profile: "deep"`.
-3. The agent driving the MCP supplies the LLM reasoning that the hosted harness provides automatically — have it interpret `run_journeys` / `get_remediation` output rather than expecting the server to reason.
+The ARS 3.x engine is deterministic HTTP probing; it does not crawl pages or run an LLM. The CLI's `--agent`, `--profile deep` and `--max-pages` flags are accepted but not used by it yet.
 
 ## Quick start (web)
 
@@ -144,7 +130,7 @@ The MCP works zero-config with raw HTML parsing, but for JS-heavy docs sites (Ve
 }
 ```
 
-Free tier at [firecrawl.dev](https://firecrawl.dev) includes 500 credits/month. For comparable results to the hosted scanner at scan.glintbase.dev, also pass `profile: "deep"` when calling `score_readiness` (crawls 50 pages instead of 15).
+Free tier at [firecrawl.dev](https://firecrawl.dev) includes 500 credits/month. Firecrawl only affects the diagnostic `crawl_pages` / `build_knowledge_graph` / `run_journeys` tools; `score_readiness` uses the same probe engine as scan.glintbase.dev and does not crawl.
 
 Even without a Firecrawl key, the `deep_crawl` tool recovers most JS-rendered content by extracting the framework payloads embedded in the HTML (Next.js `__NEXT_DATA__`, App Router RSC flight chunks, JSON-LD, `<noscript>`). Prefer it over `crawl_pages` for SPA/Next.js docs sites.
 
@@ -159,14 +145,14 @@ Even without a Firecrawl key, the `deep_crawl` tool recovers most JS-rendered co
 | `deep_crawl` | In-depth crawl that recovers JS-rendered content (Next.js `__NEXT_DATA__`, App Router RSC, JSON-LD, `<noscript>`, main-content) with no API key |
 | `build_knowledge_graph` | Semantic graph from crawled pages |
 | `run_journeys` | Deterministic agent journey simulations (no LLM) |
-| `score_readiness` | Full pipeline → composite ARS score (auto-runs missing stages) |
+| `score_readiness` | ARS 3.x score from the same probe engine as the web app and CLI |
 | `get_remediation` | Prioritized fixes with templates and expected score impact |
 
 ### Example agent flow
 
 ```
 User: "Scan docs.stripe.com for agent readiness"
-Agent: calls discover_surfaces → crawl_pages → score_readiness → get_remediation
+Agent: calls discover_surfaces → score_readiness → get_remediation
 Agent: "Score: 82/100 (AI-Friendly). Top fix: add llms.txt with quickstart links."
 ```
 
@@ -218,7 +204,7 @@ const result = await runScan(
   { onProgress: (e) => console.error(e) }
 );
 
-console.log(result.score, result.score_version); // e.g. 74, ars-1.0.0
+console.log(result.score, result.score_version); // e.g. 74, ars-3.2.0
 console.log(formatScanMarkdown(result));
 ```
 
@@ -239,21 +225,25 @@ See [`.env.local.example`](./.env.local.example).
 
 Apply DB schema updates from [`migration.sql`](./migration.sql) in Supabase SQL editor when using persistence.
 
-## Score bands (ARS 3.0)
+## Grades and bands (ARS 3.2)
 
-| Score | Tier | Characteristics |
-|------:|------|-----------------|
-| 90–100 | **Tier 1: Agent-Native** | Zero-friction autonomous integration, comprehensive MCP/tooling, structured auth, high token efficiency |
-| 75–89 | **Tier 2: Production-Ready** | Valid machine-readable surfaces (`llms.txt`, OpenAPI), consistent endpoints, predictable response formats |
-| 50–74 | **Tier 3: Partial Support** | Basic machine discoverability, missing granular specifications, moderate friction during agent execution |
-| 0–49 | **Tier 4: Legacy / Invisible** | High failure rate, lack of structured documentation, trapped behind SPAs or anti-bot defenses |
+Defined once in [`src/lib/scanner/shared/scoreBand.ts`](./src/lib/scanner/shared/scoreBand.ts); bands are groups of grades, so they always agree.
+
+| Score | Grade | Band |
+|------:|:-----:|------|
+| 95–100 | A+ | Agent-Native |
+| 86–94 | A | Agent-Native |
+| 70–85 | B | AI-Friendly |
+| 48–69 | C | AI-Capable |
+| 28–47 | D | Legacy |
+| 0–27 | F | Legacy |
 
 ## Architecture
 
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the pipeline diagram and module map.
 
 ```
-Target URL → Discover Surfaces → Classify & Fingerprint → Crawl & Parse → Knowledge Graph → Flight Simulation → ARS 3.0 Engine
+Target URL → URL policy → Discover surfaces → ARS 3.x probes (discovery · access · usability · payments) → Score + remediations
 ```
 
 ## Tests & CI
@@ -264,7 +254,7 @@ npm run typecheck
 npm run lint
 ```
 
-GitHub Actions runs test + typecheck on PRs (`.github/workflows/ci.yml`).
+GitHub Actions (`.github/workflows/ci.yml`) runs typecheck, tests, lint and a production build for the web app, and typecheck, tests and build for the CLI and MCP packages, on every push and PR to `main`. Unit tests run with network access blocked (`test/blockNetwork.ts`); set `ALLOW_NETWORK_TESTS=1` to allow it locally.
 
 ## Contributing
 

@@ -5,6 +5,7 @@ import { useState, useMemo, useEffect } from 'react';
 import Link from 'next/link';
 import { calculateScoreDimensions, ARS_VERSION, type ScoreDimension } from '@/lib/scanner/v2/scoring';
 import { deriveCompany, deriveCompanySlug, scoreBand, getArsGrade } from '@/lib/scanner/shared';
+import { ARS_LABEL } from '@/lib/scanner/version';
 import dynamic from 'next/dynamic';
 
 import MachineTopologyMap from './MachineTopologyMap';
@@ -1219,11 +1220,16 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
               <div className="bg-black px-4 sm:px-5 py-3 border-b border-white/[0.05] flex items-center justify-between gap-2 rounded-t-2xl min-w-0">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-[9px] font-mono uppercase tracking-[0.25em] text-[#FF3300] font-bold truncate">
-                    ARS 3.0 Standard · 4-Layer Dynamic Architecture
+                    {ARS_LABEL} · 4-Layer Dynamic Architecture
                   </span>
-                  <span className="text-[9px] font-mono bg-white/5 text-white/50 px-2 py-0.5 rounded border border-white/10 shrink-0">
-                    119 Discrete Checks
-                  </span>
+                  {ars3Scorecard.evidence && (
+                    <span
+                      className="text-[9px] font-mono bg-white/5 text-white/50 px-2 py-0.5 rounded border border-white/10 shrink-0"
+                      title="Checks with a pass / warn / fail verdict. The rest could not be verified and are excluded from the score."
+                    >
+                      {ars3Scorecard.evidence.checksEvaluated} of {ars3Scorecard.evidence.checksRegistered} checks measured
+                    </span>
+                  )}
                 </div>
                 <span className="text-[8px] font-mono text-white/25 shrink-0 hidden sm:inline">
                   Tap card to expand check results
@@ -1285,6 +1291,11 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
                         }`}>
                           {layer.applicable ? layer.statusText : 'N/A (Skipped)'}
                         </span>
+                        {layer.applicable && layer.lowConfidence && (
+                          <span className="text-amber-400" title="Less than half of this layer's scored checks could be verified">
+                            Low evidence
+                          </span>
+                        )}
                         {layer.bonusEarned > 0 && (
                           <span className="text-cyan-400">+{layer.bonusEarned} bonus</span>
                         )}

@@ -109,7 +109,7 @@ export default function RootLayout({
     },
     {
       name: 'get_score',
-      description: 'Fetch cached ARS 2.0 readiness score and letter grade for a company slug.',
+      description: 'Fetch cached ARS readiness score and letter grade for a company slug.',
       parameters: {
         type: 'object',
         properties: {

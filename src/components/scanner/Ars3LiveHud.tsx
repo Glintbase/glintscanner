@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import type { ArchetypeProfile } from '@/lib/scanner/v2/archetype';
 import type { LayerScoreSummary } from '@/lib/scanner/v2/probes';
+import { getAllChecks } from '@/lib/scanner/v2/probes/registry';
 
 export interface Ars3LiveHudProps {
   url: string;
@@ -315,7 +316,7 @@ export default function Ars3LiveHud({
             </span>
             <div className="flex items-center gap-2 mt-2">
               <span className={`inline-flex w-2 h-2 rounded-full ${isScanning ? 'bg-[#FF3300] animate-ping' : 'bg-emerald-400'}`} />
-              <span className="text-xs font-bold text-emerald-400">119 Discrete Checks</span>
+              <span className="text-xs font-bold text-emerald-400">{getAllChecks().length} Registered Checks</span>
             </div>
             <span className="text-[9px] text-white/30 mt-2">
               Zero Puppeteer crawler latency

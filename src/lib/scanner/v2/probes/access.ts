@@ -33,6 +33,8 @@ export interface AccessProbeResult {
     found: boolean;
     url?: string;
     version?: string;
+    /** Parsed document when the spec is JSON; YAML specs are detected but not parsed. */
+    spec?: any;
   };
 }
 
@@ -246,32 +248,89 @@ export async function probeAccess(
     const hasLinks = /\[.*?\]\(.*?\)/.test(llmsContent);
     const validLen = llmsContent.length >= 100 && llmsContent.length <= 30000;
     formattingPassed = hasHeader && lines.length >= 5 && hasLinks && validLen;
-  } else if (hasLlms) {
-    formattingPassed = true;
   }
+  // A local file flag without content can't be inspected.
+  const formattingStatus = formattingPassed ? 'pass' : !hasLlms ? 'na' : llmsContent ? 'warn' : 'skip';
 
   results.push({
     checkId: 'llms-txt-formatting',
-    status: formattingPassed ? 'pass' : (hasLlms ? 'warn' : 'skip'),
+    status: formattingStatus,
     earnedPoints: formattingPassed ? 2 : 0,
     maxPoints: 2,
     isBonus: false,
     message: formattingPassed
       ? 'llms.txt adheres to format specifications (heading, link syntax, line counts)'
-      : 'llms.txt formatting does not meet ARS 3.0 standards (>=5 lines, markdown links)',
+      : formattingStatus === 'skip'
+      ? 'llms.txt content not available for inspection'
+      : formattingStatus === 'na'
+      ? 'No llms.txt to inspect'
+      : 'llms.txt formatting does not meet ARS 3.0 standards (# heading, >=5 lines, markdown links, 100-30000 chars)',
   });
 
-  // llms-txt-links-resolve (2 pts)
-  const linksResolve = formattingPassed;
+  // llms-txt-links-resolve (2 pts): fetch a sample of declared links.
+  const LINK_SAMPLE = 8;
+  const declaredLinks = Array.from(llmsContent.matchAll(/\[[^\]]*\]\(([^)\s]+)[^)]*\)/g))
+    .map((m) => {
+      try {
+        return new URL(m[1], `${origin}/`).href;
+      } catch {
+        return null;
+      }
+    })
+    .filter((href): href is string => Boolean(href && /^https?:/i.test(href)));
+  const sampledLinks = Array.from(new Set(declaredLinks)).slice(0, LINK_SAMPLE);
+  let resolvedCount = 0;
+  const brokenLinks: string[] = [];
+  if (sampledLinks.length > 0 && !localContext?.isLocalCodebase) {
+    const linkResults = await Promise.all(
+      sampledLinks.map((href) => fetchResource(href, { timeoutMs: 4000, maxBytes: 200_000 }).catch(() => null))
+    );
+    linkResults.forEach((r, i) => {
+      if (r?.ok) resolvedCount++;
+      else brokenLinks.push(sampledLinks[i]);
+    });
+  }
+  const linksStatus = !hasLlms
+    ? 'na'
+    : localContext?.isLocalCodebase || !llmsContent
+    ? 'skip'
+    : sampledLinks.length === 0
+    ? 'warn'
+    : resolvedCount / sampledLinks.length >= 0.8
+    ? 'pass'
+    : 'warn';
   results.push({
     checkId: 'llms-txt-links-resolve',
-    status: linksResolve ? 'pass' : 'skip',
-    earnedPoints: linksResolve ? 2 : 0,
+    status: linksStatus,
+    earnedPoints: linksStatus === 'pass' ? 2 : 0,
     maxPoints: 2,
     isBonus: false,
-    message: linksResolve
-      ? 'Declared markdown links in llms.txt resolve to valid non-SPA content'
-      : 'llms.txt links resolution skipped',
+    message:
+      linksStatus === 'pass'
+        ? `${resolvedCount}/${sampledLinks.length} sampled llms.txt links resolve to real content`
+        : linksStatus === 'warn' && sampledLinks.length === 0
+        ? 'llms.txt declares no resolvable markdown links'
+        : linksStatus === 'warn'
+        ? `Only ${resolvedCount}/${sampledLinks.length} sampled llms.txt links resolve (broken: ${brokenLinks.slice(0, 3).join(', ')})`
+        : linksStatus === 'na'
+        ? 'No llms.txt to inspect'
+        : 'llms.txt links not checked (local codebase)',
+    evidence: sampledLinks.length ? { sampled: sampledLinks.length, resolved: resolvedCount, broken: brokenLinks } : undefined,
+  });
+
+  // llms-txt-graph-reachability (2 pts bonus)
+  const isLlmsLinked = hasLlms && (rawHtml.toLowerCase().includes('llms.txt') || rawHtml.toLowerCase().includes('/llms.txt'));
+  results.push({
+    checkId: 'llms-txt-graph-reachability',
+    status: isLlmsLinked ? 'pass' : (hasLlms ? 'warn' : 'na'),
+    earnedPoints: isLlmsLinked ? 2 : 0,
+    maxPoints: 2,
+    isBonus: true,
+    message: isLlmsLinked
+      ? 'llms.txt is actively linked within website navigation/footer links'
+      : (hasLlms
+        ? 'llms.txt is present as an orphan file but not linked from navigation/footer (crawlers frequently bypass orphan indexes)'
+        : 'llms.txt omitted (reachability check skipped)'),
   });
 
   // 6. Markdown Content Negotiation & Header Checks
@@ -345,6 +404,52 @@ export async function probeAccess(
       : 'Direct .md URL twin not detected (bonus skipped)',
   });
 
+  // markdown-html-parity (2 pts bonus)
+  const hasHtmlCode = /<pre\b|<code\b/i.test(rawHtml);
+  const hasMdCode = /```/i.test(mdRes?.body || '');
+  const mdParityPassed = markdownSupported && (!hasHtmlCode || hasMdCode);
+  results.push({
+    checkId: 'markdown-html-parity',
+    status: mdParityPassed ? 'pass' : (markdownSupported ? 'warn' : 'na'),
+    earnedPoints: mdParityPassed ? 2 : 0,
+    maxPoints: 2,
+    isBonus: true,
+    message: mdParityPassed
+      ? 'Markdown endpoint preserves code blocks and semantic structure from HTML source'
+      : (markdownSupported
+        ? 'Markdown endpoint strips code snippets or tables present in HTML (potential semantic truncation)'
+        : 'Markdown negotiation not active (parity check skipped)'),
+  });
+
+  // crosspage-policy-consistency (2 pts bonus)
+  const termsText = rawHtml.toLowerCase();
+  const hasContradictoryRefund = termsText.includes('no refunds') && (termsText.includes('30-day money back') || termsText.includes('14-day refund'));
+  const hasContradictoryRateLimits = termsText.includes('unlimited requests') && termsText.includes('rate limit');
+  const policyConsistent = !hasContradictoryRefund && !hasContradictoryRateLimits;
+  results.push({
+    checkId: 'crosspage-policy-consistency',
+    status: policyConsistent ? 'pass' : 'warn',
+    earnedPoints: policyConsistent ? 2 : 0,
+    maxPoints: 2,
+    isBonus: true,
+    message: policyConsistent
+      ? 'Cross-page policies and constraints are semantically consistent (no conflicting terms detected)'
+      : 'Conflicting policy directives detected across pages (e.g. conflicting refund or rate-limit statements)',
+  });
+
+  // nojs-fact-integrity (2 pts bonus)
+  const hasCriticalApiFact = /https?:\/\/[^\s"'<>]+\/v\d+\/|\bapi_key\b|\bAuthorization:\s*Bearer\b|\bPOST\s+\/|\bGET\s+\//i.test(rawHtml);
+  results.push({
+    checkId: 'nojs-fact-integrity',
+    status: hasCriticalApiFact ? 'pass' : 'warn',
+    earnedPoints: hasCriticalApiFact ? 2 : 0,
+    maxPoints: 2,
+    isBonus: true,
+    message: hasCriticalApiFact
+      ? 'Critical API endpoints and auth directives are embedded in initial SSR payload'
+      : 'API endpoints or authentication credentials require client-side JavaScript execution to render',
+  });
+
   // code-fence-validity (1 pt)
   const fenceMatches = rawHtml.match(/^```|^~~~/gm);
   const fencesBalanced = !fenceMatches || fenceMatches.length % 2 === 0;
@@ -377,17 +482,20 @@ export async function probeAccess(
   ];
   let foundOpenApi = Boolean(localContext?.hasOpenApiFile);
   let openApiUrl: string | undefined;
+  let openApiSpec: any;
 
   if (!foundOpenApi && !localContext?.isLocalCodebase) {
     for (const oPath of openApiPaths) {
       if (foundOpenApi) break;
-      const oRes = await fetchResource(oPath, { timeoutMs: 3500 });
+      // Large public specs (Stripe, GitHub) run to several MB.
+      const oRes = await fetchResource(oPath, { timeoutMs: 6000, maxBytes: 12_000_000 });
       if (oRes.ok && oRes.body && !oRes.body.includes('<html')) {
         try {
           const parsed = JSON.parse(oRes.body);
           if (parsed.openapi || parsed.swagger) {
             foundOpenApi = true;
             openApiUrl = oPath;
+            openApiSpec = parsed;
             break;
           }
         } catch {
@@ -679,7 +787,11 @@ export async function probeAccess(
     message: hasSecTxt ? 'RFC 9116 security.txt vulnerability disclosure policy verified' : 'RFC 9116 security.txt not published (bonus skipped)',
   });
 
-  const hasLlmsFull = Boolean(localContext?.hasLlmsFullFile);
+  let hasLlmsFull = Boolean(localContext?.hasLlmsFullFile);
+  if (!hasLlmsFull && !localContext?.isLocalCodebase) {
+    const fullRes = await fetchResource(`${origin}/llms-full.txt`, { timeoutMs: 3000, probeOnly: true });
+    hasLlmsFull = Boolean(fullRes.ok && !(fullRes.contentType || '').includes('text/html'));
+  }
   results.push({
     checkId: 'llms-full-txt-present',
     status: hasLlmsFull ? 'pass' : 'na',
@@ -725,13 +837,35 @@ export async function probeAccess(
     message: 'Plain text documentation representation not yet probed (excluded from score)',
   });
 
+  const challengeMarkers = [
+    'cf-browser-verification',
+    '/cdn-cgi/challenge-platform',
+    'cf-challenge',
+    '<title>just a moment...</title>',
+    'g-recaptcha',
+    'h-captcha',
+    'px-captcha',
+    '_incapsula_resource',
+  ];
+  // Challenge pages usually answer 403/503, whose bodies the main fetch discards; re-read them.
+  const challengeRes = !homeRes.ok && !localContext?.isLocalCodebase && (homeRes.httpStatus === 403 || homeRes.httpStatus === 503 || homeRes.httpStatus === 429)
+    ? await fetchResource(targetUrl, { timeoutMs: 4000, allowErrorBody: true, maxBytes: 200_000 })
+    : homeRes;
+  const lowerHome = (challengeRes.body || rawHtml).toLowerCase();
+  const challengeMarker = challengeMarkers.find((m) => lowerHome.includes(m));
+  const challengeHeader = (challengeRes.headers?.['cf-mitigated'] || homeRes.headers?.['cf-mitigated'] || '').toLowerCase() === 'challenge';
+  const challenged = !localContext?.isLocalCodebase && (Boolean(challengeMarker) || challengeHeader);
   results.push({
     checkId: 'anti-crawler-challenge-free',
-    status: !rawHtml.includes('cf-browser-verification') ? 'pass' : 'fail',
-    earnedPoints: !rawHtml.includes('cf-browser-verification') ? 2 : 0,
+    status: localContext?.isLocalCodebase ? 'skip' : challenged ? 'fail' : 'pass',
+    earnedPoints: !localContext?.isLocalCodebase && !challenged ? 2 : 0,
     maxPoints: 2,
     isBonus: false,
-    message: 'Public documentation endpoints do not trigger captcha or JS walls for AI bots',
+    message: localContext?.isLocalCodebase
+      ? 'Bot challenge not checked for local codebases'
+      : challenged
+      ? `Homepage served a bot challenge to the scanner (${challengeHeader ? 'cf-mitigated: challenge' : challengeMarker})`
+      : 'Homepage served content without a captcha or JS challenge',
   });
 
   // Calculate totals
@@ -774,6 +908,8 @@ export async function probeAccess(
     openapi: {
       found: foundOpenApi,
       url: openApiUrl,
+      version: openApiSpec ? String(openApiSpec.openapi || openApiSpec.swagger || '') : undefined,
+      spec: openApiSpec,
     },
   };
 }

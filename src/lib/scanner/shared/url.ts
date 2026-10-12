@@ -56,3 +56,26 @@ export function deriveCompanySlug(rawUrl: string): string {
   }
   return company.toLowerCase();
 }
+
+// Common two-label public suffixes. Not a full Public Suffix List, but covers the
+// country-code registrations we see in scans (example.co.uk, example.com.au, ...).
+const TWO_LABEL_SUFFIXES = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk',
+  'com.au', 'net.au', 'org.au',
+  'co.jp', 'ne.jp', 'or.jp',
+  'com.br', 'com.cn', 'com.mx', 'com.ar', 'com.tr', 'com.sg', 'com.hk', 'com.tw',
+  'co.in', 'co.kr', 'co.nz', 'co.za', 'co.il', 'co.id',
+]);
+
+/** Registrable domain (eTLD+1) for a hostname: docs.stripe.com -> stripe.com, api.acme.co.uk -> acme.co.uk */
+export function registrableDomain(hostname: string): string {
+  const labels = hostname.toLowerCase().replace(/\.$/, '').split('.').filter(Boolean);
+  if (labels.length <= 2) return labels.join('.');
+  const lastTwo = labels.slice(-2).join('.');
+  return TWO_LABEL_SUFFIXES.has(lastTwo) ? labels.slice(-3).join('.') : lastTwo;
+}
+
+/** Brand label of a hostname: docs.stripe.com -> stripe, api.acme.co.uk -> acme */
+export function brandFromHostname(hostname: string): string {
+  return registrableDomain(hostname).split('.')[0] || hostname;
+}

@@ -1,11 +1,12 @@
-﻿export const dynamic = 'force-static';
+export const dynamic = 'force-static';
 
 export async function GET() {
   const metadata = {
     issuer: 'https://scan.glintbase.dev',
     authorization_endpoint: 'https://scan.glintbase.dev/api/oauth/authorize',
     token_endpoint: 'https://scan.glintbase.dev/api/oauth/token',
-    registration_endpoint: 'https://scan.glintbase.dev/api/oauth/register',
+    // Client ID Metadata Document (CIMD) is the primary client identification method for MCP
+    client_id_metadata_document_supported: true,
     jwks_uri: 'https://scan.glintbase.dev/api/oauth/jwks',
     scopes_supported: ['mcp:tools', 'mcp:read', 'openid', 'profile'],
     response_types_supported: ['code'],

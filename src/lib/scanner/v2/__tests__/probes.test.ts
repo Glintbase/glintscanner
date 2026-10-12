@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { runArs2Probes } from '../probes';
+import { ARS_SCORE_VERSION } from '../../version';
 
 describe('ARS 2.0 4-Layer Probes Suite', () => {
   it('computes 4-layer scorecard and scales by active denominator', async () => {
@@ -12,7 +13,8 @@ describe('ARS 2.0 4-Layer Probes Suite', () => {
       html: '<h1>API Documentation</h1><p>npm install example</p>',
     });
 
-    expect(['ars-3.0.0', 'ars-2.0.0']).toContain(scorecard.version);
+    // The compatibility shape keeps the ARS 2 layout but reports the real scoring version.
+    expect(scorecard.version).toBe(ARS_SCORE_VERSION);
     expect(['devtool', 'api_devtool', 'docs_kb']).toContain(scorecard.archetype.archetype);
     expect(scorecard.activeDenominator).toBeGreaterThanOrEqual(85);
     expect(scorecard.layers.payments.applicable).toBe(false);
@@ -44,8 +46,10 @@ describe('Deep MCP Server Probing Suite', () => {
       const result = await probeUsability('https://mcp-demo.com');
 
       expect(result.mcpServer.live).toBe(true);
-      expect(result.mcpServer.isStreamableHttp).toBe(true);
+      // A GET-only SSE stream is the legacy transport, not Streamable HTTP.
+      expect(result.mcpServer.isStreamableHttp).toBe(false);
       expect(result.mcpServer.endpoint).toContain('/sse');
+      expect(result.checks.find((c) => c.checkId === 'mcp-transport-sse')?.status).toBe('pass');
 
       const manifestCheck = result.checks.find((c) => c.checkId === 'mcp-server-manifest');
       expect(manifestCheck?.status).toBe('pass');

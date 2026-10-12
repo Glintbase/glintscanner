@@ -1,4 +1,4 @@
-export { normalizeUrl, deriveCompany, deriveCompanySlug } from './url';
+export { normalizeUrl, deriveCompany, deriveCompanySlug, registrableDomain, brandFromHostname } from './url';
 export {
   scoreBand,
   scoreBandLabel,

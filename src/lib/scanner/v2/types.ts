@@ -186,6 +186,8 @@ export interface JourneyTrace {
   hopCount: number;
   retrievalBreadth: number;
   fragmentationScore: number;
+  /** ARS 3.1: True only when backed by genuine evidence/HTTP receipts, not agent self-reporting */
+  eventVerified?: boolean;
 }
 
 export interface JourneySimulation {
@@ -194,6 +196,11 @@ export interface JourneySimulation {
   avgHopCount: number;
   avgFragmentationScore: number;
   highRiskJourneys: string[];
+  /** ARS 3.1 Multi-Trial & Anti-Hallucination Metrics */
+  trialsRun?: number;
+  trialVariance?: number; // 0-100% variance across repeated trials
+  eventReceiptVerifiedRate?: number; // % of tasks verified by concrete receipts
+  missingFactRateEstimate?: number; // Estimated missing-fact/hallucination risk multiplier
 }
 
 // ── Scan Report ────────────────────────────────────────────────────────────

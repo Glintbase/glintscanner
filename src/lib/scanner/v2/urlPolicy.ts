@@ -25,25 +25,73 @@ const BLOCKED_HOSTNAMES = new Set([
   'localhost.localdomain',
   'metadata.google.internal',
   'metadata',
+  'instance-data',
   '0.0.0.0',
   '::1',
   '::',
 ]);
 
-function isPrivateIPv4(host: string): boolean {
-  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (!m) return false;
-  const parts = m.slice(1).map(Number);
-  if (parts.some((n) => n > 255)) return false;
-  const [a, b] = parts;
-  if (a === 10) return true;
-  if (a === 127) return true;
-  if (a === 0) return true;
-  if (a === 169 && b === 254) return true; // link-local / cloud metadata
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-  if (a === 192 && b === 0 && parts[2] === 0) return true;
+/**
+ * Parses any valid IPv4 representation (dotted, hex, octal, integer, shortened)
+ * into an unsigned 32-bit integer, or returns null if not an IPv4 address.
+ */
+function parseIpv4ToNumber(host: string): number | null {
+  const parts = host.split('.');
+  if (parts.length > 4 || parts.length === 0) return null;
+
+  const numbers: number[] = [];
+  for (const part of parts) {
+    let num: number;
+    if (/^0x[0-9a-f]+$/i.test(part)) {
+      num = parseInt(part, 16);
+    } else if (/^0[0-7]+$/.test(part) && part.length > 1) {
+      num = parseInt(part, 8);
+    } else if (/^\d+$/.test(part)) {
+      num = parseInt(part, 10);
+    } else {
+      return null;
+    }
+    if (isNaN(num) || num < 0) return null;
+    numbers.push(num);
+  }
+
+  let intVal = 0;
+  if (numbers.length === 1) {
+    if (numbers[0] > 0xffffffff) return null;
+    intVal = numbers[0];
+  } else if (numbers.length === 2) {
+    if (numbers[0] > 0xff || numbers[1] > 0xffffff) return null;
+    intVal = ((numbers[0] << 24) >>> 0) + numbers[1];
+  } else if (numbers.length === 3) {
+    if (numbers[0] > 0xff || numbers[1] > 0xff || numbers[2] > 0xffff) return null;
+    intVal = ((numbers[0] << 24) >>> 0) + (numbers[1] << 16) + numbers[2];
+  } else if (numbers.length === 4) {
+    if (numbers.some((n) => n > 0xff)) return null;
+    intVal = ((numbers[0] << 24) >>> 0) + (numbers[1] << 16) + (numbers[2] << 8) + numbers[3];
+  }
+  return intVal >>> 0;
+}
+
+function isPrivateOrReservedIpv4(intVal: number): boolean {
+  const a = (intVal >>> 24) & 0xff;
+  const b = (intVal >>> 16) & 0xff;
+  const c = (intVal >>> 8) & 0xff;
+
+  if (a === 0) return true; // 0.0.0.0/8 (This host on this network)
+  if (a === 10) return true; // 10.0.0.0/8 (Private-Use)
+  if (a === 127) return true; // 127.0.0.0/8 (Loopback)
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16 (Link-Local / Cloud Metadata)
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 (Private-Use)
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16 (Private-Use)
+  if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (Shared Address Space / CGNAT)
+  if (a === 192 && b === 0 && c === 0) return true; // 192.0.0.0/24 (IETF Protocol Assignments)
+  if (a === 192 && b === 0 && c === 2) return true; // 192.0.2.0/24 (TEST-NET-1)
+  if (a === 198 && (b === 18 || b === 19)) return true; // 198.18.0.0/15 (Benchmarking)
+  if (a === 198 && b === 51 && c === 100) return true; // 198.51.100.0/24 (TEST-NET-2)
+  if (a === 203 && b === 0 && c === 113) return true; // 203.0.113.0/24 (TEST-NET-3)
+  if (a >= 224 && a <= 239) return true; // 224.0.0.0/4 (Multicast)
+  if (a >= 240) return true; // 240.0.0.0/4 (Reserved / Future Use / Broadcast)
+
   return false;
 }
 
@@ -51,17 +99,35 @@ function isBlockedHostname(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/\.$/, '');
   if (BLOCKED_HOSTNAMES.has(h)) return true;
   if (h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (h === 'metadata.google.internal') return true;
-  // IPv6 loopback / link-local compressed forms often appear as hostname
-  if (h === '[::1]' || h.includes('::1')) return true;
-  if (isPrivateIPv4(h)) return true;
-  // Bracketed IPv6
+  if (h === 'metadata.google.internal' || h === 'instance-data') return true;
+
+  // Check IPv4 representations (standard, hex, octal, single integer, shortened)
+  const ipv4Int = parseIpv4ToNumber(h);
+  if (ipv4Int !== null) {
+    return isPrivateOrReservedIpv4(ipv4Int);
+  }
+
+  // IPv6 bracketed checks
   if (h.startsWith('[') && h.endsWith(']')) {
     const inner = h.slice(1, -1).toLowerCase();
-    if (inner === '::1' || inner.startsWith('fe80:') || inner.startsWith('fc') || inner.startsWith('fd')) {
+    if (inner === '::1' || inner === '::') return true;
+    if (inner.startsWith('fe80:') || inner.startsWith('fc') || inner.startsWith('fd')) return true;
+    if (inner.startsWith('2001:db8:')) return true;
+
+    // IPv4-mapped IPv6 [::ffff:127.0.0.1]
+    if (inner.startsWith('::ffff:')) {
+      const mapped = inner.slice(7);
+      const mappedInt = parseIpv4ToNumber(mapped);
+      if (mappedInt !== null) {
+        return isPrivateOrReservedIpv4(mappedInt);
+      }
       return true;
     }
   }
+
+  // IPv6 unbracketed loopback forms
+  if (h === '::1' || h.includes('::1') || h === '::') return true;
+
   return false;
 }
 

@@ -78,7 +78,7 @@ export function registerDiscoverProducts(server: McpServer, _session: ScanSessio
     {
       query: z.string().describe('Search term or query intent'),
       category: z.string().optional().describe('Optional category filter (e.g. "Payments", "Database", "AI Infrastructure")'),
-      minScore: z.number().optional().describe('Minimum ARS 2.0 readiness score (0-100)'),
+      minScore: z.number().optional().describe('Minimum ARS readiness score (0-100)'),
     },
     async ({ query, category, minScore }) => {
       const q = query.toLowerCase();

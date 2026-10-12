@@ -1,7 +1,7 @@
 /**
- * ARS 3.0 Central Check Registry
- * Specification: GLINTBASE_AUDIT_3_0_UPGRADE_SPEC.md
- * Total: 119 Discrete Open Protocol Checks across 4 Layers
+ * ARS 3.2 Central Check Registry
+ * Specification: GLINTBASE_AUDIT_3_0_UPGRADE_SPEC.md, methodology: docs/methodology/ars-3.2.md
+ * Single source of truth for each check's points and bonus status (count: getAllChecks().length).
  */
 
 import { CheckDefinition, LayerId } from './types';
@@ -762,8 +762,9 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'Server-Sent Events (SSE) MCP Transport',
     layer: 'usability',
     points: 2,
-    isBonus: false,
-    tier: 'recommended',
+    // Legacy transport (superseded by Streamable HTTP): rewarded, never required.
+    isBonus: true,
+    tier: 'emerging',
     targetKind: 'generic',
     evaluatorMode: 'both',
     description: 'Supports SSE connection channel for streaming tool updates and execution logs.',
@@ -897,7 +898,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 1: Discovery Endpoints',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -908,7 +909,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 2: Authentication Methods',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -919,7 +920,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 3: Client Registration',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -930,7 +931,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 4: Token Claim Protocol',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -941,7 +942,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 5: Token Exchange Grant',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -952,7 +953,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 6: Bearer Header Invocation',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -963,7 +964,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 7: Auth Error Enumeration',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -974,7 +975,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     name: 'auth.md Stage 8: Token Revocation & Security',
     layer: 'usability',
     points: 1,
-    isBonus: false,
+    isBonus: true, // auth.md is an emerging proposal: upside only
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
@@ -1351,6 +1352,120 @@ export const ALL_CHECKS: CheckDefinition[] = [
     targetKind: 'ecommerce',
     evaluatorMode: 'both',
     description: 'Declares x-payment-info OpenAPI extensions for machine pricing tiers.',
+  },
+
+  // ==========================================
+  // ARS 3.1 EMPIRICAL EXTENSIONS (11 Checks)
+  // ==========================================
+  {
+    id: 'robots-oai-searchbot',
+    name: 'Robots.txt OAI-SearchBot Ingress',
+    layer: 'discovery',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies robots.txt explicitly permits OAI-SearchBot and user-directed AI agent crawlers.',
+  },
+  {
+    id: 'llms-txt-graph-reachability',
+    name: 'llms.txt Navigation Reachability',
+    layer: 'access',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies llms.txt is linked from documentation navigation, footer, or sitemap rather than being an isolated orphan file.',
+  },
+  {
+    id: 'markdown-html-parity',
+    name: 'Markdown vs HTML Semantic Parity',
+    layer: 'access',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies markdown representations preserve tables, code schemas, and headings present in corresponding HTML docs.',
+  },
+  {
+    id: 'crosspage-policy-consistency',
+    name: 'Cross-Page Policy Consistency',
+    layer: 'access',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies semantic consistency across pricing, rate limits, and authentication across documentation pages.',
+  },
+  {
+    id: 'nojs-fact-integrity',
+    name: 'No-JS Critical Fact Integrity',
+    layer: 'access',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies critical API parameters, endpoints, and authentication directives exist in server-rendered HTML without JS execution.',
+  },
+  {
+    id: 'webmcp-js-registration',
+    name: 'WebMCP Top-Level JavaScript Registration',
+    layer: 'usability',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies browser tools are registered via document.modelContext.registerTool on top-level window for ChatGPT Site Tools visibility.',
+  },
+  {
+    id: 'mcp-wire-compatibility',
+    name: 'MCP Dual Wire-Form Compatibility',
+    layer: 'usability',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Verifies server supports MCP 2026-07-28 wire form (_meta + mcp-protocol-version header) and legacy fallback.',
+  },
+  {
+    id: 'mcp-ssrf-guard',
+    name: 'MCP Endpoint Private Network Guard',
+    layer: 'usability',
+    points: 2,
+    isBonus: true,
+    tier: 'required',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Verifies MCP tool schemas and endpoints reject private IP loopback/link-local ranges (127.0.0.1, 169.254.169.254).',
+  },
+  {
+    id: 'mcp-honest-schemas',
+    name: 'MCP Tool Schema Honesty',
+    layer: 'usability',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Verifies declared tool schemas match runtime requirements without hidden undeclared parameters or surprise auth gates.',
+  },
+  {
+    id: 'api-error-actionability',
+    name: 'Agent-Actionable Error Payloads',
+    layer: 'usability',
+    points: 2,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'both',
+    description: 'Verifies API and MCP error messages name the specific missing parameter, remedial tool, or retry endpoint.',
   },
 ];
 

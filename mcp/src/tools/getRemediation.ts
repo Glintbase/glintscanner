@@ -8,7 +8,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ScanSession } from '../session.js';
 import { getSessionStatus, getNextSteps } from '../session.js';
-import { ARS_VERSION } from '@scanner/v2/ars';
+import { ARS_SCORE_VERSION as ARS_VERSION } from '@scanner/version';
 
 interface RemediationFix {
   priority: number;

@@ -161,18 +161,27 @@ export class E2BRunner {
       const bootMs = Date.now() - startTime;
 
       const probeExecutor = async (url: string): Promise<ProbeExecutionResult> => {
+        // url (LLM-chosen from scraped content) and harness (request body) are untrusted:
+        // pass them as base64 so they can never break out of the Python string literal.
+        const urlB64 = Buffer.from(String(url), 'utf-8').toString('base64');
+        const uaB64 = Buffer.from(
+          `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Glintbase/${harness}`,
+          'utf-8'
+        ).toString('base64');
         const probeScript = `
+import base64
 import urllib.request
 import json
 import time
 
-u = "${url}"
+u = base64.b64decode("${urlB64}").decode('utf-8')
+ua = base64.b64decode("${uaB64}").decode('utf-8')
 if not u.startswith(('http://', 'https://')):
     u = 'https://' + u.lstrip('/')
 start = time.time()
 try:
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Glintbase/${harness}',
+        'User-Agent': ua,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9'
     }

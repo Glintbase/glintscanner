@@ -8,7 +8,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ScanSession } from '../session.js';
 import { getSessionStatus, getNextSteps } from '../session.js';
 import { simulateAgentJourneys } from '@scanner/v2/journey';
-import { ARS_VERSION } from '@scanner/v2/ars';
+import { ARS_SCORE_VERSION as ARS_VERSION } from '@scanner/version';
 
 export function registerRunJourneys(server: McpServer, session: ScanSession): void {
   server.tool(

@@ -55,7 +55,21 @@ export interface LayerScoreSummary {
   baseMax: number;
   statusText: string;
   applicable: boolean;
+  /** Share (0-1) of the layer's registered base points that this scan could verify. */
+  coverage: number;
+  /** True when coverage is below MIN_LAYER_COVERAGE: the layer score rests on too little evidence. */
+  lowConfidence: boolean;
   checks: CheckResult[];
+}
+
+/** How much of the rubric a scan actually measured. */
+export interface ScanEvidenceSummary {
+  checksRegistered: number;
+  /** Checks with a pass / warn / fail verdict (na and skip excluded). */
+  checksEvaluated: number;
+  /** Verified base points / registered base points across applicable layers (0-1). */
+  baseCoverage: number;
+  lowConfidenceLayers: LayerId[];
 }
 
 export interface RemediationSummary {
@@ -93,8 +107,15 @@ export interface SimulationResult {
   details: string[];
 }
 
+export interface ArsPillarSummary {
+  score: number;
+  grade: ArsGrade;
+  description: string;
+}
+
 export interface Ars3Scorecard {
-  version: 'ars-3.0.0';
+  /** Scoring model version; see src/lib/scanner/version.ts */
+  version: string;
   spec?: 'ars' | 'strict' | 'core';
   score: number;
   grade: ArsGrade;
@@ -105,6 +126,11 @@ export interface Ars3Scorecard {
   totalEarned: number;
   baseDenominator: number;
   activeDenominator: number;
+  /** Decoupled Two-Pillar Standard (ARS 3.1) */
+  pillars?: {
+    discoverability: ArsPillarSummary;
+    runtimeErgonomics: ArsPillarSummary;
+  };
   layers: {
     discovery: LayerScoreSummary;
     access: LayerScoreSummary;
@@ -113,6 +139,7 @@ export interface Ars3Scorecard {
   };
   results: CheckResult[];
   remediations: RemediationSummary[];
+  evidence?: ScanEvidenceSummary;
   criticalVulnerabilities?: CriticalVulnerability[];
   simulation?: SimulationResult;
   durationMs?: number;

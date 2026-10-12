@@ -1,6 +1,6 @@
 # Agent Readiness Score (ARS) 1.0 — Methodology
 
-**Status:** active  
+**Status:** superseded by [ARS 3.2](./ars-3.2.md). Kept for reference; `ars-1.0.0` scores are not comparable with current scores.  
 **score_version:** `ars-1.0.0`  
 **Spec:** [SPEC-06](../specs/06-scoring-ars.md)  
 **Implementation:** `src/lib/scanner/v2/ars.ts` & `src/lib/scanner/agent/`

@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const CLI_PATH = join(__dirname, '../src/index.ts');
 const TSX = 'npx tsx';
@@ -30,6 +31,7 @@ describe('glintbase --help', () => {
     expect(stdout).toContain('scan');
     expect(stdout).toContain('check');
     expect(stdout).toContain('remediate');
+    expect(stdout).toContain('mcp');
     expect(stdout).toContain('init');
     expect(stdout).toContain('config');
     expect(stdout).toContain('report');
@@ -40,7 +42,18 @@ describe('glintbase --version', () => {
   it('prints version', () => {
     const { stdout, exitCode } = run('--version');
     expect(exitCode).toBe(0);
-    expect(stdout).toMatch(/0\.[12]\.0/);
+    // Must match the published package version and the scoring model version.
+    const pkg = JSON.parse(readFileSync(join(__dirname, '../package.json'), 'utf-8'));
+    expect(stdout).toContain(pkg.version);
+    expect(stdout).toMatch(/ars-\d+\.\d+\.\d+/);
+  });
+});
+
+describe('glintbase mcp --help', () => {
+  it('prints mcp subcommands', () => {
+    const { stdout, exitCode } = run('mcp --help');
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain('lint');
   });
 });
 

@@ -568,8 +568,8 @@ export default async function ExecutiveBriefingPage({
             <div className="space-y-2 text-stone-700 leading-relaxed font-sans text-xs sm:text-sm">
               <p>
                 This executive briefing evaluates the machine-readability, automated access, and
-                tool execution readiness of <strong>{domain}</strong> under the <strong>ARS 3.0
-                Standard</strong>. Using 119 discrete open-protocol probes across four architectural
+                tool execution readiness of <strong>{domain}</strong> under the <strong>ARS 3.2
+                Standard</strong>. Using open-protocol probes across four architectural
                 layers, Glintbase measures how effectively AI agents (such as Claude Code, Cursor,
                 ChatGPT Sites, and LangChain agents) can discover, authenticate, and execute actions
                 against your services without human supervision.

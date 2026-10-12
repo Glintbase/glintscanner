@@ -1,6 +1,8 @@
 /**
  * Unified ARS score bands (SPEC-06 / SPEC-08).
  * Single source of truth for home, report, OG images, badges, leaderboard.
+ * Band boundaries follow the letter grades below (A+/A, B, C, D/F) so a score's
+ * colour band and grade can never disagree.
  */
 export type ScoreBandKey = 'elite' | 'friendly' | 'capable' | 'legacy';
 
@@ -31,7 +33,7 @@ const BANDS: ScoreBand[] = [
     borderClass: 'border-success',
     glowClass: 'shadow-[0_0_60px_rgba(16,185,129,0.3)]',
     colorHex: '#10B981',
-    min: 90,
+    min: 86, // grades A / A+
     max: 100,
   },
   {
@@ -42,8 +44,8 @@ const BANDS: ScoreBand[] = [
     borderClass: 'border-[#22D3EE]',
     glowClass: 'shadow-[0_0_60px_rgba(34,211,238,0.2)]',
     colorHex: '#22D3EE',
-    min: 70,
-    max: 89,
+    min: 70, // grade B
+    max: 85,
   },
   {
     key: 'capable',
@@ -53,7 +55,7 @@ const BANDS: ScoreBand[] = [
     borderClass: 'border-warning',
     glowClass: 'shadow-[0_0_60px_rgba(245,158,11,0.2)]',
     colorHex: '#F59E0B',
-    min: 40,
+    min: 48, // grade C
     max: 69,
   },
   {
@@ -64,8 +66,8 @@ const BANDS: ScoreBand[] = [
     borderClass: 'border-danger',
     glowClass: 'shadow-[0_0_60px_rgba(239,68,68,0.3)]',
     colorHex: '#EF4444',
-    min: 0,
-    max: 39,
+    min: 0, // grades D / F
+    max: 47,
   },
 ];
 

@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.{test,spec}.ts'],
     globals: false,
+    setupFiles: ['./test/blockNetwork.ts'],
   },
   resolve: {
     alias: {

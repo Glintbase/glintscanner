@@ -1,11 +1,11 @@
-﻿export const dynamic = 'force-static';
+export const dynamic = 'force-static';
 
 export async function GET() {
   const config = {
     issuer: 'https://scan.glintbase.dev',
     authorization_endpoint: 'https://scan.glintbase.dev/api/oauth/authorize',
     token_endpoint: 'https://scan.glintbase.dev/api/oauth/token',
-    registration_endpoint: 'https://scan.glintbase.dev/api/oauth/register',
+    client_id_metadata_document_supported: true,
     jwks_uri: 'https://scan.glintbase.dev/api/oauth/jwks',
     response_types_supported: ['code'],
     subject_types_supported: ['public'],

@@ -1,34 +1,20 @@
-﻿import { NextRequest } from 'next/server';
+import { NextRequest } from 'next/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-  let body: any = {};
-  try {
-    body = await req.json();
-  } catch {}
-
-  const clientName = body.client_name || 'Claude';
-  const redirectUris = Array.isArray(body.redirect_uris) && body.redirect_uris.length > 0
-    ? body.redirect_uris
-    : ['https://claude.ai/api/mcp/auth_callback'];
-
-  const clientId = `glintbase_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-
-  const responseData = {
-    client_id: clientId,
-    client_name: clientName,
-    redirect_uris: redirectUris,
-    grant_types: ['authorization_code', 'refresh_token'],
-    response_types: ['code'],
-    token_endpoint_auth_method: 'none',
-    client_id_issued_at: Math.floor(Date.now() / 1000),
-    scope: 'mcp:tools',
+  // Dynamic Client Registration is deprecated per MCP 2026-07-28 and OAuth security BCP.
+  // Clients identify themselves via Client ID Metadata Documents (CIMD).
+  const errorPayload = {
+    error: 'registration_not_supported',
+    error_description:
+      'Unauthenticated Dynamic Client Registration (DCR) is deprecated. MCP clients must identify via Client ID Metadata Documents (CIMD), passing an HTTPS client_id URL to /api/oauth/authorize.',
+    documentation_uri: 'https://scan.glintbase.dev/docs/mcp/cimd',
   };
 
-  return new Response(JSON.stringify(responseData, null, 2), {
-    status: 201,
+  return new Response(JSON.stringify(errorPayload, null, 2), {
+    status: 400,
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',

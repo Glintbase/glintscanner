@@ -1,3 +1,4 @@
+import { isCurrentArsVersion } from '@/lib/scanner/version';
 import { Search, Trophy } from "lucide-react";
 import Link from "next/link";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -22,14 +23,19 @@ export default async function Leaderboard() {
     const supabase = createServerSupabaseClient();
     const { data, error } = await supabase
       .from('public_scans')
-      .select('id, url, score, created_at')
+      .select('id, url, score, score_version, created_at')
       .order('created_at', { ascending: false });
 
-    if (!error && data && data.length > 0) {
+    // Only rank scores from the current scoring model; mixing versions ranks
+    // incomparable numbers. Fall back to all scans until the first rescan lands.
+    const current = (data || []).filter((row: any) => isCurrentArsVersion(row.score_version));
+    const rows = current.length > 0 ? current : data;
+
+    if (!error && rows && rows.length > 0) {
       // Deduplicate by domain — keep the most recent scan per domain
       const domainMap = new Map<string, { id: string; url: string; score: number; company: string }>();
 
-      for (const item of data) {
+      for (const item of rows) {
         let hostname = item.url;
         try {
           hostname = new URL(item.url).hostname;

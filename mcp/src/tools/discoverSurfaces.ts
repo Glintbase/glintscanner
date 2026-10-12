@@ -8,7 +8,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ScanSession } from '../session.js';
 import { resetSession, getSessionStatus, getNextSteps } from '../session.js';
 import { discoverEcosystem } from '@scanner/v2/discovery';
-import { ARS_VERSION } from '@scanner/v2/ars';
+import { ARS_SCORE_VERSION as ARS_VERSION } from '@scanner/version';
 import { checkCacheFreshness } from '../cache.js';
 
 export function registerDiscoverSurfaces(server: McpServer, session: ScanSession): void {

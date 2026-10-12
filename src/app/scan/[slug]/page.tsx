@@ -5,6 +5,7 @@ import { Sparkles } from "lucide-react";
 import { notFound } from "next/navigation";
 import { getScanBySlug, deriveCompany } from "@/lib/resolveSlug";
 import { scoreBandLabel } from "@/lib/scanner/shared";
+import { ARS_LABEL, isCurrentArsVersion } from "@/lib/scanner/version";
 import ShareScorecard from "@/components/scanner/ShareScorecard";
 
 export const dynamic = 'force-dynamic';
@@ -142,7 +143,7 @@ export default async function DynamicSlugScanPage({
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
       />
 
-      {data.score_version !== 'ars-3.0.0' && (
+      {!isCurrentArsVersion(data.score_version) && (
         <div className="w-full max-w-3xl mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
@@ -150,10 +151,10 @@ export default async function DynamicSlugScanPage({
             </div>
             <div>
               <div className="text-xs font-bold uppercase tracking-wider text-amber-300">
-                Legacy Audit Detected (Pre-ARS 3.0)
+                Scored With An Older Model ({data.score_version || 'unknown'})
               </div>
               <p className="text-xs text-white/70">
-                This audit was calculated using an older scoring model. Upgrade to ARS 3.0 Standard to evaluate 119 discrete checks, dynamic archetype denominators, and live Flight Simulator testing.
+                This score is not comparable with current {ARS_LABEL} results. Re-scan to apply the current rules, which only award points for evidence the scanner actually observed.
               </p>
             </div>
           </div>
@@ -161,7 +162,7 @@ export default async function DynamicSlugScanPage({
             href={`/?url=${encodeURIComponent(url)}&rescan=true`}
             className="shrink-0 px-4 py-2 rounded-lg bg-[#FF3300] hover:bg-[#FF3300]/90 text-white text-xs font-bold uppercase tracking-wider transition shadow-md whitespace-nowrap"
           >
-            Re-scan with ARS 3.0
+            Re-scan with {ARS_LABEL}
           </Link>
         </div>
       )}
