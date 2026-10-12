@@ -66,6 +66,17 @@ const HOMEPAGE_DERIVED_CHECKS = new Set([
   'security-headers-csp',
 ]);
 
+/**
+ * Homepage fetch with one retry when no HTTP response arrived at all. Hosts with several A
+ * records (e.g. Vercel) can have one unreachable edge address on a given route; a second
+ * attempt usually lands on a working one. Large sites often take 5-10 s, hence 15 s.
+ */
+async function fetchHomepage(url: string): Promise<FetchResourceResult> {
+  const first = await fetchResource(url, { timeoutMs: 15000 });
+  if (first.ok || first.httpStatus !== undefined) return first;
+  return fetchResource(url, { timeoutMs: 15000 });
+}
+
 export async function probeAccess(
   targetUrl: string,
   localContext?: {
@@ -129,7 +140,7 @@ export async function probeAccess(
   // 1. Fetch Homepage HTML
   const homeRes: FetchResourceResult = localContext?.isLocalCodebase
     ? localDummy({ ok: Boolean(localContext?.pageContent), body: localContext?.pageContent || '', httpStatus: localContext?.pageContent ? 200 : 404 })
-    : await fetchResource(targetUrl, { timeoutMs: 15000 }); // large sites often take 5-10 s
+    : await fetchHomepage(targetUrl);
   const latency = Date.now() - startTime;
   let rawHtml = homeRes.body || '';
   if (!rawHtml && localContext?.isLocalCodebase && localContext?.pageContent) {
