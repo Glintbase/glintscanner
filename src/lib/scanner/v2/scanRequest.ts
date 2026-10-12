@@ -3,6 +3,7 @@
  */
 
 import { validateScanUrl, policyToErrorCode, type UrlPolicyResult } from './urlPolicy';
+import { normalizeArchetypeOverride, CANONICAL_ARCHETYPES } from './archetype';
 
 export interface ScanRequestBody {
   url: string;
@@ -125,7 +126,16 @@ export function validateScanRequest(body: unknown): ScanRequestValidation {
   const optObj = (b.options || {}) as Record<string, unknown>;
   const useAgentHarness = Boolean(optObj.useAgentHarness);
   const provider = typeof optObj.provider === 'string' ? optObj.provider : undefined;
-  const archetypeOverride = typeof optObj.archetypeOverride === 'string' ? optObj.archetypeOverride : undefined;
+  const normalizedArchetype = normalizeArchetypeOverride(optObj.archetypeOverride);
+  if (normalizedArchetype === null) {
+    return {
+      ok: false,
+      status: 400,
+      error: `options.archetypeOverride must be one of: ${CANONICAL_ARCHETYPES.join(', ')}`,
+      code: 'INVALID_ARCHETYPE',
+    };
+  }
+  const archetypeOverride = normalizedArchetype === 'auto' ? undefined : normalizedArchetype;
 
   return {
     ok: true,

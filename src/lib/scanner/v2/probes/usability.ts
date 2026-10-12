@@ -16,6 +16,7 @@ import { fetchResource } from '../fetchResource';
 import { probeMcpServer, type McpLiveProbeResult } from '../mcpProbe';
 import { inspectOpenApi } from '../openapiInspect';
 import { getChecksForLayer } from './registry';
+import { registrableDomain } from '../../shared/url';
 import type { CheckDefinition, CheckRemediation, CheckResult, CheckStatus } from './types';
 
 export interface UsabilityProbeResult {
@@ -96,6 +97,19 @@ function isMcpLikePath(endpoint: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAuthStatus(httpStatus: number | undefined): boolean {
+  return httpStatus === 401 || httpStatus === 403;
+}
+
+function isJsonRpcEnvelope(json: any): boolean {
+  return json?.jsonrpc === '2.0';
+}
+
+/** RFC 9728: an MCP server's 401 points clients at its protected-resource metadata. */
+function hasResourceMetadataChallenge(headers: Record<string, string> | undefined): boolean {
+  return /resource_metadata=/i.test(headers?.['www-authenticate'] || '');
 }
 
 /** Endpoint URL declared inside a static MCP server card / manifest, if any. */
@@ -202,8 +216,8 @@ export async function probeUsability(
     }
   }
 
-  const hostParts = u.hostname.replace(/^www\./, '').split('.');
-  const apex = hostParts.length >= 2 ? hostParts.slice(-2).join('.') : u.hostname;
+  // Registrable domain, so www.acme.co.uk probes docs.acme.co.uk (not docs.co.uk).
+  const apex = registrableDomain(u.hostname) || u.hostname;
   const proto = u.protocol;
   const candidateHosts = [
     origin,
@@ -295,8 +309,11 @@ export async function probeUsability(
         return;
       }
 
-      const getAuthChallenge = (res.httpStatus === 401 || res.httpStatus === 403) && mcpPath && (
-        Boolean(res.headers?.['www-authenticate']) || Boolean(getJson?.error || getJson?.jsonrpc)
+      // A 401/403 alone (or any WWW-Authenticate / JSON error) is what every gated
+      // app route returns. Only an MCP-shaped answer counts: a JSON-RPC envelope or an
+      // RFC 9728 protected-resource challenge (resource_metadata=).
+      const getAuthChallenge = isAuthStatus(res.httpStatus) && mcpPath && (
+        isJsonRpcEnvelope(getJson) || hasResourceMetadataChallenge(res.headers)
       );
       if (getAuthChallenge) {
         mcpLive = true;
@@ -339,9 +356,9 @@ export async function probeUsability(
       if (mcpLive) return;
 
       const postJson = extractJsonPayload(postRes.body);
-      const isJsonRpc = postJson?.jsonrpc === '2.0';
-      const authChallenge = (postRes.httpStatus === 401 || postRes.httpStatus === 403) &&
-        (isJsonRpc || Boolean(postRes.headers?.['www-authenticate']));
+      const isJsonRpc = isJsonRpcEnvelope(postJson);
+      const authChallenge = isAuthStatus(postRes.httpStatus) &&
+        (isJsonRpc || hasResourceMetadataChallenge(postRes.headers));
 
       if (isJsonRpc || authChallenge) {
         mcpLive = true;

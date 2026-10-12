@@ -30,41 +30,70 @@ export function deriveCompany(rawUrl: string): string {
   return slug.charAt(0).toUpperCase() + slug.slice(1);
 }
 
+/** Lowercase and reduce to URL-safe slug characters ([a-z0-9-_]). */
+function toSlugSafe(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 /**
- * Derive a URL-safe company slug (lowercase, no spaces).
- * Used for /scan/[slug] routes.
+ * Derive a URL-safe company slug (lowercase, no spaces, no dots).
+ * Used for /scan/[slug] routes and as the persistence key (company_slug).
+ *
+ * The slug comes from the registrable domain (eTLD+1), never from the first
+ * hostname label, so stripe.attacker.com -> "attacker" (not "stripe").
+ * Hosting platforms (vercel.app, github.io, ...) count as public suffixes:
+ * acme.vercel.app -> "acme". Only URLs on exactly github.com use the repo name.
  */
 export function deriveCompanySlug(rawUrl: string): string {
-  let hostname = rawUrl;
+  const input = (rawUrl || '').trim();
+  let hostname = '';
+  let pathname = '';
   try {
-    hostname = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`).hostname;
+    const parsed = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+    hostname = parsed.hostname;
+    pathname = parsed.pathname;
   } catch {
-    hostname = rawUrl.replace(/^https?:\/\//i, '').split('/')[0];
+    const rest = input.replace(/^https?:\/\//i, '');
+    hostname = rest.split(/[/?#]/)[0].split('@').pop()!.split(':')[0];
+    pathname = rest.slice(rest.split(/[/?#]/)[0].length).split(/[?#]/)[0];
   }
-  hostname = hostname.toLowerCase().replace(/^www\./i, '');
-  let company = hostname.split('.')[0] || 'unknown';
-  if (['docs', 'www', 'developer', 'dev', 'api'].includes(company)) {
-    company = hostname.split('.')[1] || company;
+  hostname = hostname.toLowerCase().replace(/\.$/, '').replace(/^www\./, '');
+  if (!hostname) return 'unknown';
+
+  if (hostname === 'github.com') {
+    const [, , repo] = pathname.split('/');
+    if (repo) {
+      const repoSlug = toSlugSafe(repo.replace(/\.git$/i, ''));
+      if (repoSlug) return repoSlug;
+    }
   }
-  const githubMatch = rawUrl.match(/github\.com\/([^/]+)\/([^/]+)/i);
-  if (githubMatch) {
-    company = githubMatch[2]
-      .split('/')[0]
-      .split('?')[0]
-      .split('#')[0]
-      .replace(/\.git$/i, '');
+
+  // IP literals have no brand: keep the whole address, dot-free.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':') || hostname.startsWith('[')) {
+    return toSlugSafe(hostname) || 'unknown';
   }
-  return company.toLowerCase();
+
+  return toSlugSafe(brandFromHostname(hostname)) || 'unknown';
 }
 
 // Common two-label public suffixes. Not a full Public Suffix List, but covers the
-// country-code registrations we see in scans (example.co.uk, example.com.au, ...).
+// country-code registrations we see in scans (example.co.uk, example.com.au, ...)
+// plus multi-tenant hosting platforms.
 const TWO_LABEL_SUFFIXES = new Set([
   'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk',
   'com.au', 'net.au', 'org.au',
   'co.jp', 'ne.jp', 'or.jp',
   'com.br', 'com.cn', 'com.mx', 'com.ar', 'com.tr', 'com.sg', 'com.hk', 'com.tw',
   'co.in', 'co.kr', 'co.nz', 'co.za', 'co.il', 'co.id',
+  // Hosting platforms where each customer gets a subdomain: the customer label
+  // is the brand (acme.vercel.app -> acme), not the platform.
+  'vercel.app', 'netlify.app', 'github.io', 'pages.dev', 'workers.dev', 'herokuapp.com',
+  'notion.site', 'web.app', 'firebaseapp.com', 'onrender.com', 'fly.dev', 'azurewebsites.net',
+  'cloudfront.net', 'amplifyapp.com', 'gitbook.io', 'readthedocs.io', 'mintlify.app',
 ]);
 
 /** Registrable domain (eTLD+1) for a hostname: docs.stripe.com -> stripe.com, api.acme.co.uk -> acme.co.uk */

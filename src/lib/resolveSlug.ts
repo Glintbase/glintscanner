@@ -5,8 +5,13 @@ import { deriveCompany, deriveCompanySlug } from '@/lib/scanner/shared';
 
 export { deriveCompany, deriveCompanySlug };
 
-function attachGraph(match: any, nodes: any[] | null, edges: any[] | null) {
+export function attachGraph(match: any, nodes: any[] | null, edges: any[] | null) {
   match.checks = match.checks || {};
+  // scan_nodes / scan_edges are optional (older scans, failed graph inserts):
+  // keep the graph persisted inside checks rather than replacing it with an empty one.
+  if ((!nodes || nodes.length === 0) && (!edges || edges.length === 0)) {
+    return match;
+  }
   match.checks.graph = {
     nodes: (nodes || []).map((n: any) => ({
       id: n.node_id,

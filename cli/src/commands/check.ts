@@ -1,98 +1,68 @@
 /**
- * CLI Command: glintbase check <ids>
- * Targeted re-verification of specific check IDs (Ora-parity fast feedback loop).
+ * CLI Command: glintbase check <url> [checkIds]
+ * Targeted re-verification of registry check IDs (Ora-parity fast feedback loop).
+ * Runs the ARS probe suite and reads each requested check by exact id.
  */
 
 import { Command } from 'commander';
 import pc from 'picocolors';
-import { runArs2Probes } from '@scanner/v2/probes/index';
+import { runArs3Probes } from '@scanner/v2/probes/index';
+import { parseCheckIds, partitionCheckIds, recheckFromResults, unknownCheckResult, type RecheckResult } from '@scanner/v2/probes/recheck';
+import { requireCliTarget } from '../target.js';
+
+function printResult(r: RecheckResult): void {
+  const icon =
+    r.status === 'pass' ? pc.green('✓')
+    : r.status === 'warn' ? pc.yellow('!')
+    : r.status === 'fail' ? pc.red('✕')
+    : r.status === 'unknown' ? pc.red('?')
+    : pc.dim('–');
+  const label = r.status === 'unknown' ? pc.red('unknown check id') : pc.dim(`${r.status} · ${r.earnedPoints}/${r.maxPoints} pts`);
+  console.log(`  ${icon}  ${pc.bold(r.checkId)}  ${label}`);
+  if (r.message) console.log(`     ${pc.dim(r.message)}`);
+}
 
 export const checkCommand = new Command('check')
   .description('Fast re-verification of specific check IDs against a URL')
   .argument('<url>', 'Target URL to inspect')
-  .argument('[checkIds]', 'Comma-separated check IDs to verify (e.g. auth.md,robots.txt,anti-spa-404)', 'all')
-  .action(async (url: string, checkIds: string) => {
+  .argument('[checkIds]', 'Comma-separated registry check IDs (e.g. auth-md-structure,robots-ai-policy-quality,anti-spa-404) or "all"', 'all')
+  .action(async (rawUrl: string, checkIds: string) => {
+    const url = requireCliTarget(rawUrl);
+    const requested = parseCheckIds(checkIds);
+    const checkAll = requested.length === 0 || requested.some((id) => id.toLowerCase() === 'all');
+    const { known, unknown } = partitionCheckIds(checkAll ? [] : requested);
+
     console.log('');
     console.log(pc.cyan(`╭─  ${pc.bold('GLINTBASE TARGETED CHECK')}  ────────────────────────────────────────────╮`));
     console.log(pc.cyan('│') + `  ${pc.dim('Target  :')} ${pc.bold(pc.white(url))}`.padEnd(76, ' ') + pc.cyan('│'));
-    console.log(pc.cyan('│') + `  ${pc.dim('Checks  :')} ${pc.yellow(checkIds)}`.padEnd(76, ' ') + pc.cyan('│'));
+    console.log(pc.cyan('│') + `  ${pc.dim('Checks  :')} ${pc.yellow(checkAll ? 'all' : requested.join(','))}`.padEnd(76, ' ') + pc.cyan('│'));
     console.log(pc.cyan(`╰─────────────────────────────────────────────────────────────────────────────╯\n`));
+
+    // Nothing valid to verify: don't probe the site at all.
+    if (!checkAll && known.length === 0) {
+      for (const id of unknown) printResult(unknownCheckResult(id));
+      console.log('');
+      process.exit(2);
+    }
 
     const startTime = Date.now();
     try {
-      const scorecard = await runArs2Probes(url);
+      const scorecard = await runArs3Probes(url);
       const durationMs = Date.now() - startTime;
 
-      const requested = checkIds.split(',').map((s) => s.trim().toLowerCase());
-      const checkAll = requested.includes('all');
+      const results = checkAll
+        ? recheckFromResults(scorecard.results, scorecard.results.map((r) => r.checkId))
+        : recheckFromResults(scorecard.results, requested);
+      for (const r of results) printResult(r);
 
-      let passedCount = 0;
-      let totalChecked = 0;
+      const verified = results.filter((r) => r.status === 'pass' || r.status === 'warn' || r.status === 'fail');
+      const passed = verified.filter((r) => r.passed).length;
+      const unknownCount = results.filter((r) => r.status === 'unknown').length;
+      console.log(`\n  ${pc.dim(`Checked ${results.length} items in ${durationMs}ms: ${passed}/${verified.length} verified checks passed${unknownCount ? `, ${unknownCount} unknown id(s)` : ''}.`)}\n`);
 
-      // 1. Robots check
-      if (checkAll || requested.some((r) => r.includes('robot'))) {
-        totalChecked++;
-        const passed = scorecard.layers.discovery.data.robotsPolicy.aiFriendly;
-        if (passed) {
-          passedCount++;
-          console.log(`  ${pc.green('✓')}  ${pc.bold('robots.txt AI Policy')}  ${pc.dim('ClaudeBot/GPTBot permitted')}`);
-        } else {
-          console.log(`  ${pc.red('✕')}  ${pc.bold('robots.txt AI Policy')}  ${pc.red('AI crawlers restricted or blocked')}`);
-        }
-      }
-
-      // 2. Auth check
-      if (checkAll || requested.some((r) => r.includes('auth'))) {
-        totalChecked++;
-        const passed = scorecard.layers.usability.data.authHandbook.found;
-        if (passed) {
-          passedCount++;
-          console.log(`  ${pc.green('✓')}  ${pc.bold('WorkOS auth.md')}       ${pc.dim(`Verified at ${scorecard.layers.usability.data.authHandbook.url}`)}`);
-        } else {
-          console.log(`  ${pc.red('✕')}  ${pc.bold('WorkOS auth.md')}       ${pc.red('auth.md / RFC 9728 not found')}`);
-        }
-      }
-
-      // 3. Anti-SPA 404 check
-      if (checkAll || requested.some((r) => r.includes('404') || r.includes('spa'))) {
-        totalChecked++;
-        const passed = scorecard.layers.access.data.antiSpa404.passed;
-        if (passed) {
-          passedCount++;
-          console.log(`  ${pc.green('✓')}  ${pc.bold('Anti-SPA 404')}         ${pc.dim('Authentic HTTP 404 returned on nonexistent routes')}`);
-        } else {
-          console.log(`  ${pc.red('✕')}  ${pc.bold('Anti-SPA 404')}         ${pc.red('Returns soft 200 OK — agents may hallucinate')}`);
-        }
-      }
-
-      // 4. Markdown negotiation check
-      if (checkAll || requested.some((r) => r.includes('markdown') || r.includes('llms'))) {
-        totalChecked++;
-        const passed = scorecard.layers.access.data.markdownNegotiation.supported;
-        if (passed) {
-          passedCount++;
-          console.log(`  ${pc.green('✓')}  ${pc.bold('Markdown Negotiation')} ${pc.dim('Accept: text/markdown or .md twin supported')}`);
-        } else {
-          console.log(`  ${pc.red('✕')}  ${pc.bold('Markdown Negotiation')} ${pc.red('No markdown content negotiation')}`);
-        }
-      }
-
-      // 5. MCP server check
-      if (checkAll || requested.some((r) => r.includes('mcp'))) {
-        totalChecked++;
-        const passed = scorecard.layers.usability.data.mcpServer.live;
-        if (passed) {
-          passedCount++;
-          console.log(`  ${pc.green('✓')}  ${pc.bold('MCP Server')}          ${pc.dim(`Live endpoint at ${scorecard.layers.usability.data.mcpServer.endpoint}`)}`);
-        } else {
-          console.log(`  ${pc.red('✕')}  ${pc.bold('MCP Server')}          ${pc.dim('No live streamable MCP endpoint detected')}`);
-        }
-      }
-
-      console.log(`\n  ${pc.dim(`Checked ${totalChecked} items in ${durationMs}ms: ${passedCount}/${totalChecked} passed.`)}\n`);
-      if (passedCount < totalChecked) {
-        process.exit(1);
-      }
+      if (unknownCount > 0) process.exit(2);
+      if (passed < verified.length) process.exit(1);
+      process.exit(0);
     } catch (err: any) {
       console.error(pc.red(`\n  Check failed: ${err.message}\n`));
       process.exit(2);

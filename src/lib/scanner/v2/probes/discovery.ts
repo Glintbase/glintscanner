@@ -33,17 +33,33 @@ export interface DiscoveryProbeResult {
 /**
  * Resilient query helper with strict timeout to prevent stalling
  */
-async function resilientFetch(url: string, timeoutMs: number = 3500): Promise<{ ok: boolean; body: string; status: number }> {
+async function resilientFetch(url: string, timeoutMs: number = 3500): Promise<{ ok: boolean; body: string; status: number; contentType?: string | null }> {
   try {
     const res = await fetchResource(url, { timeoutMs });
     return {
       ok: res.ok,
       body: res.body || '',
       status: res.httpStatus || 0,
+      contentType: res.contentType,
     };
   } catch {
     return { ok: false, body: '', status: 0 };
   }
+}
+
+/** An HTML page served at a plain-text path (SPA fallback / soft 404), not the file itself. */
+export function looksLikeHtmlDocument(body: string, contentType?: string | null): boolean {
+  if ((contentType || '').toLowerCase().includes('text/html')) return true;
+  return /^\s*(<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>])/i.test(body);
+}
+
+/** robots.txt lines with '#' comments removed, lowercased, blank lines dropped. */
+export function robotsDirectiveLines(body: string): string[] {
+  return body
+    .toLowerCase()
+    .split(/\r?\n/)
+    .map((l) => l.replace(/#.*$/, '').trim())
+    .filter(Boolean);
 }
 
 export async function probeDiscovery(
@@ -111,10 +127,13 @@ export async function probeDiscovery(
     hasContentSignals: false,
   };
 
-  if (robotsRes.ok && robotsRes.body) {
+  // An HTML page at /robots.txt (SPA catch-all, soft 404) is not a robots.txt.
+  const robotsIsHtml = Boolean(robotsRes.body) && looksLikeHtmlDocument(robotsRes.body, (robotsRes as { contentType?: string | null }).contentType);
+  if (robotsRes.ok && robotsRes.body && !robotsIsHtml) {
     robotsPolicy.found = true;
     const body = robotsRes.body.toLowerCase();
-    const lines = body.split(/\r?\n/).map(l => l.trim()).filter(l => l && !l.startsWith('#'));
+    // Strip '#' comments (whole-line and trailing) before reading directives.
+    const lines = robotsDirectiveLines(robotsRes.body);
 
     const targetBots = ['claudebot', 'gptbot', 'perplexitybot', 'google-extended', 'anthropic-ai', 'cohere-ai', 'oai-searchbot'];
     const botRules = new Map<string, { allow: boolean; disallowRoot: boolean }>();

@@ -85,8 +85,10 @@ robots.txt AI-crawler policy, ARD / AI catalog files, Wikidata official-website 
 ### Access
 Zero-JS content, soft-404 canary, `llms.txt` (exists, formatting, and up to 8 declared links actually fetched; ≥80% must resolve), `llms-full.txt`, markdown negotiation, OpenAPI at standard paths (JSON specs are parsed), HTTP hygiene headers, and bot challenges (challenge page markers or `cf-mitigated: challenge`, re-reading 403/429/503 bodies).
 
+If the homepage cannot be fetched (no successful response and no body), every check derived from its HTML or response headers is `skip` ("Homepage could not be fetched"), and `anti-crawler-challenge-free` is `skip` unless a challenge was actually observed. If the soft-404 canary request does not complete (timeout / unreachable), `anti-spa-404` is `skip`. An HTML page served at `/robots.txt` counts as no robots.txt; `#` comments are stripped before directives are read.
+
 ### Usability
-- **MCP discovery** tries standard paths on the site, `docs.` / `api.` subdomains, and the root plus standard paths of `mcp.` subdomains. A 401/403 only counts as an MCP server on an MCP-like path or host.
+- **MCP discovery** tries standard paths on the site, `docs.` / `api.` / `mcp.` subdomains of the registrable domain (so `www.acme.co.uk` probes `docs.acme.co.uk`), and the root plus standard paths of `mcp.` subdomains. A 401/403 only counts as an MCP server on an MCP-like path or host **and** when the response is a JSON-RPC envelope or carries an RFC 9728 `WWW-Authenticate: ... resource_metadata=` challenge (GET and POST). A generic 401 (any `WWW-Authenticate`, or a JSON error body) is not MCP evidence.
 - **Live MCP probe** (`v2/mcpProbe.ts`): `initialize` on the 2026-07-28 and legacy wire forms (2026-07-28 support requires the server to answer with that version), `tools/list` (carrying the session id), schema strictness and `readOnlyHint` / `destructiveHint` annotations from real tool definitions, capabilities (prompts, resources, logging) from the initialize result, and an unknown-tool canary for in-channel errors.
 - **Safety:** the prober calls a real tool only if the server annotates it `readOnlyHint: true` and it takes no required arguments. Unannotated tools are never called. SSRF behaviour is not probed.
 - **Transports:** Streamable HTTP is a base check; legacy SSE is bonus only.
@@ -106,6 +108,10 @@ Only for e-commerce archetypes or commerce signals: ACP, UCP, AP2, x402, MPP.
 - MCP servers at the root of `mcp.` subdomains are discovered.
 - Evidence coverage and low-evidence layers reported on every scan.
 - Grades and bands unified.
+- Auth-gated MCP detection requires a JSON-RPC envelope or an RFC 9728 `resource_metadata` challenge.
+- Unreachable homepages and incomplete soft-404 canaries produce `skip`, not `fail` / `warn` / `pass`.
+- A failed probe suite fails the scan (`PROBES_FAILED`) instead of falling back to a discovery-only score.
+- Scans run with an explicit archetype override are stored as history only and never replace a company's latest score.
 
 ARS 3.1 and earlier scores are not comparable with 3.2. Scorecard pages flag older scans and offer a rescan.
 
@@ -116,5 +122,6 @@ ARS 3.1 and earlier scores are not comparable with 3.2. Scorecard pages flag old
 - **Keyword heuristics:** auth.md stage detection and WebMCP detection match keywords and can be gamed.
 - **Fixed paths:** OpenAPI is only found at standard paths; it is not followed from links, headers or llms.txt.
 - **Endpoint choice:** when several MCP candidates respond, the first to answer is used.
+- **Auth-gated MCP without RFC 9728:** a gated MCP server that answers 401 with neither a JSON-RPC body nor `resource_metadata=` is not detected.
 - **Absent MCP weighs heavily:** for API and docs archetypes, a site without an MCP server or OpenAPI spec typically scores 0 on most of the 35-point usability layer. This is intended by the current weights but is a policy choice worth revisiting.
 - **Archetype drives rubric:** a docs host whose MCP server is a product (action) server is judged by the docs rubric (e.g. auth-gated MCP is a `warn`).

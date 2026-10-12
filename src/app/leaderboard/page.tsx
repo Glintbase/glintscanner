@@ -5,6 +5,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { SiteNav } from "@/components/layout/SiteNav";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import LeaderboardClient from "./LeaderboardClient";
+import { fetchLeaderboardScanRows, dedupeLatestBySlug } from "@/lib/leaderboardRows";
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -14,6 +15,7 @@ export default async function Leaderboard() {
   let leaderboardData: {
     rank: number;
     company: string;
+    slug: string;
     url: string;
     score: number;
     id: string | null;
@@ -21,55 +23,25 @@ export default async function Leaderboard() {
 
   try {
     const supabase = createServerSupabaseClient();
-    const { data, error } = await supabase
-      .from('public_scans')
-      .select('id, url, score, score_version, created_at')
-      .order('created_at', { ascending: false });
+    // Pages through every row: a single PostgREST response stops at 1000 rows.
+    const { data, error } = await fetchLeaderboardScanRows(supabase);
 
     // Only rank scores from the current scoring model; mixing versions ranks
     // incomparable numbers. Fall back to all scans until the first rescan lands.
-    const current = (data || []).filter((row: any) => isCurrentArsVersion(row.score_version));
+    const current = (data || []).filter((row) => isCurrentArsVersion(row.score_version));
     const rows = current.length > 0 ? current : data;
 
     if (!error && rows && rows.length > 0) {
-      // Deduplicate by domain — keep the most recent scan per domain
-      const domainMap = new Map<string, { id: string; url: string; score: number; company: string }>();
-
-      for (const item of rows) {
-        let hostname = item.url;
-        try {
-          hostname = new URL(item.url).hostname;
-        } catch {
-          hostname = item.url.replace(/^https?:\/\//i, '').split('/')[0];
-        }
-        hostname = hostname.toLowerCase().replace(/^www\./i, '');
-
-        // Since results are ordered by created_at DESC, the first occurrence is always the latest scan
-        if (!domainMap.has(hostname)) {
-          // Derive a display name from the hostname
-          let company = hostname.split('.')[0];
-          if (company === 'docs' || company === 'www' || company === 'developer' || company === 'dev') {
-            company = hostname.split('.')[1] || company;
-          }
-          company = company.charAt(0).toUpperCase() + company.slice(1);
-
-          domainMap.set(hostname, {
-            id: item.id,
-            url: item.url,
-            score: item.score,
-            company,
-          });
-        }
-      }
-
-      // Convert to sorted array by score DESC for rank
-      const sorted: { id: string; url: string; score: number; company: string }[] = [];
-      domainMap.forEach((val) => sorted.push(val));
-      sorted.sort((a, b) => b.score - a.score);
+      // One entry per company slug (same key as /scan/[slug]); rows are newest first.
+      const sorted = dedupeLatestBySlug(rows).sort((a, b) => b.score - a.score);
 
       leaderboardData = sorted.map((item, index) => ({
         rank: index + 1,
-        ...item,
+        company: item.company,
+        slug: item.slug,
+        url: item.url,
+        score: item.score,
+        id: item.id,
       }));
     }
   } catch (err) {

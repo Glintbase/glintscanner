@@ -88,8 +88,17 @@ export async function POST(req: Request) {
         if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
           const persistPromise = (async () => {
             try {
-              const saved = await persistScan(createAdminSupabaseClient(), { result, url, scanId, companySlug });
-              if (saved) {
+              // An archetype override scores the site against a different rubric than the
+              // official classification: keep it as history, never as the company's latest score.
+              const isCanonical = !archetypeOverride;
+              const saved = await persistScan(createAdminSupabaseClient(), {
+                result,
+                url,
+                scanId,
+                companySlug,
+                markLatest: isCanonical,
+              });
+              if (saved && isCanonical) {
                 try {
                   revalidatePath('/leaderboard');
                   if (companySlug) {

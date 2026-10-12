@@ -66,6 +66,101 @@ function looksLikeSoft404(body: string, httpStatus: number): boolean {
   return false;
 }
 
+/** Total time budget for reading an SSE stream (they never reach EOF). */
+const SSE_READ_BUDGET_MS = 2500;
+
+/** True once the SSE text contains a `data:` line whose payload is a JSON object. */
+export function sseHasJsonData(text: string): boolean {
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trimStart();
+    if (!line.startsWith('data:')) continue;
+    const payload = line.slice(5).trim();
+    if (!payload.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return true;
+    } catch {
+      /* partial or non-JSON data line */
+    }
+  }
+  return false;
+}
+
+/**
+ * Reads an SSE body until a JSON `data:` event arrives, the byte cap is hit or the
+ * time budget runs out, then cancels the stream. Servers often send a priming
+ * event (comment / endpoint / empty data) before the real payload.
+ */
+async function readSseBody(body: ReadableStream<Uint8Array>, maxBytes: number, budgetMs: number): Promise<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  const deadline = Date.now() + budgetMs;
+  let text = '';
+  let bytes = 0;
+  try {
+    while (bytes < maxBytes) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<{ done: true; value?: undefined }>((resolve) => {
+        timer = setTimeout(() => resolve({ done: true }), remaining);
+      });
+      const chunk = await Promise.race([reader.read(), timeout]);
+      clearTimeout(timer);
+      if (chunk.done || !chunk.value) break;
+      bytes += chunk.value.byteLength;
+      text += decoder.decode(chunk.value, { stream: true });
+      if (sseHasJsonData(text)) break;
+    }
+  } catch {
+    /* non-fatal stream abort */
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* ignore cancel error */
+    }
+  }
+  return text.length > maxBytes ? text.slice(0, maxBytes) : text;
+}
+
+/**
+ * Streams a response body, aborting as soon as more than maxBytes have arrived
+ * instead of buffering an arbitrarily large response first.
+ */
+async function readBodyCapped(res: Response, maxBytes: number): Promise<{ text: string; bytes: number; tooLarge: boolean }> {
+  if (!res.body) {
+    const text = await res.text().catch(() => '');
+    return { text, bytes: text.length, tooLarge: text.length > maxBytes };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let text = '';
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore cancel error */
+        }
+        return { text: '', bytes, tooLarge: true };
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+  } catch {
+    // Same as the previous res.text().catch(() => ''): a broken body reads as empty.
+    return { text: '', bytes: 0, tooLarge: false };
+  }
+  return { text, bytes, tooLarge: false };
+}
+
 export async function fetchResource(
   url: string,
   options: FetchResourceOptions = {}
@@ -163,28 +258,9 @@ export async function fetchResource(
       };
     }
 
-    // Fast non-hanging SSE reader: SSE channels are persistent streams that do not reach EOF.
+    // Non-hanging SSE reader: SSE channels are persistent streams that do not reach EOF.
     if (isSse && res.body) {
-      const reader = res.body.getReader();
-      let sseBody = '';
-      try {
-        const readPromise = reader.read();
-        const sseTimeout = new Promise<{ done: boolean; value?: Uint8Array }>((resolve) =>
-          setTimeout(() => resolve({ done: true }), 800)
-        );
-        const chunk = await Promise.race([readPromise, sseTimeout]);
-        if (chunk && chunk.value) {
-          sseBody = new TextDecoder('utf-8', { fatal: false }).decode(chunk.value);
-        }
-      } catch {
-        /* non-fatal stream abort */
-      } finally {
-        try {
-          await reader.cancel();
-        } catch {
-          /* ignore cancel error */
-        }
-      }
+      const sseBody = await readSseBody(res.body, maxBytes, Math.min(SSE_READ_BUDGET_MS, timeoutMs));
       return {
         ok: httpStatus >= 200 && httpStatus < 400,
         status: httpStatus >= 200 && httpStatus < 400 ? 'ok' : 'unreachable',
@@ -198,8 +274,8 @@ export async function fetchResource(
       };
     }
 
-    const text = await res.text().catch(() => '');
-    if (text.length > maxBytes) {
+    const { text, bytes: bodyBytes, tooLarge } = await readBodyCapped(res, maxBytes);
+    if (tooLarge) {
       return {
         ok: false,
         status: 'too_large',
@@ -208,7 +284,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
-        bytes: text.length,
+        bytes: bodyBytes,
       };
     }
     if (isError) {

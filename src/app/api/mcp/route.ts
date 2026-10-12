@@ -32,6 +32,9 @@ function cleanupStaleSessions() {
 
 // Bearer tokens and ?key= are not validated anywhere, so they must not bypass limits.
 // Prefer the platform-set header; only the first x-forwarded-for hop is client-supplied-safe on Vercel.
+/** tools/call names whose required "target" argument is a URL to probe. */
+const TARGET_TOOLS = new Set(['get_score', 'audit', 'simulate_flight', 'discover_surfaces']);
+
 function getClientIp(req: NextRequest): string {
   const forwarded =
     req.headers.get('x-vercel-forwarded-for') ||
@@ -561,9 +564,19 @@ export async function POST(req: NextRequest) {
     const normalizedName = rawToolName.replace(/^glintbase_/, '').toLowerCase();
     const toolArgs = params.arguments || {};
 
+    // Tools that probe a site require an explicit target: never fall back to a default site.
+    const missingTarget =
+      TARGET_TOOLS.has(normalizedName) && (typeof toolArgs.target !== 'string' || !toolArgs.target.trim());
+
     try {
-      if (normalizedName === 'get_score') {
-        const rawTarget = toolArgs.target || 'https://stripe.com';
+      if (missingTarget) {
+        rpcResponse = {
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32602, message: `Invalid params: "target" (URL) is required for ${rawToolName}` },
+        };
+      } else if (normalizedName === 'get_score') {
+        const rawTarget: string = toolArgs.target.trim();
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const scorecard = await runArs3Probes(targetUrl);
 
@@ -585,7 +598,7 @@ export async function POST(req: NextRequest) {
           },
         };
       } else if (normalizedName === 'audit') {
-        const rawTarget = toolArgs.target || 'https://stripe.com';
+        const rawTarget: string = toolArgs.target.trim();
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const scorecard = await runArs3Probes(targetUrl);
 
@@ -597,7 +610,7 @@ export async function POST(req: NextRequest) {
           },
         };
       } else if (normalizedName === 'simulate_flight') {
-        const rawTarget = toolArgs.target || 'https://stripe.com';
+        const rawTarget: string = toolArgs.target.trim();
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const persona = toolArgs.persona || 'claude-code';
         const intent = toolArgs.intent || `Find the API docs and authenticate for ${targetUrl}`;
@@ -689,7 +702,7 @@ ${mermaidDiagram}`;
           },
         };
       } else if (normalizedName === 'discover_surfaces') {
-        const rawTarget = toolArgs.target || 'https://stripe.com';
+        const rawTarget: string = toolArgs.target.trim();
         const targetUrl = await E2BRunner.resolveTargetUrl(rawTarget);
         const scorecard = await runArs3Probes(targetUrl);
 

@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import pc from 'picocolors';
 import { runArs2Probes } from '@scanner/v2/probes/index';
 import { resolveConfig } from '../config.js';
+import { requireCliTarget } from '../target.js';
 import {
   printHeader,
   printStepTreeHeader,
@@ -24,7 +25,8 @@ export const auditCommand = new Command('audit')
   .option('--ci', 'CI mode: outputs GitHub Actions markdown summary', false)
   .option('--json', 'Output raw JSON scorecard', false)
   .option('-q, --quiet', 'Minimal output (only output score)', false)
-  .action(async (url: string, opts: any) => {
+  .action(async (rawUrl: string, opts: any) => {
+    const url = requireCliTarget(rawUrl);
     const config = resolveConfig(opts);
     const startTime = Date.now();
 
@@ -151,23 +153,9 @@ export const auditCommand = new Command('audit')
       if (scorecard.remediations.length > 0) {
         console.log(pc.bold(`  Actionable Remediations (${scorecard.remediations.length} Detected):\n`));
         for (const rem of scorecard.remediations) {
-          let diffLines: string[] = [];
-          if (rem.id === 'missing-auth-md') {
-            diffLines = [
-              '+ ---',
-              '+ title: Agent Authentication Handbook',
-              '+ auth_schemes: [api_key, oauth2_client_credentials]',
-              '+ endpoints:',
-              '+   token: https://api.example.com/oauth/v2/token',
-            ];
-          } else if (rem.id === 'robots-ai-blocked') {
-            diffLines = [
-              '+ User-agent: ClaudeBot',
-              '+ Allow: /',
-              '+ User-agent: GPTBot',
-              '+ Allow: /',
-            ];
-          }
+          // Render the check's own fix (registry ids such as auth-md-structure /
+          // robots-ai-policy-quality carry their diff in the remediation).
+          const diffLines: string[] = rem.diffSnippet ? rem.diffSnippet.split('\n') : [];
 
           printRemediationDiffCard(rem.title, rem.targetFile, rem.description, diffLines, rem.fixCommand);
         }

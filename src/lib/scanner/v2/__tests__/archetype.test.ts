@@ -45,3 +45,23 @@ describe('Archetype Classifier & Dynamic Denominator', () => {
     expect(result.activeLayers).not.toContain('payments');
   });
 });
+
+describe('archetype overrides', () => {
+  it('normalizes canonical names and legacy aliases, rejects unknown values', async () => {
+    const { normalizeArchetypeOverride } = await import('../archetype');
+    expect(normalizeArchetypeOverride(undefined)).toBe('auto');
+    expect(normalizeArchetypeOverride('auto')).toBe('auto');
+    expect(normalizeArchetypeOverride('content_media')).toBe('content_media');
+    expect(normalizeArchetypeOverride('docs')).toBe('docs_kb');
+    expect(normalizeArchetypeOverride('product')).toBe('api_devtool');
+    expect(normalizeArchetypeOverride('ai-native')).toBeNull();
+    expect(normalizeArchetypeOverride({})).toBeNull();
+  });
+
+  it('applies a content_media override with its own weights (not api_devtool)', () => {
+    const result = classifyArchetype({ url: 'https://example.com', kindOverride: 'content_media' });
+    expect(result.canonicalArchetype).toBe('content_media');
+    expect(result.layerWeights.usability).toBe(0);
+    expect(result.activeLayers).not.toContain('usability');
+  });
+});

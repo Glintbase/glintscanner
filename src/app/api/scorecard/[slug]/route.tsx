@@ -37,7 +37,9 @@ export async function GET(_req: Request, { params }: { params: { slug: string } 
   let vsLine: string | null = null;
   try {
     const ctx = await getCompetitiveContext(scanUrl);
-    if (ctx.isLeader) {
+    if (!ctx) {
+      vsLine = null;
+    } else if (ctx.isLeader) {
       vsLine = '#1 on the Agent Readiness Leaderboard';
     } else if (ctx.leader) {
       vsLine = `vs ${ctx.leader.company} · ${ctx.leader.score}`;

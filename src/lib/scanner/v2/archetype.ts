@@ -32,9 +32,36 @@ export interface ArchetypeProfile {
   excludedLayers: Array<{ layer: string; reason: string }>;
 }
 
+export type CanonicalArchetype = 'api_devtool' | 'docs_kb' | 'ecommerce' | 'content_media';
+
+/** Canonical archetypes a caller may force. */
+export const CANONICAL_ARCHETYPES: readonly CanonicalArchetype[] = ['api_devtool', 'docs_kb', 'ecommerce', 'content_media'];
+
+/** Legacy --kind aliases (CLI) mapped to their canonical archetype. */
+const LEGACY_KIND_ALIASES = new Map<string, CanonicalArchetype>([
+  ['product', 'api_devtool'],
+  ['docs', 'docs_kb'],
+]);
+
+export type ArchetypeOverride = CanonicalArchetype | 'product' | 'docs' | 'auto';
+
+/**
+ * Validates a caller-supplied archetype override.
+ * Returns the canonical archetype, 'auto' for no override (undefined / '' / 'auto'),
+ * or null when the value is not a known archetype.
+ */
+export function normalizeArchetypeOverride(value: unknown): CanonicalArchetype | 'auto' | null {
+  if (value === undefined || value === null || value === '') return 'auto';
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toLowerCase();
+  if (v === 'auto') return 'auto';
+  if ((CANONICAL_ARCHETYPES as readonly string[]).includes(v)) return v as CanonicalArchetype;
+  return LEGACY_KIND_ALIASES.get(v) ?? null;
+}
+
 export interface ArchetypeInput {
   url: string;
-  kindOverride?: 'product' | 'docs' | 'ecommerce' | 'auto';
+  kindOverride?: ArchetypeOverride;
   html?: string;
   surfaces?: Array<{ type: string; found: boolean; url?: string }>;
   title?: string;
@@ -70,18 +97,16 @@ const ARS3_BASE_WEIGHTS: Record<'api_devtool' | 'docs_kb' | 'ecommerce' | 'conte
 
 export function classifyArchetype(input: ArchetypeInput): ArchetypeProfile {
   // Handle explicit kind override
-  if (input.kindOverride && input.kindOverride !== 'auto') {
-    let canonical: 'api_devtool' | 'docs_kb' | 'ecommerce' | 'content_media' = 'api_devtool';
-    if (input.kindOverride === 'docs') canonical = 'docs_kb';
-    else if (input.kindOverride === 'ecommerce') canonical = 'ecommerce';
-    else if (input.kindOverride === 'product') canonical = 'api_devtool';
+  const normalizedOverride = normalizeArchetypeOverride(input.kindOverride);
+  if (normalizedOverride && normalizedOverride !== 'auto') {
+    const canonical: CanonicalArchetype = normalizedOverride;
 
     const weights = { ...ARS3_BASE_WEIGHTS[canonical] };
     const baseDenominator = weights.discovery + weights.access + weights.usability + weights.payments;
     return {
       archetype: canonical,
       canonicalArchetype: canonical,
-      label: canonical === 'docs_kb' ? 'Documentation / Knowledge Base' : canonical === 'ecommerce' ? 'E-Commerce / Online Merchant' : 'Developer Platform / API',
+      label: canonical === 'docs_kb' ? 'Documentation / Knowledge Base' : canonical === 'ecommerce' ? 'E-Commerce / Online Merchant' : canonical === 'content_media' ? 'Content / Media Resource' : 'Developer Platform / API',
       description: 'Archetype explicitly set via --kind flag.',
       confidence: 1.0,
       reasons: [`Kind explicitly configured as ${input.kindOverride}`],
@@ -89,7 +114,10 @@ export function classifyArchetype(input: ArchetypeInput): ArchetypeProfile {
       layerWeights: weights,
       baseDenominator,
       totalDenominator: baseDenominator,
-      excludedLayers: weights.payments === 0 ? [{ layer: 'Payments', reason: 'Excluded for non-commerce archetype' }] : [],
+      excludedLayers: [
+        ...(weights.payments === 0 ? [{ layer: 'Payments', reason: 'Excluded for non-commerce archetype' }] : []),
+        ...(weights.usability === 0 ? [{ layer: 'Usability', reason: 'Excluded for content/media archetype' }] : []),
+      ],
     };
   }
 

@@ -21,6 +21,8 @@ import {
 // Email gate: once per browser — presence of this key means the user already
 // left their email, so future scans link silently and skip the modal.
 const LEAD_STORAGE_KEY = "glintbase_lead_email";
+/** Client-side scan budget (server maxDuration is 300 s). */
+const SCAN_CLIENT_TIMEOUT_MS = 120_000;
 
 // ─── Pre-scanned examples ─────────────────────────────────────────────────
 const EXAMPLES = [
@@ -286,10 +288,12 @@ export default function Home() {
     setScore(0);
     setChecks([]);
 
+    // Client budget must exceed the server's probe time (sequential layers with
+    // multi-second per-request timeouts), or slow sites are aborted mid-scan.
     const abortController = new AbortController();
     const timeoutId = setTimeout(() => {
       abortController.abort();
-    }, 35000);
+    }, SCAN_CLIENT_TIMEOUT_MS);
 
     try {
       const response = await fetch("/api/scan", {
@@ -365,7 +369,7 @@ export default function Home() {
     } catch (error: any) {
       const isAbort = error?.name === "AbortError";
       const errorMsgText = isAbort
-        ? "Scan timed out: Target server took too long to respond."
+        ? `Scan timed out after ${SCAN_CLIENT_TIMEOUT_MS / 1000}s: the target server took too long to respond.`
         : error.message || "Failed to initiate scan";
       setErrorMsg(errorMsgText);
       setLogs((prev) => [

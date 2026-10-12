@@ -117,6 +117,14 @@ function memoryLimit(key: string, limit: number, windowMs: number): { success: b
 }
 
 function getIpFromRequest(request: NextRequest) {
+  // glintbase.dev proxies /api/mcp; it forwards the real client IP with a shared secret
+  // so proxied users get their own quota instead of sharing the proxy's IP.
+  const proxySecret = process.env.MCP_PROXY_SECRET;
+  if (proxySecret && request.headers.get('x-glintbase-proxy-secret') === proxySecret) {
+    const proxied = request.headers.get('x-glintbase-client-ip')?.trim();
+    if (proxied) return `proxy:${proxied}`;
+  }
+
   // Check common forward headers used on Vercel and other platforms.
   const vf = request.headers.get('x-vercel-forwarded-for');
   const xf = request.headers.get('x-forwarded-for');

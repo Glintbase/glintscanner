@@ -7,6 +7,7 @@ import { Search, ChevronRight } from "lucide-react";
 interface LeaderboardItem {
   rank: number;
   company: string;
+  slug: string;
   url: string;
   score: number;
   id: string | null;
@@ -115,7 +116,7 @@ export default function LeaderboardClient({ initialData }: { initialData: Leader
             const categoryName = getCompanyCategory(item.company);
             return (
               <Link
-                href={item.id ? `/scan/${item.company.toLowerCase()}` : "#"}
+                href={item.id ? `/scan/${item.slug}?id=${encodeURIComponent(item.id)}` : `/scan/${item.slug}`}
                 key={item.id ?? item.url}
                 className="group relative flex items-center justify-between border border-transparent hover:border-[#FF3300]/20 rounded-xl px-5 py-3 transition-all duration-300 hover:bg-[#FF3300]/[0.03]"
               >

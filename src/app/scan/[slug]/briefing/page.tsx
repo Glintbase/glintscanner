@@ -4,7 +4,6 @@ import type { Metadata } from 'next';
 import { getScanBySlug, deriveCompany } from '@/lib/resolveSlug';
 import { getArsGrade } from '@/lib/scanner/shared';
 import { classifyArchetype } from '@/lib/scanner/v2/archetype';
-import { runArs3Probes } from '@/lib/scanner/v2/probes';
 import { ALL_CHECKS } from '@/lib/scanner/v2/probes/registry';
 import BriefingPrintButton from '@/components/scanner/BriefingPrintButton';
 import {
@@ -65,49 +64,37 @@ const INDUSTRY_BENCHMARKS: BenchmarkPeer[] = [
 
 export default async function ExecutiveBriefingPage({
   params,
-  searchParams,
 }: {
   params: { slug: string };
-  searchParams?: { url?: string; score?: string };
 }) {
-  // 1. Data Retrieval: Supabase lookup first
+  // 1. Data Retrieval: the briefing only renders persisted scans. It never runs live
+  // probes (unauthenticated SSRF / cost amplifier) and never invents a score.
   const dbData = await getScanBySlug(params.slug);
-
-  let targetUrl = dbData?.url || searchParams?.url;
-  if (!targetUrl) {
-    targetUrl = params.slug.includes('.')
-      ? `https://${params.slug}`
-      : `https://${params.slug}.com`;
+  if (!dbData || !dbData.url) {
+    notFound();
   }
 
-  // 2. Scorecard Extraction or Live ARS 3.0 Probe Execution
-  let scorecard = dbData?.scorecard || dbData?.checks?.scorecard;
+  const targetUrl: string = dbData.url;
 
-  // If scorecard is missing or pre-ARS 3.0, execute live probe on the target URL
-  if (!scorecard || !scorecard.layers) {
-    try {
-      scorecard = await runArs3Probes(targetUrl);
-    } catch (err) {
-      console.error('Error running fallback ARS 3.0 probes for briefing:', err);
-    }
+  // 2. Scorecard Extraction (persisted only)
+  const scorecard = dbData.scorecard || dbData.checks?.scorecard;
+  const score: number | null = typeof scorecard?.score === 'number'
+    ? scorecard.score
+    : typeof dbData.score === 'number'
+    ? dbData.score
+    : null;
+  if (score === null) {
+    notFound();
   }
 
-  // 3. Domain & Score resolution
+  // 3. Domain resolution
   const company = deriveCompany(targetUrl);
   let domain = company.toLowerCase();
   try {
     domain = new URL(targetUrl).hostname.replace(/^www\./, '');
   } catch {}
 
-  const score = typeof scorecard?.score === 'number'
-    ? scorecard.score
-    : typeof dbData?.score === 'number'
-    ? dbData.score
-    : searchParams?.score
-    ? parseInt(searchParams.score, 10) || 46
-    : 46;
-
-  const arsGrade = scorecard?.grade || getArsGrade(score);
+  const arsGrade: string = (typeof scorecard?.grade === 'string' && scorecard.grade) || getArsGrade(score).grade;
   const archetype = scorecard?.archetype || classifyArchetype({ url: targetUrl });
   const activeDenominator = scorecard?.activeDenominator || archetype?.baseDenominator || 85;
 
@@ -133,22 +120,22 @@ export default async function ExecutiveBriefingPage({
 
   // 5. Four Layer Metrics
   const l1Summary = scorecard?.layers?.discovery;
-  const l1Earned = l1Summary?.totalEarned ?? l1Summary?.baseEarned ?? Math.round(score * 0.2);
+  const l1Earned = l1Summary?.totalEarned ?? l1Summary?.baseEarned ?? 0;
   const l1Max = l1Summary?.baseMax ?? 20;
   const l1Pct = Math.round((l1Earned / (l1Max || 1)) * 100);
-  const l1Gaps = l1Summary?.checks?.filter((c: any) => c.status !== 'pass')?.length ?? Math.max(1, Math.round((1 - l1Pct / 100) * 8));
+  const l1Gaps = l1Summary?.checks?.filter((c: any) => c.status !== 'pass')?.length ?? 0;
 
   const l2Summary = scorecard?.layers?.access;
-  const l2Earned = l2Summary?.totalEarned ?? l2Summary?.baseEarned ?? Math.round(score * 0.3);
+  const l2Earned = l2Summary?.totalEarned ?? l2Summary?.baseEarned ?? 0;
   const l2Max = l2Summary?.baseMax ?? 30;
   const l2Pct = Math.round((l2Earned / (l2Max || 1)) * 100);
-  const l2Gaps = l2Summary?.checks?.filter((c: any) => c.status !== 'pass')?.length ?? Math.max(1, Math.round((1 - l2Pct / 100) * 12));
+  const l2Gaps = l2Summary?.checks?.filter((c: any) => c.status !== 'pass')?.length ?? 0;
 
   const l3Summary = scorecard?.layers?.usability;
-  const l3Earned = l3Summary?.totalEarned ?? l3Summary?.baseEarned ?? Math.round(score * 0.4);
+  const l3Earned = l3Summary?.totalEarned ?? l3Summary?.baseEarned ?? 0;
   const l3Max = l3Summary?.baseMax ?? 35;
   const l3Pct = Math.round((l3Earned / (l3Max || 1)) * 100);
-  const l3Gaps = l3Summary?.checks?.filter((c: any) => c.status !== 'pass')?.length ?? Math.max(1, Math.round((1 - l3Pct / 100) * 16));
+  const l3Gaps = l3Summary?.checks?.filter((c: any) => c.status !== 'pass')?.length ?? 0;
 
   const l4Summary = scorecard?.layers?.payments;
   const l4Earned = l4Summary?.totalEarned ?? l4Summary?.baseEarned ?? 0;

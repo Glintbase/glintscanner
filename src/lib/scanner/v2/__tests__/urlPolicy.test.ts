@@ -85,3 +85,34 @@ describe('validateScanRequest', () => {
     expect(r.ok).toBe(false);
   });
 });
+
+describe('validateScanRequest archetypeOverride', () => {
+  it('accepts canonical archetypes and legacy kind aliases', () => {
+    for (const [input, expected] of [
+      ['api_devtool', 'api_devtool'],
+      ['docs_kb', 'docs_kb'],
+      ['ecommerce', 'ecommerce'],
+      ['content_media', 'content_media'],
+      ['docs', 'docs_kb'],
+      ['product', 'api_devtool'],
+    ] as const) {
+      const r = validateScanRequest({ url: 'https://docs.example.com', options: { archetypeOverride: input } });
+      expect(r.ok).toBe(true);
+      expect(r.data?.archetypeOverride).toBe(expected);
+    }
+  });
+
+  it('treats auto / missing as no override', () => {
+    expect(validateScanRequest({ url: 'https://docs.example.com', options: { archetypeOverride: 'auto' } }).data?.archetypeOverride).toBeUndefined();
+    expect(validateScanRequest({ url: 'https://docs.example.com' }).data?.archetypeOverride).toBeUndefined();
+  });
+
+  it('rejects unknown archetypes with 400', () => {
+    for (const bad of ['ai-native', 'admin', 42, '__proto__']) {
+      const r = validateScanRequest({ url: 'https://docs.example.com', options: { archetypeOverride: bad } });
+      expect(r.ok).toBe(false);
+      expect(r.status).toBe(400);
+      expect(r.code).toBe('INVALID_ARCHETYPE');
+    }
+  });
+});

@@ -38,6 +38,32 @@ export interface AccessProbeResult {
   };
 }
 
+const HOMEPAGE_UNAVAILABLE = 'Homepage could not be fetched';
+
+/** Checks computed from the homepage HTML or its response headers. */
+const HOMEPAGE_DERIVED_CHECKS = new Set([
+  'content-no-js',
+  'page-token-budget',
+  'crosspage-policy-consistency',
+  'nojs-fact-integrity',
+  'code-fence-validity',
+  'cors-headers',
+  'compression-gzip-br',
+  'clean-semantic-html',
+  'heading-hierarchy',
+  'meta-description-quality',
+  'json-ld-structured-data',
+  'charset-utf8-declared',
+  'canonical-url-present',
+  'content-type-charset',
+  'etag-caching',
+  'cache-control-headers',
+  'response-latency-p95',
+  'text-density-ratio',
+  'link-header-canonical',
+  'security-headers-csp',
+]);
+
 export async function probeAccess(
   targetUrl: string,
   localContext?: {
@@ -106,6 +132,8 @@ export async function probeAccess(
   if (!rawHtml && localContext?.isLocalCodebase && localContext?.pageContent) {
     rawHtml = localContext.pageContent;
   }
+  // Remote homepage fetch produced neither a successful response nor a body.
+  const homepageFailed = !localContext?.isLocalCodebase && !homeRes.ok && !rawHtml;
 
   // 2. Zero-JS Prose & Heading Analysis (content-no-js)
   const noScriptHtml = rawHtml
@@ -485,27 +513,29 @@ export async function probeAccess(
   let openApiSpec: any;
 
   if (!foundOpenApi && !localContext?.isLocalCodebase) {
-    for (const oPath of openApiPaths) {
-      if (foundOpenApi) break;
+    // Probe candidates in small parallel batches (a sequential walk could take
+    // 14 x 6 s on a slow host); within a batch the first path in list order wins.
+    const inspectSpec = async (oPath: string): Promise<{ url: string; spec?: any } | null> => {
       // Large public specs (Stripe, GitHub) run to several MB.
       const oRes = await fetchResource(oPath, { timeoutMs: 6000, maxBytes: 12_000_000 });
-      if (oRes.ok && oRes.body && !oRes.body.includes('<html')) {
-        try {
-          const parsed = JSON.parse(oRes.body);
-          if (parsed.openapi || parsed.swagger) {
-            foundOpenApi = true;
-            openApiUrl = oPath;
-            openApiSpec = parsed;
-            break;
-          }
-        } catch {
-          // Fallback: Check for YAML OpenAPI/Swagger document
-          if (/^(?:---\s*\n)?\s*(openapi|swagger):\s*['"]?[23]/m.test(oRes.body)) {
-            foundOpenApi = true;
-            openApiUrl = oPath;
-            break;
-          }
-        }
+      if (!oRes.ok || !oRes.body || oRes.body.includes('<html')) return null;
+      try {
+        const parsed = JSON.parse(oRes.body);
+        return parsed && (parsed.openapi || parsed.swagger) ? { url: oPath, spec: parsed } : null;
+      } catch {
+        // Fallback: Check for YAML OpenAPI/Swagger document
+        return /^(?:---\s*\n)?\s*(openapi|swagger):\s*['"]?[23]/m.test(oRes.body) ? { url: oPath } : null;
+      }
+    };
+    const uniquePaths = Array.from(new Set(openApiPaths));
+    const OPENAPI_BATCH = 4;
+    for (let i = 0; i < uniquePaths.length && !foundOpenApi; i += OPENAPI_BATCH) {
+      const batch = await Promise.all(uniquePaths.slice(i, i + OPENAPI_BATCH).map((p) => inspectSpec(p).catch(() => null)));
+      const hit = batch.find((r) => r !== null);
+      if (hit) {
+        foundOpenApi = true;
+        openApiUrl = hit.url;
+        openApiSpec = hit.spec;
       }
     }
   }
@@ -857,18 +887,48 @@ export async function probeAccess(
   const challengeMarker = challengeMarkers.find((m) => lowerHome.includes(m));
   const challengeHeader = (challengeRes.headers?.['cf-mitigated'] || homeRes.headers?.['cf-mitigated'] || '').toLowerCase() === 'challenge';
   const challenged = !localContext?.isLocalCodebase && (Boolean(challengeMarker) || challengeHeader);
+  // Nothing served and no challenge observed: there is no evidence either way.
+  const challengeUnverifiable = !localContext?.isLocalCodebase && !challenged && homepageFailed;
   results.push({
     checkId: 'anti-crawler-challenge-free',
-    status: localContext?.isLocalCodebase ? 'skip' : challenged ? 'fail' : 'pass',
-    earnedPoints: !localContext?.isLocalCodebase && !challenged ? 2 : 0,
+    status: localContext?.isLocalCodebase || challengeUnverifiable ? 'skip' : challenged ? 'fail' : 'pass',
+    earnedPoints: !localContext?.isLocalCodebase && !challenged && !challengeUnverifiable ? 2 : 0,
     maxPoints: 2,
     isBonus: false,
     message: localContext?.isLocalCodebase
       ? 'Bot challenge not checked for local codebases'
+      : challengeUnverifiable
+      ? HOMEPAGE_UNAVAILABLE
       : challenged
       ? `Homepage served a bot challenge to the scanner (${challengeHeader ? 'cf-mitigated: challenge' : challengeMarker})`
       : 'Homepage served content without a captcha or JS challenge',
   });
+
+  // ARS 3.2: points only for observed evidence. When the homepage could not be fetched,
+  // checks derived from its HTML or response headers have nothing to inspect.
+  if (homepageFailed) {
+    for (const r of results) {
+      const derived = HOMEPAGE_DERIVED_CHECKS.has(r.checkId) ||
+        (r.checkId === 'status-code-accuracy' && homeRes.httpStatus === undefined) ||
+        (r.checkId === 'llms-txt-graph-reachability' && r.status !== 'na');
+      if (!derived) continue;
+      r.status = 'skip';
+      r.earnedPoints = 0;
+      r.message = HOMEPAGE_UNAVAILABLE;
+      r.remediation = undefined;
+    }
+  }
+
+  // A canary request that never completed (timeout / unreachable) says nothing about 404 handling.
+  if (!localContext?.isLocalCodebase && canaryRes.httpStatus === undefined) {
+    const spa = results.find((r) => r.checkId === 'anti-spa-404');
+    if (spa) {
+      spa.status = 'skip';
+      spa.earnedPoints = 0;
+      spa.message = `Soft-404 canary request did not complete (${canaryRes.status}); 404 handling not verified`;
+      spa.remediation = undefined;
+    }
+  }
 
   // Calculate totals
   let baseEarned = 0;

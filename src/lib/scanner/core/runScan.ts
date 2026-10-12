@@ -8,7 +8,7 @@ import { classifySurfaces } from '../v2/classification';
 import { detectEcosystemFramework } from '../v2/framework';
 import { runArs3Probes, Ars3Scorecard } from '../v2/probes';
 import { ARS_SCORE_VERSION } from '../version';
-import { classifyArchetype, type ArchetypeProfile } from '../v2/archetype';
+import { classifyArchetype, normalizeArchetypeOverride, CANONICAL_ARCHETYPES, type ArchetypeProfile } from '../v2/archetype';
 import { validateScanUrl } from '../v2/urlPolicy';
 import type {
   DiscoveredSurface,
@@ -376,7 +376,14 @@ export async function runScan(
 
   const url = policy.url;
   const enabledSurfaces = input.options?.enabledSurfaces;
-  const archetypeOverride = input.options?.archetypeOverride || input.options?.pack;
+  // `pack` is a journey pack (e.g. 'ai-native'), not an archetype: never use it as one.
+  const normalizedArchetype = normalizeArchetypeOverride(input.options?.archetypeOverride);
+  if (normalizedArchetype === null) {
+    const err = new Error(`Unknown archetype override "${input.options?.archetypeOverride}". Use one of: ${CANONICAL_ARCHETYPES.join(', ')}`);
+    (err as any).code = 'INVALID_ARCHETYPE';
+    throw err;
+  }
+  const archetypeOverride = normalizedArchetype === 'auto' ? undefined : normalizedArchetype;
 
   emit({
     type: 'progress',
@@ -388,7 +395,7 @@ export async function runScan(
   // Upfront Archetype Initialization (0ms tick)
   const initialArchetype = classifyArchetype({
     url,
-    kindOverride: (archetypeOverride as any) || 'auto',
+    kindOverride: archetypeOverride || 'auto',
   });
 
   emit({
@@ -430,7 +437,7 @@ export async function runScan(
     runArs3Probes(url, {
       archetypeInput: {
         url,
-        kindOverride: archetypeOverride as any,
+        kindOverride: archetypeOverride,
       },
       onLayerComplete: (layerId, layer) => {
         emit({
@@ -439,10 +446,19 @@ export async function runScan(
         });
       },
     }).catch((err) => {
-      console.warn('ARS 3.0 probe run failed:', err);
+      console.warn('ARS probe run failed:', err);
       return null;
     }),
   ]);
+
+  // The ARS score is the probe scorecard. Without it there is no evidence-based
+  // score: fail loudly instead of stamping the discovery heuristic with the ARS version.
+  if (!probeScorecard) {
+    emit({ type: 'progress', check: 'probes', status: 'error', message: 'ARS probe suite failed' });
+    const err = new Error('ARS probe suite failed; no score was produced. Please retry the scan.');
+    (err as any).code = 'PROBES_FAILED';
+    throw err;
+  }
 
   if (probeScorecard) {
     emit({
@@ -501,9 +517,9 @@ export async function runScan(
   const graph = buildMachineTopology(url, classifiedSurfaces);
   const journeys = buildProbeJourneys(classifiedSurfaces, probeScorecard);
 
-  const finalScore = probeScorecard ? probeScorecard.score : report.score;
-  const finalScoreVersion = probeScorecard ? probeScorecard.version : ARS_SCORE_VERSION;
-  const dimensions = probeScorecard ? buildArs3Dimensions(probeScorecard) : [];
+  const finalScore = probeScorecard.score;
+  const finalScoreVersion = probeScorecard.version || ARS_SCORE_VERSION;
+  const dimensions = buildArs3Dimensions(probeScorecard);
 
   emit({
     type: 'progress',

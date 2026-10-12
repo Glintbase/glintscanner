@@ -52,6 +52,8 @@ export interface Ars2Scorecard {
     description: string;
     fixCommand: string;
     targetFile: string;
+    /** Unified-diff style fix, newline-joined (from the check's remediation). */
+    diffSnippet?: string;
   }>;
   results?: CheckResult[];
 }
@@ -290,13 +292,10 @@ export async function runArs3ProbesDetailed(
 
   for (const check of allResults) {
     if (check.remediation && (check.status === 'fail' || check.status === 'warn')) {
-      const def = check;
       remediations.push({
         id: check.checkId,
-        layer: (check.checkId.startsWith('robots') || check.checkId.startsWith('ard')) ? 'discovery'
-          : (check.checkId.startsWith('llms') || check.checkId.startsWith('anti-spa') || check.checkId.startsWith('content')) ? 'access'
-          : check.checkId.startsWith('mcp') || check.checkId.startsWith('auth') ? 'usability'
-          : 'payments',
+        // The registry owns each check's layer; id prefixes are not reliable.
+        layer: getCheckById(check.checkId)?.layer ?? 'discovery',
         severity: check.status === 'fail' ? 'critical' : 'high',
         title: check.remediation.title,
         description: check.message,

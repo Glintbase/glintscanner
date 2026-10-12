@@ -60,6 +60,20 @@ function parametersOf(spec: any, path: string, op: any): any[] {
   return [...(pathItem.parameters || []), ...(op.parameters || [])].map((p) => resolveRef(spec, p)).filter(Boolean);
 }
 
+/** application/json, application/json; charset=utf-8, application/problem+json, application/vnd.x+json ... */
+export function isJsonMediaType(mediaType: string): boolean {
+  const base = mediaType.split(';')[0].trim().toLowerCase();
+  return base === 'application/json' || /^application\/[a-z0-9.!#$&^_-]+\+json$/.test(base);
+}
+
+/** First JSON media object of an OpenAPI `content` map (exact application/json preferred). */
+export function jsonMediaOf(content: any): any {
+  if (!content || typeof content !== 'object') return undefined;
+  if (content['application/json']) return content['application/json'];
+  const key = Object.keys(content).find(isJsonMediaType);
+  return key ? content[key] : undefined;
+}
+
 function responseHasSchema(spec: any, response: any): boolean {
   const res = resolveRef(spec, response);
   if (!res || typeof res !== 'object') return false;
@@ -96,7 +110,7 @@ export function inspectOpenApi(spec: any): OpenApiInspection {
     const swaggerBody = params.find((p) => p?.in === 'body');
     if (body || swaggerBody) {
       bodies++;
-      const jsonMedia = body?.content?.['application/json'];
+      const jsonMedia = jsonMediaOf(body?.content);
       if (jsonMedia?.schema || swaggerBody?.schema) bodiesWithSchema++;
     }
 

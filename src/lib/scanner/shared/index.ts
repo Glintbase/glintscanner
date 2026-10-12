@@ -12,3 +12,4 @@ export {
   type ScoreBand,
   type ScoreBandKey,
 } from './scoreBand';
+export { layerChipsFromChecks, type LayerChip } from './layerChips';

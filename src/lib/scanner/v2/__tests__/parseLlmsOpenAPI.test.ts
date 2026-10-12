@@ -91,3 +91,24 @@ describe('isContentSuspicious', () => {
     expect(isContentSuspicious(html, words, 'docs')).toBe(false);
   });
 });
+
+describe('inspectOpenApi JSON request bodies', () => {
+  it('counts schemas under any JSON media type', async () => {
+    const { inspectOpenApi, isJsonMediaType } = await import('../openapiInspect');
+    expect(isJsonMediaType('application/json; charset=utf-8')).toBe(true);
+    expect(isJsonMediaType('application/merge-patch+json')).toBe(true);
+    expect(isJsonMediaType('application/x-www-form-urlencoded')).toBe(false);
+    expect(isJsonMediaType('text/json+plain')).toBe(false);
+
+    const schema = { type: 'object' };
+    const result = inspectOpenApi({
+      openapi: '3.1.0',
+      paths: {
+        '/a': { post: { requestBody: { content: { 'application/json; charset=utf-8': { schema } } } } },
+        '/b': { patch: { requestBody: { content: { 'application/merge-patch+json': { schema } } } } },
+        '/c': { post: { requestBody: { content: { 'application/x-www-form-urlencoded': { schema } } } } },
+      },
+    });
+    expect(result.requestBodies).toEqual({ total: 3, withJsonSchema: 2 });
+  });
+});

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { calculateScoreDimensions, ARS_VERSION, type ScoreDimension } from '@/lib/scanner/v2/scoring';
 import { deriveCompany, deriveCompanySlug, scoreBand, getArsGrade } from '@/lib/scanner/shared';
 import { ARS_LABEL } from '@/lib/scanner/version';
+import { getCheckById } from '@/lib/scanner/v2/probes/registry';
 import dynamic from 'next/dynamic';
 
 import MachineTopologyMap from './MachineTopologyMap';
@@ -22,6 +23,11 @@ const ARS3_LAYER_LABELS: Record<string, string> = {
   usability: 'Layer 3: Usability & Interoperability',
   payments: 'Layer 4: Payments & Commerce',
 };
+
+/** Layer of a check result: the registry owns it; id prefixes are not reliable. */
+function layerForCheck(c: any): string {
+  return c?.layer || (c?.checkId ? getCheckById(c.checkId)?.layer : undefined) || 'discovery';
+}
 
 const SURFACE_LABELS: Record<string, string> = {
   landing: 'Landing Page',
@@ -163,7 +169,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
   const soft404Detected = useMemo(() => {
     if (ars3Scorecard?.layers?.access?.checks) {
       return ars3Scorecard.layers.access.checks.some(
-        (c: any) => c.checkId === 'anti-spa-404-canary' && c.status === 'fail'
+        (c: any) => c.checkId === 'anti-spa-404' && c.status === 'fail'
       );
     }
     if (pages && pages.some((p: any) => p.fetchStatus === 'soft_404')) {
@@ -266,12 +272,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
       if (failedOrWarned.length > 0) {
         return failedOrWarned.map((c: any) => {
-          const layerKey = c.layer || (
-            c.checkId?.startsWith('robots') || c.checkId?.startsWith('ard') || c.checkId?.startsWith('ai-cat') || c.checkId?.startsWith('registry') ? 'discovery' :
-            c.checkId?.startsWith('llms') || c.checkId?.startsWith('anti-spa') || c.checkId?.startsWith('content') || c.checkId?.startsWith('zero-js') || c.checkId?.startsWith('openapi') ? 'access' :
-            c.checkId?.startsWith('mcp') || c.checkId?.startsWith('auth') || c.checkId?.startsWith('rate-limit') ? 'usability' :
-            'payments'
-          );
+          const layerKey = layerForCheck(c);
 
           return {
             id: c.checkId,
@@ -375,12 +376,7 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
           if (seenIds.has(key)) continue;
           seenIds.add(key);
 
-          const layerKey = c.layer || (
-            c.checkId?.startsWith('robots') || c.checkId?.startsWith('ard') ? 'discovery' :
-            c.checkId?.startsWith('llms') || c.checkId?.startsWith('anti-spa') || c.checkId?.startsWith('content') ? 'access' :
-            c.checkId?.startsWith('mcp') || c.checkId?.startsWith('auth') ? 'usability' :
-            'payments'
-          );
+          const layerKey = layerForCheck(c);
 
           const diffStr = c.remediation.diffSnippet
             ? (Array.isArray(c.remediation.diffSnippet) ? c.remediation.diffSnippet.join('\n') : c.remediation.diffSnippet)
@@ -1207,8 +1203,8 @@ export default function ResultsReport({ score, checks: rawChecks, scanId, url }:
 
           {/* ARS 3.0 Machine Topology Map */}
           <MachineTopologyMap
-            graph={checks?.graph}
-            surfaces={checks?.surfaces || discoverablesList}
+            graph={graph}
+            surfaces={!Array.isArray(rawChecks) && rawChecks?.surfaces?.length ? rawChecks.surfaces : discoverablesList}
             targetUrl={url || ''}
           />
 

@@ -244,6 +244,13 @@ export default function Ars3LiveHud({
           </div>
         </div>
 
+        {/* Slow-target notice: the client waits up to 120 s for the probe suite */}
+        {isScanning && !scanError && elapsedMs > 15000 && (
+          <div className="mb-6 p-3 rounded-xl bg-white/[0.03] border border-white/[0.08] text-white/60 text-xs font-mono">
+            Still probing: this site is responding slowly. Scans of slow sites can take up to 2 minutes.
+          </div>
+        )}
+
         {/* Scan Error Banner (if scan failed or target was invalid) */}
         {scanError && (
           <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 flex items-center justify-between gap-4">

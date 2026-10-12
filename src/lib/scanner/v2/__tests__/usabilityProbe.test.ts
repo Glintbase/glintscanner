@@ -157,6 +157,56 @@ describe('probeUsability MCP host discovery', () => {
     expect(mcpServer.endpoint).toBe('https://mcp.acme.com');
     expect(byId(checks).get('mcp-tools-listing')!.status).toBe('warn'); // tools hidden behind auth
   });
+
+  it('does not treat a generic 401 on an MCP-like path as an MCP server (GET and POST)', async () => {
+    const calls: string[] = [];
+    mockFetch((url, opts) => {
+      calls.push(`${opts.method || 'GET'} ${url}`);
+      if (url === 'https://app.example.com/api/mcp') {
+        return {
+          ok: false,
+          status: 'ok',
+          httpStatus: 401,
+          headers: { 'www-authenticate': 'Bearer realm="app"' },
+          body: '{"error":"unauthorized"}',
+          contentType: 'application/json',
+        };
+      }
+      return undefined;
+    });
+    const { mcpServer } = await probeUsability('https://app.example.com', { kind: 'product' });
+    expect(mcpServer.live).toBe(false);
+    expect(calls).toContain('POST https://app.example.com/api/mcp');
+  });
+
+  it('accepts a 401 on an MCP path that answers with a JSON-RPC envelope', async () => {
+    mockFetch((url) =>
+      url === 'https://app.example.com/mcp'
+        ? {
+            ok: false,
+            status: 'ok',
+            httpStatus: 401,
+            body: '{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"Unauthorized"}}',
+            contentType: 'application/json',
+          }
+        : undefined
+    );
+    const { mcpServer } = await probeUsability('https://app.example.com', { kind: 'product' });
+    expect(mcpServer.live).toBe(true);
+    expect(mcpServer.endpoint).toBe('https://app.example.com/mcp');
+  });
+
+  it('probes sibling hosts on the registrable domain for multi-label suffixes', async () => {
+    const urls: string[] = [];
+    mockFetch((url) => {
+      urls.push(url);
+      return undefined;
+    });
+    await probeUsability('https://www.acme.co.uk', { kind: 'product' });
+    expect(urls.some((x) => x.startsWith('https://docs.acme.co.uk/'))).toBe(true);
+    expect(urls.some((x) => x.startsWith('https://mcp.acme.co.uk'))).toBe(true);
+    expect(urls.some((x) => x.includes('//docs.co.uk'))).toBe(false);
+  });
 });
 
 describe('probeAccess with minified HTML', () => {

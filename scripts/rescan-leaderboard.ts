@@ -16,6 +16,7 @@ import { createClient } from '@supabase/supabase-js';
 import { runScan } from '../src/lib/scanner/core/runScan';
 import { persistScan } from '../src/lib/scanner/persistScan';
 import { deriveCompanySlug } from '../src/lib/scanner/shared/url';
+import { fetchLeaderboardScanRows, dedupeLatestBySlug } from '../src/lib/leaderboardRows';
 import { ARS_SCORE_VERSION, isCurrentArsVersion } from '../src/lib/scanner/version';
 
 const args = process.argv.slice(2);
@@ -30,14 +31,6 @@ const FORCE = flag('force');
 const LIMIT = option('limit', Infinity);
 const CONCURRENCY = Math.max(1, option('concurrency', 2));
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.toLowerCase().replace(/^www\./, '');
-  } catch {
-    return url.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase().replace(/^www\./, '');
-  }
-}
-
 async function main() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -47,24 +40,18 @@ async function main() {
   }
   const supabase = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
 
-  const { data, error } = await supabase
-    .from('public_scans')
-    .select('url, score, score_version, created_at')
-    .order('created_at', { ascending: false });
+  // Pages through every row (a single response stops at 1000 rows).
+  const { data, error } = await fetchLeaderboardScanRows(supabase);
   if (error) throw error;
 
-  // Latest scan per domain, same dedupe as the leaderboard page.
-  const latest = new Map<string, { url: string; score: number; score_version: string | null }>();
-  for (const row of data || []) {
-    const host = hostOf(row.url);
-    if (!latest.has(host)) latest.set(host, row);
-  }
+  // Latest scan per company slug, same dedupe as the leaderboard page.
+  const latest = dedupeLatestBySlug(data || []);
 
-  const queue = Array.from(latest.values())
+  const queue = latest
     .filter((row) => FORCE || !isCurrentArsVersion(row.score_version))
     .slice(0, LIMIT);
 
-  console.log(`${latest.size} domains on the leaderboard; rescanning ${queue.length} with ${ARS_SCORE_VERSION}${APPLY ? '' : ' (dry run, nothing saved)'}\n`);
+  console.log(`${latest.length} companies on the leaderboard; rescanning ${queue.length} with ${ARS_SCORE_VERSION}${APPLY ? '' : ' (dry run, nothing saved)'}\n`);
 
   const results: Array<{ url: string; old: number; oldVersion: string; score?: number; grade?: string; coverage?: number; saved?: boolean; error?: string }> = [];
   let next = 0;

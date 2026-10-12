@@ -1,6 +1,6 @@
 import { ImageResponse } from 'next/og';
 import { getScanBySlug, deriveCompany } from '@/lib/resolveSlug';
-import { scoreBand } from '@/lib/scanner/shared';
+import { scoreBand, layerChipsFromChecks } from '@/lib/scanner/shared';
 
 export const runtime = 'edge';
 
@@ -18,7 +18,6 @@ export default async function Image({ params }: { params: { slug: string } }) {
   const scanUrl = data?.url || 'Unknown';
   const score = data?.score ?? 0;
   const rawChecks = data?.checks || [];
-  const checks = Array.isArray(rawChecks) ? rawChecks : (rawChecks?.surfaces || []);
   const company = deriveCompany(scanUrl);
   const band = scoreBand(score);
   let displayDomain = scanUrl;
@@ -29,30 +28,8 @@ export default async function Image({ params }: { params: { slug: string } }) {
   }
   displayDomain = displayDomain.toLowerCase().replace(/^www\./i, '');
 
-  // Derive status indicators from check categories
-  const indicators: { label: string; passed: boolean }[] = [];
-  for (const check of checks) {
-    if (check.category === 'context') {
-      const hasLlmsTxt = check.results?.some((r: any) => r.id === 'llms_txt' && r.passed);
-      indicators.push({ label: 'llms.txt', passed: !!hasLlmsTxt });
-    }
-    if (check.category === 'machine') {
-      const hasSchema = check.results?.some((r: any) => r.id === 'structured_data' && r.passed);
-      indicators.push({ label: 'Structured Data', passed: !!hasSchema });
-    }
-    if (check.category === 'agent') {
-      const hasMcp = check.results?.some((r: any) => r.id === 'mcp_endpoint' && r.passed);
-      indicators.push({ label: 'MCP Ready', passed: !!hasMcp });
-    }
-  }
-  // Fallback indicators if checks are sparse
-  if (indicators.length === 0) {
-    indicators.push(
-      { label: 'Context', passed: score >= 40 },
-      { label: 'Code', passed: score >= 50 },
-      { label: 'Machine', passed: score >= 30 },
-    );
-  }
+  // Chips come only from the persisted ARS scorecard layers; legacy scans get none.
+  const indicators = layerChipsFromChecks(rawChecks);
 
   return new ImageResponse(
     (
