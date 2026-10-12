@@ -1,6 +1,25 @@
 -- Glintscanner Relational Graph Migration Script
 -- Run this in your Supabase SQL Editor (https://supabase.com/dashboard/project/_/sql)
 
+-- Base table for scan results (columns written by src/lib/scanner/persistScan.ts).
+-- IF NOT EXISTS keeps this safe on databases that already have it.
+CREATE TABLE IF NOT EXISTS public_scans (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    url TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    checks JSONB NOT NULL,
+    score_version TEXT,
+    dimension_scores JSONB,
+    duration_ms INTEGER,
+    company_slug TEXT,
+    is_latest BOOLEAN NOT NULL DEFAULT TRUE,
+    status TEXT DEFAULT 'complete',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_public_scans_slug_latest ON public_scans(company_slug, is_latest);
+CREATE INDEX IF NOT EXISTS idx_public_scans_created_at ON public_scans(created_at DESC);
+
 -- Create scan_nodes table (scoped per scan)
 CREATE TABLE IF NOT EXISTS scan_nodes (
     scan_id UUID REFERENCES public_scans(id) ON DELETE CASCADE,

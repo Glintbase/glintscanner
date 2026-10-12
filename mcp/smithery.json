@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "https://smithery.ai/docs/config/v1.json",
   "startCommand": {
     "type": "stdio",

@@ -10,7 +10,6 @@ export async function POST(req: NextRequest) {
     error: 'registration_not_supported',
     error_description:
       'Unauthenticated Dynamic Client Registration (DCR) is deprecated. MCP clients must identify via Client ID Metadata Documents (CIMD), passing an HTTPS client_id URL to /api/oauth/authorize.',
-    documentation_uri: 'https://scan.glintbase.dev/docs/mcp/cimd',
   };
 
   return new Response(JSON.stringify(errorPayload, null, 2), {

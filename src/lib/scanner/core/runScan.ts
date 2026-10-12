@@ -412,18 +412,22 @@ export async function runScan(
   });
 
   // Parallel execution of surface discovery & ARS 3.0 4-layer probe suite with real-time layer streaming
+  // Cap discovery at 7 s; clear the timer so it doesn't keep the process (CLI) alive.
+  let discoveryTimer: ReturnType<typeof setTimeout> | undefined;
   const safeDiscovery: Promise<{ url: string; score: number; surfaces: DiscoveredSurface[] }> = Promise.race([
     discoverEcosystem(url, (log) => emit(log), enabledSurfaces),
-    new Promise<{ url: string; score: number; surfaces: DiscoveredSurface[] }>((resolve) =>
-      setTimeout(() => {
+    new Promise<{ url: string; score: number; surfaces: DiscoveredSurface[] }>((resolve) => {
+      discoveryTimer = setTimeout(() => {
         resolve({
           url,
           score: 0,
           surfaces: [] as DiscoveredSurface[],
         });
-      }, 7000)
-    ),
-  ]).catch((err) => {
+      }, 7000);
+    }),
+  ])
+    .finally(() => clearTimeout(discoveryTimer))
+    .catch((err) => {
     console.warn('Surface discovery failed:', err);
     return {
       url,

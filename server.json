@@ -1,4 +1,4 @@
-﻿{
+{
   "$schema": "https://registry.modelcontextprotocol.io/schema/server.json",
   "name": "io.github.Glintbase/glintbase-mcp",
   "version": "3.1.0",
