@@ -15,6 +15,7 @@
  * No API keys. No .env. No config. Just tools.
  */
 
+import pkg from '../package.json';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createSession } from './session.js';
@@ -23,7 +24,7 @@ import { registerSkillPromptsAndResources } from './skills.js';
 
 const server = new McpServer({
   name: 'glintbase',
-  version: '3.1.0',
+  version: pkg.version,
 });
 
 // 1. Register 8 Bundled Skills (Prompts & Resources)
