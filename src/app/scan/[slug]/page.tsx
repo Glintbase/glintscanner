@@ -7,6 +7,9 @@ import { getScanBySlug, deriveCompany } from "@/lib/resolveSlug";
 import { scoreBandLabel } from "@/lib/scanner/shared";
 import { ARS_LABEL, isCurrentArsVersion } from "@/lib/scanner/version";
 import ShareScorecard from "@/components/scanner/ShareScorecard";
+import ScoreHistory from "@/components/scanner/ScoreHistory";
+import { fetchScanHistory } from "@/lib/scanHistory";
+import { deriveCompanySlug } from "@/lib/scanner/shared";
 
 export const dynamic = 'force-dynamic';
 
@@ -94,6 +97,8 @@ export default async function DynamicSlugScanPage({
   const score = data.score;
   const checks = data.checks;
   const url = data.url;
+  const companySlug: string = (data.company_slug || deriveCompanySlug(url) || '').toLowerCase();
+  const history = companySlug ? await fetchScanHistory(companySlug) : [];
 
   // JSON-LD Structured Data
   const jsonLd = {
@@ -168,6 +173,8 @@ export default async function DynamicSlugScanPage({
       )}
 
       <ResultsReport score={score} checks={checks} scanId={data.id} url={url} />
+
+      <ScoreHistory slug={companySlug} entries={history} currentScanId={data.id} />
 
       <ShareScorecard
         slug={params.slug}

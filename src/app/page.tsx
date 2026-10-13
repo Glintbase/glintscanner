@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Search, Activity, Zap, ExternalLink, Settings, Check } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import Ars3LiveHud from "@/components/scanner/Ars3LiveHud";
 import ResultsReport from "@/components/scanner/ResultsReport";
@@ -11,6 +12,8 @@ import EmailGateModal from "@/components/scanner/EmailGateModal";
 import { SiteNav } from "@/components/layout/SiteNav";
 import { SiteFooter } from "@/components/layout/SiteFooter";
 import { supabase } from "@/lib/supabase/client";
+import { dedupeLatestBySlug, type LeaderboardScanRow } from "@/lib/leaderboardRows";
+import { ARS_SCORE_VERSION } from "@/lib/scanner/version";
 import {
   normalizeUrl,
   deriveCompanySlug,
@@ -24,13 +27,6 @@ const LEAD_STORAGE_KEY = "glintbase_lead_email";
 /** Client-side scan budget (server maxDuration is 300 s). */
 const SCAN_CLIENT_TIMEOUT_MS = 120_000;
 
-// ─── Pre-scanned examples ─────────────────────────────────────────────────
-const EXAMPLES = [
-  { name: "Stripe", url: "docs.stripe.com", score: 95, band: scoreBandLabel(95) },
-  { name: "Twilio", url: "www.twilio.com/docs", score: 88, band: scoreBandLabel(88) },
-  { name: "Supabase", url: "supabase.com/docs", score: 74, band: scoreBandLabel(74) },
-  { name: "Vercel", url: "vercel.com/docs", score: 38, band: scoreBandLabel(38) },
-];
 
 // Site chrome (logo, nav, footer) lives in src/components/layout/
 
@@ -111,106 +107,45 @@ export default function Home() {
   } | null>(null);
 
   useEffect(() => {
+    // Real, current-version scans only. If the query fails we show nothing rather
+    // than placeholder scores.
     async function loadScans() {
       try {
-        const { data: recentData, error: recentErr } = await supabase
+        const { data, error } = await supabase
           .from("public_scans")
-          .select("id, url, score")
+          .select("id, url, score, score_version, created_at, is_latest")
+          .eq("is_latest", true)
+          .eq("score_version", ARS_SCORE_VERSION)
           .order("created_at", { ascending: false })
-          .limit(4);
+          .limit(500);
+        if (error || !data) return;
 
-        if (!recentErr && recentData && recentData.length > 0) {
-          setRecentScans(
-            recentData.map((item) => {
-              let domain = item.url;
-              try {
-                domain = new URL(item.url).hostname;
-              } catch {
-                domain = item.url.replace(/^https?:\/\//i, "").split("/")[0];
-              }
-              let company = domain.split(".")[0];
-              if (company === "www" || company === "docs") {
-                company = domain.split(".")[1] || company;
-              }
-              company = company.charAt(0).toUpperCase() + company.slice(1);
-
-              return {
-                id: item.id,
-                name: company,
-                url: domain,
-                score: item.score,
-                band: scoreBandLabel(item.score),
-              };
-            })
-          );
-        } else {
-          setRecentScans(EXAMPLES);
-        }
-
-        const { data: topData, error: topErr } = await supabase
-          .from("public_scans")
-          .select("id, url, score")
-          .order("score", { ascending: false })
-          .limit(100);
-
-        if (!topErr && topData && topData.length > 0) {
-          const uniqueDomains = new Map<string, typeof topData[0]>();
-          for (const item of topData) {
-            let domain = item.url;
-            try {
-              domain = new URL(item.url).hostname;
-            } catch {
-              domain = item.url.replace(/^https?:\/\//i, "").split("/")[0];
-            }
-            const existing = uniqueDomains.get(domain);
-            if (!existing || existing.score < item.score) {
-              uniqueDomains.set(domain, item);
-            }
+        const entries = dedupeLatestBySlug(data as LeaderboardScanRow[]);
+        const hostOf = (u: string) => {
+          try {
+            return new URL(u).hostname.replace(/^www\./, "");
+          } catch {
+            return u.replace(/^https?:\/\//i, "").split("/")[0];
           }
+        };
 
-          const top5 = Array.from(uniqueDomains.values())
+        setRecentScans(
+          entries.slice(0, 4).map((e) => ({
+            id: e.id,
+            name: e.company,
+            url: hostOf(e.url),
+            score: e.score,
+            band: scoreBandLabel(e.score),
+          }))
+        );
+        setTopRankings(
+          [...entries]
             .sort((a, b) => b.score - a.score)
             .slice(0, 5)
-            .map((item, index) => {
-              let domain = item.url;
-              try {
-                domain = new URL(item.url).hostname;
-              } catch {
-                domain = item.url.replace(/^https?:\/\//i, "").split("/")[0];
-              }
-              let company = domain.split(".")[0];
-              if (company === "www" || company === "docs") {
-                company = domain.split(".")[1] || company;
-              }
-              company = company.charAt(0).toUpperCase() + company.slice(1);
-
-              return {
-                id: item.id,
-                rank: index + 1,
-                company,
-                url: domain,
-                score: item.score,
-              };
-            });
-
-          setTopRankings(top5);
-        } else {
-          setTopRankings([
-            { rank: 1, company: "Stripe", url: "docs.stripe.com", score: 95 },
-            { rank: 2, company: "Twilio", url: "www.twilio.com/docs", score: 88 },
-            { rank: 3, company: "Supabase", url: "supabase.com/docs", score: 74 },
-            { rank: 4, company: "Vercel", url: "vercel.com/docs", score: 38 },
-          ]);
-        }
+            .map((e, index) => ({ id: e.id, rank: index + 1, company: e.company, url: hostOf(e.url), score: e.score }))
+        );
       } catch (err) {
         console.error("Error loading dynamic dashboard scans:", err);
-        setRecentScans(EXAMPLES);
-        setTopRankings([
-          { rank: 1, company: "Stripe", url: "docs.stripe.com", score: 95 },
-          { rank: 2, company: "Twilio", url: "www.twilio.com/docs", score: 88 },
-          { rank: 3, company: "Supabase", url: "supabase.com/docs", score: 74 },
-          { rank: 4, company: "Vercel", url: "vercel.com/docs", score: 38 },
-        ]);
       }
     }
 
@@ -641,8 +576,11 @@ export default function Home() {
                   <div className="flex flex-col gap-3 group">
                     <div className="relative rounded-2xl overflow-hidden border border-white/10 group-hover:border-[#FF3300]/40 transition-all duration-500 bg-black shadow-[0_0_30px_rgba(0,0,0,0.8)] shadow-black">
                       <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-65 z-10" />
-                      <img 
-                        src="/images/real_dashboard_hero.png" 
+                      <Image
+                        src="/images/real_dashboard_hero.png"
+                        width={1598}
+                        height={883}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         alt="Ecosystem Readiness Dashboard" 
                         className="w-full h-auto object-cover opacity-90 group-hover:scale-[1.02] transition-transform duration-500"
                       />
@@ -657,8 +595,11 @@ export default function Home() {
                   <div className="flex flex-col gap-3 group">
                     <div className="relative rounded-2xl overflow-hidden border border-white/10 group-hover:border-[#22D3EE]/40 transition-all duration-500 bg-black shadow-[0_0_30px_rgba(0,0,0,0.8)] shadow-black">
                       <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-65 z-10" />
-                      <img 
-                        src="/images/real_dimensions_section.png" 
+                      <Image
+                        src="/images/real_dimensions_section.png"
+                        width={1598}
+                        height={883}
+                        sizes="(min-width: 1024px) 50vw, 100vw"
                         alt="Collapsible Diagnostic Dimensions" 
                         className="w-full h-auto object-cover opacity-90 group-hover:scale-[1.02] transition-transform duration-500"
                       />

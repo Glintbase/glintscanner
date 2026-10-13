@@ -51,3 +51,28 @@ describe('probeDiscovery robots.txt', () => {
     expect(robotsPolicy.botsAllowed).toContain('claudebot');
   });
 });
+
+describe('discovery fetch policy', () => {
+  it('does not follow a redirect to a private address', async () => {
+    const { discoverEcosystem } = await import('../discovery');
+    const calls: string[] = [];
+    // Behaves like real fetch: follows redirects itself unless redirect: 'manual'.
+    const fake = async (input: any, init?: RequestInit): Promise<Response> => {
+      const u = String(input?.url ?? input);
+      calls.push(u);
+      if (u === 'https://redirector.example.com/robots.txt') {
+        const target = 'http://169.254.169.254/latest/meta-data';
+        if (init?.redirect === 'manual') return new Response(null, { status: 302, headers: { location: target } });
+        return fake(target, init);
+      }
+      if (u === 'https://redirector.example.com/' || u === 'https://redirector.example.com') {
+        return new Response('<html><head><title>x</title></head><body><h1>Site</h1></body></html>', { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      return new Response('not found', { status: 404 });
+    };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fake as any);
+    await discoverEcosystem('https://redirector.example.com', () => {}).catch(() => undefined);
+    expect(calls).toContain('https://redirector.example.com/robots.txt');
+    expect(calls.some((u) => u.includes('169.254.169.254'))).toBe(false);
+  }, 30000);
+});

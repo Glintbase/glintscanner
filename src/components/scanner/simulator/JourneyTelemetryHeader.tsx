@@ -1,7 +1,7 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import React from 'react';
+import Image from 'next/image';
 import { Sparkles, RotateCw, Play } from 'lucide-react';
 import type { HarnessType, JourneyTelemetryStats } from '@/lib/scanner/simulator/types';
 
@@ -59,9 +59,11 @@ export default function JourneyTelemetryHeader({
 
           {/* Agent Mascot Pill */}
           <div className="bg-[#1C1C1F] border border-white/[0.08] rounded-md px-3 py-1 flex items-center gap-2 text-xs font-mono text-white/80">
-            <img
+            <Image
               src={harnessMeta.mascotImg}
               alt={harnessMeta.label}
+              width={16}
+              height={16}
               className="w-4 h-4 object-contain rounded-xs"
             />
             <span className="font-semibold text-white">{harnessMeta.label}</span>

@@ -1,22 +1,42 @@
 import { DiscoveredSurface, ScanV2Report } from './types';
 import { fetchResource, verifyUrlExists } from './fetchResource';
+import { validateScanUrl } from './urlPolicy';
 import { parseLlmsTxt } from './parseLlmsTxt';
 import { parseOpenAPI } from './parseOpenAPI';
 
 // Timeout fetch helper (legacy wrapper — prefer fetchResource for new code)
+const MAX_REDIRECTS = 5;
+
+/**
+ * Discovery fetch with the same URL policy as the scored probes: every URL and every
+ * redirect hop is checked (no private-network or non-standard targets), and redirects
+ * are followed manually so a public URL cannot bounce the scanner somewhere internal.
+ */
 async function fetchWithTimeout(url: string, timeoutMs = 5000, options: RequestInit = {}): Promise<Response | null> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(url, {
-      ...options,
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; Glintscanner-V2/2.0)',
-        ...options.headers,
-      },
-    });
-    return response;
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const policy = validateScanUrl(current, { allowHttp: true });
+      if (!policy.ok || !policy.url) return null;
+      const response = await fetch(policy.url, {
+        ...options,
+        redirect: 'manual',
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; Glintscanner-V2/2.0)',
+          ...options.headers,
+        },
+      });
+      const location = response.headers.get('location');
+      if (response.status >= 300 && response.status < 400 && location) {
+        current = new URL(location, policy.url).href;
+        continue;
+      }
+      return response;
+    }
+    return null;
   } catch {
     return null;
   } finally {

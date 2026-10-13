@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Copy, Check, Download, Share2 } from "lucide-react";
 
 interface ShareScorecardProps {
@@ -47,12 +48,14 @@ export default function ShareScorecard({ slug, company, score, band }: ShareScor
           {/* Scorecard preview */}
           <div className="md:w-1/2 flex-shrink-0">
             <div className="rounded-xl border border-white/10 overflow-hidden bg-black">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              {/* Local route rendering a 1200x630 PNG (see api/scorecard/[slug]). */}
+              <Image
                 src={scorecardPath}
                 alt={`${company} Agent Readiness scorecard — ${score}/100`}
+                width={1200}
+                height={630}
+                sizes="(min-width: 768px) 360px, 100vw"
                 className="w-full h-auto block"
-                loading="lazy"
               />
             </div>
           </div>

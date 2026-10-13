@@ -1,7 +1,7 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import React, { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import {
   Sparkles,
   Play,
@@ -550,9 +550,11 @@ export default function FlightSimulatorCockpit({
                     }`}
                   >
                     <div className="w-full flex items-center justify-between pb-3">
-                      <img
+                      <Image
                         src={choice.mascotImg}
                         alt={choice.name}
+                        width={40}
+                        height={40}
                         className="w-10 h-10 object-contain rounded"
                       />
                       <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded bg-white/[0.06] text-stone-300 font-bold border border-white/[0.08]">

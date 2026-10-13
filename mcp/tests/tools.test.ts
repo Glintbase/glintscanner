@@ -170,7 +170,7 @@ describe('MCP Client & Server E2E Verification', () => {
       });
       expect(arResult.isError).toBeFalsy();
       const arText = (arResult.content[0] as { text: string }).text;
-      expect(arText).toContain('ARS 3.0');
+      expect(arText).toContain('ARS 3.2');
 
       // 4. Call get_skill with unknown name -> structured helpful error
       const unknownResult = await client.callTool({
