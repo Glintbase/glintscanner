@@ -4,7 +4,7 @@
 
 Glintscanner audits whether **AI coding agents** can discover, traverse, and act on a product’s developer ecosystem. It produces a versioned **Agent Readiness Score (ARS)**.
 
-Hosted UI: Next.js app · Core logic: pure TypeScript pipeline · MCP: zero-config agent tools · CLI: `@glintbase/cli`
+Hosted UI: Next.js app · Core logic: pure TypeScript pipeline, published as `@glintbase/scanner-core` · MCP: zero-config agent tools · CLI: [`@glintbase/cli`](https://github.com/athertech/glintbase-cli) (separate repo)
 
 ## Pipeline
 
@@ -15,7 +15,7 @@ URL
  ▼
 1. Discovery       → surfaces (llms.txt, OpenAPI, MCP, docs, …) + content validation
 2. Classification  → canonical / freshness metadata & framework detection
-3. ARS 3.x probes  → 130 registered checks in 4 layers (v2/probes): discovery, access,
+3. ARS 3.x probes  → 129 registered checks in 4 layers (v2/probes): discovery, access,
                      usability (live MCP probe, OpenAPI inspection, auth.md), payments
 4. Scoring         → dynamic denominator; registry owns points/bonus; pass-only credit;
                      unverifiable checks are skip/na and excluded
@@ -53,10 +53,8 @@ Flight Simulator (/simulate), not by the ARS score.
 | `mcp/src/session.ts` | In-memory scan session (tools build on each other) |
 | `mcp/src/tools/*` | Tool implementations (discover, crawl, deep_crawl, graph, score, remediate) |
 | `mcp/src/cache.ts` | File-based session cache (.glintbase/cache/) |
-| `cli/` | Standalone CLI — terminal output, CI, local models |
-| `cli/src/commands/*` | scan, init, config, report commands |
-| `cli/src/providers.ts` | Provider resolution (Ollama, cloud, custom) |
-| `cli/src/output/*` | Terminal (picocolors + ora) and JSON formatters |
+| `core/` | `@glintbase/scanner-core` — publishable bundle of `src/lib/scanner` (ARS engine, registry, URL policy, MCP probe) with type declarations |
+| `core/src/index.ts` | Public API of the engine package (re-exports via the `@scanner` alias) |
 | `docs/specs/*` | Behavioral contracts |
 | `docs/methodology/ars-1.0.md` | Public scoring methodology |
 
@@ -83,15 +81,20 @@ See `migration.sql`.
 
 ## Packaging
 
-Shared core, two thin front-ends:
+Shared core, published two ways from this repo, consumed by the CLI from npm:
 
 ```
-src/lib/scanner/     ← scanner-core (imported by both)
-├── mcp/             ← @glintbase/mcp (zero-config MCP tools)
-└── cli/             ← @glintbase/cli (terminal + CI)
+src/lib/scanner/     ← the engine (web app imports it directly)
+├── core/            ← @glintbase/scanner-core (engine bundled by tsup + .d.ts, no runtime deps)
+└── mcp/             ← @glintbase/mcp (zero-config MCP tools; bundles the engine via tsup)
+
+github.com/athertech/glintbase-cli
+                     ← @glintbase/cli (terminal + CI) — depends on @glintbase/scanner-core
 ```
 
-Both bundle scanner-core via tsup at build time. No runtime dependency on the Next.js app.
+`core/` and `mcp/` bundle the engine via tsup at build time. No runtime dependency on the Next.js app.
+Release order when scoring changes: bump `src/lib/scanner/version.ts`, publish `@glintbase/scanner-core`,
+then bump the CLI's dependency range and publish `@glintbase/cli`.
 
 ## Semver policy
 

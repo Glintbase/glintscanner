@@ -45,23 +45,26 @@ jobs:
       # stdio server: it waits on stdin, so only check the bundle was produced.
       - run: test -s dist/index.js
 
-  cli:
-    name: CLI package (typecheck, test, build)
+  core:
+    name: scanner-core package (typecheck, build, pack)
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: cli
+        working-directory: core
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-          cache-dependency-path: cli/package-lock.json
+          cache-dependency-path: core/package-lock.json
+      # The package bundles ../src/lib/scanner; install the root so its sources resolve like they do for mcp.
       - run: npm ci --legacy-peer-deps
         working-directory: .
       - run: npm ci --legacy-peer-deps
-      - run: npx tsc --noEmit -p .
-      - run: npm test
+      - run: npm run typecheck
       - run: npm run build
-      - run: node dist/index.js --version
+      - run: test -s dist/index.js && test -s dist/index.d.ts
+      # The bundle must load and expose the engine without any runtime dependencies.
+      - run: node -e "import('./dist/index.js').then((m) => { if (typeof m.runArs3Probes !== 'function' || m.getAllChecks().length === 0) process.exit(1); console.log(m.ARS_SCORE_VERSION, m.getAllChecks().length + ' checks'); })"
+      - run: npm pack --dry-run

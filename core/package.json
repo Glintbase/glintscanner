@@ -1,0 +1,56 @@
+{
+  "name": "@glintbase/scanner-core",
+  "version": "3.3.0",
+  "description": "Glintbase ARS 3.2 agent-readiness scoring engine: the same probes, check registry and scoring used by scan.glintbase.dev",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "agent-readiness",
+    "ars-3.2",
+    "scanner",
+    "llms-txt",
+    "openapi",
+    "mcp",
+    "ai-agents"
+  ],
+  "homepage": "https://scan.glintbase.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Glintbase/glintscanner.git",
+    "directory": "core"
+  },
+  "bugs": {
+    "url": "https://github.com/Glintbase/glintscanner/issues"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit -p .",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.0"
+  }
+}

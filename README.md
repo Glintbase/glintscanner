@@ -27,7 +27,7 @@ Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discove
 
 - **Surface discovery** — `llms.txt`, `OpenAPI`, `MCP`, `sitemap.xml`, `auth.md`, `ard.json`, `robots.txt`
 - **Content validation** — empty/HTML soft-404s don’t max machine scores
-- **ARS 3.x probe engine** — 130 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
+- **ARS 3.x probe engine** — 129 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
 - **Live MCP probing** — handshake (2026-07-28 + legacy wire forms), `tools/list`, schema and annotation inspection, error-channel canary, and a read-only call only on tools annotated `readOnlyHint: true`
 - **OpenAPI inspection** — operationIds, request/error schemas, pagination, rate-limit headers, problem+json and more, read from the spec itself
 - **Flight Simulator** — separate agent journey simulations with visual DAGs and state replay (`#data=`) at `/simulate`; not part of the ARS score
@@ -36,18 +36,18 @@ Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discove
 
 ## Web vs CLI vs MCP — which should I use?
 
-All three surfaces score with the **same engine**: [`runScan`](./src/lib/scanner/core/runScan.ts), which runs the ARS 3.x probes in [`src/lib/scanner/v2/probes`](./src/lib/scanner/v2/probes). The same URL gets the same score on each; they differ only in how results are delivered.
+All three surfaces score with the **same engine**: the ARS 3.x probes in [`src/lib/scanner/v2/probes`](./src/lib/scanner/v2/probes) (wrapped by [`runScan`](./src/lib/scanner/core/runScan.ts) for the web app and MCP). The engine is published as [`@glintbase/scanner-core`](./core), which the CLI depends on. The same URL gets the same score on each; they differ only in how results are delivered.
 
-| | **Web** — [scan.glintbase.dev](https://scan.glintbase.dev) | **CLI** — `@glintbase/cli` | **MCP** — `@glintbase/mcp` |
+| | **Web** — [scan.glintbase.dev](https://scan.glintbase.dev) | **CLI** — [`@glintbase/cli`](https://github.com/athertech/glintbase-cli) | **MCP** — `@glintbase/mcp` |
 |---|---|---|---|
 | **Best for** | One-click hosted scan, sharing, leaderboard | Local runs + CI gates | Driving from inside a coding agent |
 | **Setup** | None (hosted) | `npm i -g`, optional `init` wizard | Zero-config — no `.env`, no keys |
-| **Scoring** | ARS 3.x probes (`runScan`) | ARS 3.x probes (`runScan`) | ARS 3.x probes (`score_readiness` calls `runScan`) |
-| **Extra tools** | Flight Simulator (`/simulate`) | `audit`, `check`, `mcp lint`, `remediate` | Diagnostic crawl / graph / journey tools (not part of the score) |
+| **Scoring** | ARS 3.x probes (`runScan`) | ARS 3.x probes (`runArs3Probes` from `@glintbase/scanner-core`) | ARS 3.x probes (`score_readiness` calls `runScan`) |
+| **Extra tools** | Flight Simulator (`/simulate`) | `audit` (URL or local codebase), `check`, `ci`, `mcp lint`, `fix`, `simulate` | Diagnostic crawl / graph / journey tools (not part of the score) |
 | **Output** | Interactive UI, saved report, badge | Terminal + JSON/Markdown, exit codes | Structured JSON per tool |
 | **Persistence** | Supabase (history, leaderboard) | Local files | In-memory session (+ file cache) |
 
-The ARS 3.x engine is deterministic HTTP probing; it does not crawl pages or run an LLM. The CLI's `--agent`, `--profile deep` and `--max-pages` flags are accepted but not used by it yet.
+The ARS 3.x engine is deterministic HTTP probing; it does not crawl pages or run an LLM.
 
 ## Quick start (web)
 
@@ -156,48 +156,30 @@ Agent: calls discover_surfaces → score_readiness → get_remediation
 Agent: "Score: 82/100 (AI-Friendly). Top fix: add llms.txt with quickstart links."
 ```
 
-## Standalone CLI (`@glintbase/cli`)
+## CLI (`@glintbase/cli`)
 
-Beautiful terminal output, CI integration, local model support.
-
-### Install
-
-```bash
-npm install -g @glintbase/cli
-# or
-npx @glintbase/cli scan https://docs.example.com
-```
-
-### Commands
+The Glintbase CLI lives in its own repository: [athertech/glintbase-cli](https://github.com/athertech/glintbase-cli)
+([npm](https://www.npmjs.com/package/@glintbase/cli)). From 3.3.0 it scores with `@glintbase/scanner-core`,
+so a CLI audit and a scan on scan.glintbase.dev use the same ARS 3.2 rules.
 
 ```bash
-glintbase init              # Interactive setup wizard (30 seconds)
-glintbase scan <url>        # Run full scan with progress spinners
-glintbase scan <url> --json # JSON output for CI/jq
-glintbase scan <url> --fail-under 70  # Exit 3 if below threshold
-glintbase config list       # Show resolved configuration
-glintbase report <file>     # Re-format a saved result
+npx @glintbase/cli audit https://docs.example.com            # ARS 3.2 audit
+npx @glintbase/cli audit https://docs.example.com --fail-under 70
+npx @glintbase/cli mcp lint https://api.example.com/api/mcp   # MCP server lint
 ```
 
-### Local models (Ollama / LM Studio)
+See the CLI README for local codebase audits, CI gates and the bundled MCP server.
 
-```bash
-glintbase init
-# Select "Ollama" → auto-detects models at localhost:11434
-glintbase scan https://docs.example.com --agent
-```
+## Programmatic API (`@glintbase/scanner-core`)
 
-### CI integration (GitHub Actions)
-
-```yaml
-- name: Agent Readiness Gate
-  run: npx @glintbase/cli scan https://docs.example.com --fail-under 70 --quiet
-```
-
-## Programmatic API
+The engine is published as [`@glintbase/scanner-core`](./core) (built from `core/`, which bundles
+`src/lib/scanner` with tsup; no runtime dependencies):
 
 ```ts
-import { runScan, formatScanMarkdown, ARS_VERSION } from './src/lib/scanner/core';
+import { runArs3Probes, runScan, formatScanMarkdown } from '@glintbase/scanner-core';
+
+const scorecard = await runArs3Probes('https://docs.example.com');
+console.log(scorecard.score, scorecard.version, scorecard.evidence); // e.g. 74, ars-3.2.0
 
 const result = await runScan(
   { url: 'https://docs.example.com', options: { profile: 'quick' } },
@@ -208,7 +190,7 @@ console.log(result.score, result.score_version); // e.g. 74, ars-3.2.0
 console.log(formatScanMarkdown(result));
 ```
 
-`runScan` has **no** Next.js or Supabase dependency — suitable for offline tooling and a future `@glintbase/scanner-core` package.
+`runScan` has **no** Next.js or Supabase dependency. Inside this repo you can also import it directly from `./src/lib/scanner/core`.
 
 ## Environment
 
