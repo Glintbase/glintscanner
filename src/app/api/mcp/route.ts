@@ -108,7 +108,7 @@ const TOOLS_MANIFEST = [
   },
   {
     name: 'glintbase_get_score',
-    description: 'Fetch ultra-compact ARS 3.0 score card (<200 tokens). Ideal for quick checks and CI status monitoring without burning agent context.',
+    description: 'Fetch ultra-compact ARS 3.2 score card (<200 tokens). Ideal for quick checks and CI status monitoring without burning agent context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -248,7 +248,7 @@ const RESOURCES_MANIFEST = [
   })),
   {
     uri: 'glintbase://schemas/ars3-spec',
-    name: 'ARS 3.0 Check Registry Specification',
+    name: 'ARS 3.2 Check Registry Specification',
     description: 'ARS 3.2 check registry across 4 layers (Discovery, Access, Usability, Payments)',
     mimeType: 'application/json',
   },
@@ -457,7 +457,7 @@ export async function POST(req: NextRequest) {
               role: 'user',
               content: {
                 type: 'text',
-                text: `You are executing the Glintbase ARS 3.0 Playbook: **${skill.title}**.\n\nTarget: ${target}\n${notes ? `Notes: ${notes}\n` : ''}\n## Playbook Reference Manual\n\n${skill.content}`,
+                text: `You are executing the Glintbase ARS 3.2 Playbook: **${skill.title}**.\n\nTarget: ${target}\n${notes ? `Notes: ${notes}\n` : ''}\n## Playbook Reference Manual\n\n${skill.content}`,
               },
             },
           ],
@@ -813,7 +813,7 @@ ${mermaidDiagram}`;
               content: [
                 {
                   type: 'text',
-                  text: `Skill "${skillQuery}" not found. Available ARS 3.0 playbooks:\n\n${available}\n\nCall get_skill with any of the skill names above.`,
+                  text: `Skill "${skillQuery}" not found. Available ARS 3.2 playbooks:\n\n${available}\n\nCall get_skill with any of the skill names above.`,
                 },
               ],
               isError: true,
