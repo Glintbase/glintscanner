@@ -1,6 +1,6 @@
 {
   "name": "@glintbase/scanner-core",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "Glintbase ARS 3.2 agent-readiness scoring engine: the same probes, check registry and scoring used by scan.glintbase.dev",
   "license": "Apache-2.0",
   "type": "module",

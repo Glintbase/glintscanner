@@ -136,6 +136,9 @@ export {
   type OpenApiOperationRef,
 } from '@scanner/v2/openapiInspect';
 
+// ── Bundled agent-readiness skills (playbooks served by the MCP servers & CLI) ──
+export { BUNDLED_SKILLS, type BundledSkill } from '@scanner/mcp/skills';
+
 // ── Full scan pipeline (discovery + graph + journeys + ARS) ─────────────────
 export {
   runScan,

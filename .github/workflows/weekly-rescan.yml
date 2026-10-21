@@ -39,6 +39,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
           ONLY: ${{ inputs.only }}
+          # The MCP Registry search is slow; give it longer than live scans get.
+          GLINTBASE_REGISTRY_TIMEOUT_MS: '45000'
         run: |
           set -euo pipefail
           ARGS=(--force --concurrency 4)

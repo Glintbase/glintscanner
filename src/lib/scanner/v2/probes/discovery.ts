@@ -1,5 +1,5 @@
 /**
- * ARS 3.0 Layer 1 Probe: Discovery (16 Checks | 20 Base Pts)
+ * ARS 3.2 Layer 1 Probe: Discovery
  * Evaluates robots.txt AI policy, ARD/Agent-Card catalogs, Wikidata P856,
  * MCP registry branding, agent rules, and package listings.
  */
@@ -8,6 +8,7 @@ import { fetchResource } from '../fetchResource';
 import { getChecksForLayer } from './registry';
 import { brandFromHostname, registrableDomain } from '../../shared/url';
 import type { CheckResult } from './types';
+import { lookupMcpRegistry, lookupSkillsSh, type ListingLookup } from './registryListings';
 
 export interface DiscoveryProbeResult {
   score: number;
@@ -29,6 +30,9 @@ export interface DiscoveryProbeResult {
     url?: string;
   };
 }
+
+/** Third-party lookups (Wikidata, npm) run in parallel with the slower registry lookups. */
+const EXTERNAL_LOOKUP_TIMEOUT_MS = 5000;
 
 /**
  * Resilient query helper with strict timeout to prevent stalling
@@ -388,20 +392,20 @@ export async function probeDiscovery(
 
   // ========================================================
   // 4. Wikidata P856 Official Website Claim (wikipedia-presence)
-  // Strict 1500ms timeout with local caching & resilient fallback
+  // A failed lookup leaves the bonus unverified (na), never failed
   // ========================================================
   const lookupWikidata = async (): Promise<boolean> => {
     if (localContext?.isLocalCodebase || hostname === 'localhost') return false;
     try {
       const wikiQueryUrl = `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(brandName)}&language=en&format=json`;
-      const wikiSearch = await resilientFetch(wikiQueryUrl, 1500);
+      const wikiSearch = await resilientFetch(wikiQueryUrl, EXTERNAL_LOOKUP_TIMEOUT_MS);
       if (wikiSearch.ok && wikiSearch.body) {
         const data = JSON.parse(wikiSearch.body);
         if (Array.isArray(data.search) && data.search.length > 0) {
           const entityId = data.search[0].id;
           if (entityId) {
             const entityUrl = `https://www.wikidata.org/wiki/Special:EntityData/${entityId}.json`;
-            const entityData = await resilientFetch(entityUrl, 1500);
+            const entityData = await resilientFetch(entityUrl, EXTERNAL_LOOKUP_TIMEOUT_MS);
             if (entityData.ok && entityData.body) {
               const entJson = JSON.parse(entityData.body);
               const claims = entJson.entities?.[entityId]?.claims;
@@ -426,24 +430,36 @@ export async function probeDiscovery(
 
   // npm package must exist under the brand name AND point back at the brand's domain or GitHub org,
   // otherwise any unrelated package that happens to share the name would pass.
-  const lookupNpm = async (): Promise<boolean> => {
-    if (localContext?.packageName) return true;
-    if (localContext?.isLocalCodebase || hostname === 'localhost') return false;
+  // A 404 means no such package; a timeout or server error means npm could not be checked,
+  // which is 'unverified' (skip), not a failure.
+  const lookupNpm = async (): Promise<'found' | 'not_found' | 'unverified'> => {
+    if (localContext?.packageName) return 'found';
+    if (localContext?.isLocalCodebase || hostname === 'localhost') return 'not_found';
     try {
-      const npmRes = await resilientFetch(`https://registry.npmjs.org/${encodeURIComponent(brandName)}/latest`, 1500);
-      if (!npmRes.ok || !npmRes.body) return false;
+      const npmRes = await resilientFetch(`https://registry.npmjs.org/${encodeURIComponent(brandName)}/latest`, EXTERNAL_LOOKUP_TIMEOUT_MS);
+      if (npmRes.status === 404) return 'not_found';
+      if (!npmRes.ok || !npmRes.body) return 'unverified';
       const pkg = JSON.parse(npmRes.body);
-      if (!pkg?.name) return false;
+      if (!pkg?.name) return 'unverified';
       const refs = [pkg.homepage, pkg.repository?.url, typeof pkg.repository === 'string' ? pkg.repository : '', pkg.bugs?.url]
         .filter((v): v is string => typeof v === 'string')
         .map((v) => v.toLowerCase());
-      return refs.some((r) => r.includes(apexDomain) || new RegExp(`github\\.com[/:]${brandName}[-/]`, 'i').test(r));
+      return refs.some((r) => r.includes(apexDomain) || new RegExp(`github\\.com[/:]${brandName}[-/]`, 'i').test(r)) ? 'found' : 'not_found';
     } catch {
-      return false;
+      return 'unverified';
     }
   };
 
-  const [hasWikiP856, hasNpmPackage] = await Promise.all([lookupWikidata(), lookupNpm()]);
+  // Registry listings need a public domain; a local codebase or localhost scan has none.
+  const remoteLookupsPossible = !localContext?.isLocalCodebase && hostname !== 'localhost';
+  const noRemoteLookup: ListingLookup = { outcome: 'unverified', reason: 'registry listings are only checked for public URLs' };
+
+  const [hasWikiP856, npmPackage, mcpRegistry, skillsSh] = await Promise.all([
+    lookupWikidata(),
+    lookupNpm(),
+    remoteLookupsPossible ? lookupMcpRegistry(apexDomain, brandName) : Promise.resolve(noRemoteLookup),
+    remoteLookupsPossible ? lookupSkillsSh(apexDomain, brandName) : Promise.resolve(noRemoteLookup),
+  ]);
 
   results.push({
     checkId: 'wikipedia-presence',
@@ -458,17 +474,20 @@ export async function probeDiscovery(
 
   // ========================================================
   // 5. Official SDK Package (npm-sdk-package)
-  // Check npm registry API with 1500ms timeout or local package.json
+  // npm registry API or local package.json
   // ========================================================
   results.push({
     checkId: 'npm-sdk-package',
-    status: hasNpmPackage ? 'pass' : 'warn',
-    earnedPoints: hasNpmPackage ? 1 : 0,
+    status: npmPackage === 'found' ? 'pass' : npmPackage === 'not_found' ? 'warn' : 'skip',
+    earnedPoints: 0,
     maxPoints: 1,
     isBonus: false,
-    message: hasNpmPackage
-      ? `Official SDK/CLI package "${localContext?.packageName || brandName}" links back to ${apexDomain}`
-      : `No npm package named "${brandName}" that links back to ${apexDomain}`,
+    message:
+      npmPackage === 'found'
+        ? `Official SDK/CLI package "${localContext?.packageName || brandName}" links back to ${apexDomain}`
+        : npmPackage === 'not_found'
+        ? `No npm package named "${brandName}" that links back to ${apexDomain}`
+        : 'npm registry did not answer; package listing unverified',
   });
 
   // ========================================================
@@ -512,10 +531,10 @@ export async function probeDiscovery(
   // ========================================================
   // 8. Search Discoverability & External Directories
   // ========================================================
-  // brand-search-accuracy: external search lookup
+  // brand-search-accuracy: external search lookup (needs a search API; not probed yet)
   results.push({
     checkId: 'brand-search-accuracy',
-    status: 'na',
+    status: 'skip',
     earnedPoints: 0,
     maxPoints: 3,
     isBonus: true,
@@ -525,7 +544,7 @@ export async function probeDiscovery(
   // agentic-search-specific: developer documentation search
   results.push({
     checkId: 'agentic-search-specific',
-    status: 'na',
+    status: 'skip',
     earnedPoints: 0,
     maxPoints: 3,
     isBonus: true,
@@ -542,24 +561,36 @@ export async function probeDiscovery(
     message: 'ChatGPT App Directory listing unverified (bonus skipped)',
   });
 
-  // mcp-registry-listed
+  // mcp-registry-listed: official MCP Registry, under a namespace or endpoint tied to the domain
   results.push({
     checkId: 'mcp-registry-listed',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'MCP registry listing not yet probed (excluded from score)',
-  });
-
-  // skills-sh-listed
-  results.push({
-    checkId: 'skills-sh-listed',
-    status: 'na',
+    status: mcpRegistry.outcome === 'listed' ? 'pass' : mcpRegistry.outcome === 'not_listed' ? 'warn' : 'skip',
     earnedPoints: 0,
     maxPoints: 1,
     isBonus: false,
-    message: 'skills.sh registry listing not yet probed (excluded from score)',
+    message:
+      mcpRegistry.outcome === 'listed'
+        ? `Listed in the official MCP Registry as ${mcpRegistry.match}`
+        : mcpRegistry.outcome === 'not_listed'
+        ? `No MCP Registry server under the ${apexDomain} namespace or hosted on ${apexDomain}`
+        : `MCP Registry listing unverified: ${mcpRegistry.reason}`,
+    evidence: mcpRegistry.outcome === 'listed' ? { server: mcpRegistry.match } : undefined,
+  });
+
+  // skills-sh-listed: agent skills on skills.sh published from the domain or the brand's GitHub owner
+  results.push({
+    checkId: 'skills-sh-listed',
+    status: skillsSh.outcome === 'listed' ? 'pass' : skillsSh.outcome === 'not_listed' ? 'warn' : 'skip',
+    earnedPoints: 0,
+    maxPoints: 1,
+    isBonus: false,
+    message:
+      skillsSh.outcome === 'listed'
+        ? `Agent skills listed on skills.sh (${skillsSh.match})`
+        : skillsSh.outcome === 'not_listed'
+        ? `No skills.sh skills published from ${apexDomain} or a "${brandName}" GitHub owner`
+        : `skills.sh listing unverified: ${skillsSh.reason}`,
+    evidence: skillsSh.outcome === 'listed' ? { skill: skillsSh.match } : undefined,
   });
 
   // agentic-search-usecase (beta, held at N/A per spec)

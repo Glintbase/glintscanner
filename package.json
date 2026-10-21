@@ -1,6 +1,6 @@
 {
   "name": "glintscanner",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "description": "Agent readiness scanner — discover docs surfaces, build knowledge graph, autonomous flight simulation, and score with ARS 3.0",
   "license": "Apache-2.0",

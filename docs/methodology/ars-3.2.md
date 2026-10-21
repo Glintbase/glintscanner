@@ -1,7 +1,7 @@
 # Agent Readiness Score (ARS) 3.2 — Methodology
 
 **Status:** active (supersedes [ARS 1.0](./ars-1.0.md) and ARS 3.0 / 3.1)
-**score_version:** `ars-3.2.0` (defined in `src/lib/scanner/version.ts`)
+**score_version:** `ars-3.2.1` (defined in `src/lib/scanner/version.ts`; see [ars-3.2.1](#ars-321) for what changed from `ars-3.2.0`)
 **Implementation:** `src/lib/scanner/v2/probes/` (entry: `runArs3Probes`, called by `runScan`)
 **Check registry:** `src/lib/scanner/v2/probes/registry.ts`
 
@@ -28,7 +28,7 @@ Every check ends in one of five states:
 
 ## Registry
 
-The registry is the single source of truth for each check's **points** and **bonus** status; probes only decide the status (`alignWithRegistry` in `probes/index.ts` enforces this). At `ars-3.2.0` it holds **129 checks**:
+The registry is the single source of truth for each check's **points** and **bonus** status; probes only decide the status (`alignWithRegistry` in `probes/index.ts` enforces this). It holds **129 checks**:
 
 | Layer | Checks | Base checks (points) | Bonus checks (points) |
 |---|---:|---:|---:|
@@ -82,6 +82,12 @@ The web report, CLI and Markdown report show these alongside the score.
 ### Discovery
 robots.txt AI-crawler policy, ARD / AI catalog files, Wikidata official-website claim (P856, matched on the registrable domain), and an npm package under the brand name that links back to the brand's domain or GitHub org. The brand is derived from the registrable domain (`docs.stripe.com` → `stripe`). Agent rules files are only checked for local codebases (`skip` remotely).
 
+Registry listings (`v2/probes/registryListings.ts`) only count identities tied to the site, so third-party servers or skills about a brand earn it nothing:
+- **`mcp-registry-listed`**: the official MCP Registry is searched by the domain's reverse-DNS namespace and by brand. It passes on an active, latest server whose namespace is the domain (`com.stripe/…`, which the registry grants only after domain verification) or a subdomain of it, whose remote endpoint is hosted on the domain, or whose namespace is the brand's GitHub owner (`io.github.stripe/…`). A self-declared `websiteUrl` does not count.
+- **`skills-sh-listed`**: skills.sh search by brand. It passes on skills published from the domain itself (`docs.stripe.com/…`) or from the brand's GitHub owner (`stripe/…`).
+- Both are `warn` (0 points) when the registry answered without a match and `skip` when it did not answer (timeout, error, unexpected response), so a registry outage never costs a site points. Lookups time out after 8 s on live scans; offline batch rescans may raise this with `GLINTBASE_REGISTRY_TIMEOUT_MS`.
+- The search-ranking checks (`brand-search-accuracy`, `agentic-search-specific`) need a search API and are `skip` (not probed). `agentic-search-usecase` is held at `na` by design. Discovery is therefore still flagged low evidence on URL scans: at most 8 of its 21 registered base points are measured.
+
 ### Access
 Zero-JS content, soft-404 canary, `llms.txt` (exists, formatting, and up to 8 declared links actually fetched; ≥80% must resolve), `llms-full.txt`, markdown negotiation, OpenAPI at standard paths (JSON specs are parsed), HTTP hygiene headers, and bot challenges (challenge page markers or `cf-mitigated: challenge`, re-reading 403/429/503 bodies).
 
@@ -115,11 +121,17 @@ Only for e-commerce archetypes or commerce signals: ACP, UCP, AP2, x402, MPP.
 
 ARS 3.1 and earlier scores are not comparable with 3.2. Scorecard pages flag older scans and offer a rescan.
 
+## ars-3.2.1
+
+Same rubric, registry and weights as `ars-3.2.0`. Two Discovery checks that were previously excluded are now measured: `mcp-registry-listed` (official MCP Registry) and `skills-sh-listed` (skills.sh), as described under Discovery. `npm-sdk-package` is `skip` instead of `warn` when the npm registry does not answer (a 404 is still `warn`), and the Wikidata and npm lookups wait 5 s instead of 1.5 s. `brand-search-accuracy` and `agentic-search-specific` now report `skip` instead of `na` (still excluded). Because measured checks changed, `ars-3.2.1` scores are not compared with `ars-3.2.0` scores.
+
 ## Known limitations
 
 - **No outcome validation** (see top).
 - **Single-sample measurements:** latency and availability come from one request per URL.
 - **Keyword heuristics:** auth.md stage detection and WebMCP detection match keywords and can be gamed.
+- **Registry availability:** registry checks depend on the MCP Registry and skills.sh answering in time; when they do not, the check is skipped, so the same site can show a skipped or a measured result on different scans. skills.sh search is not a versioned public API.
+- **GitHub owner match:** matching a brand to a GitHub owner of the same name assumes the brand owns that GitHub account.
 - **Fixed paths:** OpenAPI is only found at standard paths; it is not followed from links, headers or llms.txt.
 - **Endpoint choice:** when several MCP candidates respond, the first to answer is used.
 - **Auth-gated MCP without RFC 9728:** a gated MCP server that answers 401 with neither a JSON-RPC body nor `resource_metadata=` is not detected.

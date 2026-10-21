@@ -179,14 +179,14 @@ The engine is published as [`@glintbase/scanner-core`](./core) (built from `core
 import { runArs3Probes, runScan, formatScanMarkdown } from '@glintbase/scanner-core';
 
 const scorecard = await runArs3Probes('https://docs.example.com');
-console.log(scorecard.score, scorecard.version, scorecard.evidence); // e.g. 74, ars-3.2.0
+console.log(scorecard.score, scorecard.version, scorecard.evidence); // e.g. 74, ars-3.2.1
 
 const result = await runScan(
   { url: 'https://docs.example.com', options: { profile: 'quick' } },
   { onProgress: (e) => console.error(e) }
 );
 
-console.log(result.score, result.score_version); // e.g. 74, ars-3.2.0
+console.log(result.score, result.score_version); // e.g. 74, ars-3.2.1
 console.log(formatScanMarkdown(result));
 ```
 
