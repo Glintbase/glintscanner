@@ -15,7 +15,7 @@ URL
  ▼
 1. Discovery       → surfaces (llms.txt, OpenAPI, MCP, docs, …) + content validation
 2. Classification  → canonical / freshness metadata & framework detection
-3. ARS 3.x probes  → 132 registered checks in 4 layers (v2/probes): discovery, access,
+3. ARS 3.x probes  → 137 registered checks in 4 layers (v2/probes): discovery, access,
                      usability (live MCP probe, OpenAPI inspection, auth.md), payments
 4. Scoring         → dynamic denominator; registry owns points/bonus; pass-only credit;
                      unverifiable checks are skip/na and excluded

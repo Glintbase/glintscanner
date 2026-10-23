@@ -29,13 +29,13 @@ Every check ends in one of five states:
 
 ## Registry
 
-The registry is the single source of truth for each check's **points** and **bonus** status; probes only decide the status (`alignWithRegistry` in `probes/index.ts` enforces this). It holds **132 checks**:
+The registry is the single source of truth for each check's **points** and **bonus** status; probes only decide the status (`alignWithRegistry` in `probes/index.ts` enforces this). It holds **137 checks**:
 
 | Layer | Checks | Base checks (points) | Bonus checks (points) |
 |---|---:|---:|---:|
-| Discovery | 17 | 10 (21) | 7 (14) |
-| Access | 46 | 35 (51) | 11 (17) |
-| Usability | 63 | 24 (41) | 39 (70) |
+| Discovery | 18 | 10 (21) | 8 (14) |
+| Access | 47 | 35 (51) | 12 (17) |
+| Usability | 66 | 24 (41) | 42 (73) |
 | Payments | 6 | 0 | 6 (16) |
 
 Several registered checks are not probed yet and always report `na` (for example `http2-support`, `dns-caa-record`, `mcp-view-csp`, `mcp-ssrf-guard`, `brand-search-accuracy`). Every scan reports how many checks it actually measured (see *Evidence coverage*); publish that number, not the registry size.
@@ -80,6 +80,25 @@ Defined once in `src/lib/scanner/shared/scoreBand.ts`. Bands are groups of grade
 
 The four layers, their base weights (20 / 30 / 40 / 10, kept for the e-commerce archetype) and the grade cut-offs follow the structure ora.ai publishes at <https://ora.ai/methodology>. ARS adds the archetype weights, evidence-only scoring (unknowns are excluded, no partial credit) and evidence coverage. The weights themselves are not validated against agent outcomes (see top). A crosswalk to AgentReady.org, ora and draft-shah-agent-readiness-evaluation-00 is published at <https://glintbase.dev/blog/how-ars-compares-agentready-ora-ietf>.
 
+## Measurement kinds
+
+Every check result carries a `measurement` (`probes/measurement.ts`):
+
+| Kind | Meaning |
+|---|---|
+| `live` | The scanner sent a request and the verdict depends on how the target behaved (handshakes, canaries, negotiation, links that resolve, challenges, latency) |
+| `content` | The scanner parsed a fetched artifact (HTML, headers, OpenAPI, tool schemas) |
+| `presence` | The scanner only knows that something exists or is listed |
+| `declared` | The value came from local codebase context (a local scan's presence checks become `declared`) |
+
+`pillars.runtimeMeasured` scores the usability base checks (and payments, where applicable) with `live` or `content` evidence only, with no bonus, so a site can't score there on the presence of an MCP endpoint or spec file. It is reported next to the overall score, which is unchanged.
+
+## Reported, unscored checks
+
+Two checks have 0 points and are reported only:
+- `poppy-discovery`: a valid Personal Agent Protocol `/.well-known/poppy.json` (draft 0.2: `protocol_version`, `organization` with a `domain` equal to the serving host, `auth` where required, typed HTTPS `apis`), and, when `auth.issuer` is set, the issuer's RFC 8414 metadata has a matching `issuer` and lists the domain in `poppy_domains`. Emerging: not scored until a second large vendor adopts it.
+- `robots-edge-consistency`: `warn` when robots.txt allows AI agents but the edge challenged or refused the scanner (as in The Silent Wall). The refusal itself is scored by the `anti-crawler-challenge-free` gate, so it is not counted twice.
+
 ## Evidence coverage
 
 Because unverifiable checks are excluded, a layer with few verifiable checks rests on little evidence. Every scorecard therefore includes:
@@ -106,7 +125,7 @@ Zero-JS content, soft-404 canary, `llms-full.txt`, markdown negotiation, HTTP hy
 
 - **llms.txt** is scored only when present. A 200 counts as an llms.txt only if the body is not HTML and has a Markdown heading or link, so soft-404 pages and error strings are rejected. `llms-txt-exists` (1, bonus) and `llms-txt-formatting` (1, bonus) can only add points. `llms-txt-links-resolve` (2, base) fetches up to 8 declared links and needs at least 80% to resolve, so a broken index costs points. `llms-txt-graph-reachability` (2, bonus) needs an `href` to llms.txt on the homepage. Reason: AgentReady's experiment found no retrieval difference from adding the file, and its agent traces show 86% of llms.txt fetches came from a page that linked to it.
 - **Markdown alternate:** `markdown-alternate-link` (1, bonus) passes when the homepage declares `<link rel="alternate" type="text/markdown">` and the link resolves to non-HTML content.
-- **OpenAPI discovery:** before standard paths, the scanner tries specs the site points to: `Link` headers with `rel="service-desc"` or `rel="describedby"` on the homepage, `service-desc` links in `/.well-known/api-catalog`, and `<link rel="service-desc">` or links to `openapi`/`swagger` files on the homepage. JSON specs are parsed.
+- **OpenAPI discovery and parsing:** JSON and YAML specs are parsed (YAML with the `yaml` package, alias expansion capped); a YAML spec that fails to parse still counts as found, with its quality checks skipped. Before standard paths, the scanner tries specs the site points to: `Link` headers with `rel="service-desc"` or `rel="describedby"` on the homepage, `service-desc` links in `/.well-known/api-catalog`, and `<link rel="service-desc">` or links to `openapi`/`swagger` files on the homepage. JSON specs are parsed.
 - **API catalog:** `api-catalog-rfc9727` (2, bonus) passes only if `/.well-known/api-catalog` parses as an RFC 9264 linkset (`{"linkset": [...]}`).
 
 If the homepage cannot be fetched (no successful response and no body), every check derived from its HTML or response headers is `skip` ("Homepage could not be fetched"), and `anti-crawler-challenge-free` is `skip` unless a challenge was actually observed.
@@ -118,6 +137,8 @@ If the homepage cannot be fetched (no successful response and no body), every ch
 - **Live MCP probe** (`v2/mcpProbe.ts`), following the backward-compatibility procedure in MCP 2026-07-28 (the same procedure as the Remote MCP Server Reliability study): `server/discover` with per-request `_meta` and `MCP-Protocol-Version` / `Mcp-Method` headers; a DiscoverResult or a modern-only error (-32020, -32021) marks the server as modern. Otherwise `initialize` (2025-11-25, retried with 2025-03-26), then `notifications/initialized` with the session id. Later requests use the server's era. A legacy server that claims 2026-07-28 in its `initialize` result is still legacy. `mcp-protocol-modern` (1, bonus) passes for modern servers; `mcp-wire-compatibility` (2, bonus) passes for a modern server that also completes a legacy `initialize`. Then `tools/list` (in the server's era), schema strictness and `readOnlyHint` / `destructiveHint` annotations from real tool definitions, capabilities (prompts, resources, logging) from the initialize result, and an unknown-tool canary for in-channel errors.
 - **Safety:** the prober calls a real tool only if the server annotates it `readOnlyHint: true` and it takes no required arguments. Unannotated tools are never called. SSRF behaviour is not probed.
 - **Transports:** Streamable HTTP is a base check; legacy SSE is bonus only.
+- **Tool menu:** `mcp-tools-menu-size` (1, bonus) passes when the first `tools/list` page has at most 40 tools and about 10,000 tokens of definitions (characters / 4); the message always reports both. The limits are a policy choice, motivated by benchmarks where large tool menus reduced agent reliability (ToolBottleneckBench, GatewayBench). `mcp-tools-schema-dialect` (1, bonus) passes when no tool `inputSchema` declares a JSON Schema dialect older than 2020-12, MCP's default since 2025-11-25 (SEP-1613).
+- **Scope in the auth challenge:** `mcp-auth-scope-challenge` (1, bonus) passes when an auth-gated MCP server's `WWW-Authenticate` Bearer challenge names a `scope` (SEP-835 step-up consent). An `insufficient_scope` response needs a token, so it is not probed.
 - **Server Card** (`v2/serverCard.ts`, SEP-2127, final 2026-10-06): `mcp-server-card` (1, bonus) passes for a card with the v1 schema's required fields (`$schema`, `name`, `version`, `description`) listed in `/.well-known/ai-catalog.json` (entry type `application/mcp-server-card+json`, by `url` or inline `data`) or served at `<mcp-endpoint>/server-card`. A card only at the superseded `/.well-known/mcp/server-card.json` path is a `warn`. Streamable HTTP remotes declared by a catalog card are probed first as MCP endpoints.
 - **auth.md** stage checks are bonus only (emerging proposal) and require each stage to appear in the file. OAuth PRM / AS metadata must be valid JSON with the expected fields; bearer and scope checks read them.
 - **OpenAPI inspection** (`v2/openapiInspect.ts`): unique operationIds, JSON request schemas, typed error responses (≥50% of operations), Idempotency-Key, rate-limit headers, versioned URIs, search, cursor pagination, webhooks, problem+json, OpenAPI 3.1. YAML specs are detected but not parsed (`skip`).
@@ -130,7 +151,11 @@ Only for e-commerce archetypes or commerce signals: ACP, UCP, AP2, x402, MPP.
 - **Gates:** a failed `anti-crawler-challenge-free` or `content-no-js` caps the score at 47.
 - **Not observed:** a challenged homepage skips the checks that read its content.
 - **llms.txt** is optional: `llms-txt-exists` and `llms-txt-formatting` become bonus checks (formatting drops from 2 to 1 point), soft-404 bodies are rejected, and reachability needs an `href`.
-- **New bonus checks:** `markdown-alternate-link`, `mcp-protocol-modern`, `mcp-server-card`. The registry has 132 checks.
+- **New bonus checks:** `markdown-alternate-link`, `mcp-protocol-modern`, `mcp-server-card`, `mcp-tools-menu-size`, `mcp-tools-schema-dialect`, `mcp-auth-scope-challenge`.
+- **New reported (0-pt) checks:** `poppy-discovery`, `robots-edge-consistency`. The registry has 137 checks.
+- **A plain HTTP 403 on the homepage** fails `anti-crawler-challenge-free`, like a challenge.
+- **YAML OpenAPI specs** are parsed.
+- **Measurement kinds** on every result, and `pillars.runtimeMeasured`.
 - **MCP probe** speaks 2026-07-28 (`server/discover`) and falls back to `initialize`. `mcp-wire-compatibility` now means a modern server that also accepts a legacy `initialize`.
 - **OpenAPI** is found through `Link` headers, the API catalog and homepage links before standard paths; `api-catalog-rfc9727` requires a valid linkset.
 - **Server Cards** are found where the final SEP-2127 puts them.
@@ -166,6 +191,7 @@ Same rubric, registry and weights as `ars-3.2.0`. Two Discovery checks that were
 - **Registry availability:** registry checks depend on the MCP Registry and skills.sh answering in time; when they do not, the check is skipped, so the same site can show a skipped or a measured result on different scans. skills.sh search is not a versioned public API.
 - **GitHub owner match:** matching a brand to a GitHub owner of the same name assumes the brand owns that GitHub account.
 - **OpenAPI discovery:** specs are followed from `Link` headers, the API catalog and homepage links, but not from llms.txt or deeper pages.
+- **The scanner sends a browser user agent,** not an agent identity, so the anti-crawler gate measures how a site treats an unlabelled browser-like client, not a declared AI agent.
 - **Endpoint choice:** when several MCP candidates respond, the first to answer is used.
 - **Auth-gated MCP without RFC 9728:** a gated MCP server that answers 401 with neither a JSON-RPC body nor `resource_metadata=` is not detected.
 - **Absent MCP weighs heavily:** for API and docs archetypes, a site without an MCP server or OpenAPI spec typically scores 0 on most of the 35-point usability layer. This is intended by the current weights but is a policy choice worth revisiting.

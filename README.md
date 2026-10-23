@@ -27,7 +27,7 @@ Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discove
 
 - **Surface discovery** — `llms.txt`, `OpenAPI`, `MCP`, `sitemap.xml`, `auth.md`, `ard.json`, `robots.txt`
 - **Content validation** — empty/HTML soft-404s don’t max machine scores
-- **ARS 3.x probe engine** — 132 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
+- **ARS 3.x probe engine** — 137 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
 - **Live MCP probing** — handshake (2026-07-28 + legacy wire forms), `tools/list`, schema and annotation inspection, error-channel canary, and a read-only call only on tools annotated `readOnlyHint: true`
 - **OpenAPI inspection** — operationIds, request/error schemas, pagination, rate-limit headers, problem+json and more, read from the spec itself
 - **Flight Simulator** — separate agent journey simulations with visual DAGs and state replay (`#data=`) at `/simulate`; not part of the ARS score
