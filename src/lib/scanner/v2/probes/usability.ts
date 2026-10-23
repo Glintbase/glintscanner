@@ -612,7 +612,7 @@ export async function probeUsability(
   if (handshakeOk) {
     record('mcp-prompts-listing', capabilities.prompts ? 'pass' : 'warn', capabilities.prompts ? 'Server declares the prompts capability' : 'Server does not declare the prompts capability');
     record('mcp-resources-listing', capabilities.resources ? 'pass' : 'warn', capabilities.resources ? 'Server declares the resources capability' : 'Server does not declare the resources capability');
-    record('mcp-logging-notifications', capabilities.logging ? 'pass' : 'warn', capabilities.logging ? 'Server declares the logging capability' : 'Server does not declare the logging capability');
+    record('mcp-logging-notifications', capabilities.logging ? 'pass' : 'warn', capabilities.logging ? 'Server declares the logging capability (deprecated in MCP 2026-07-28; not scored)' : 'Server does not declare the logging capability (deprecated in MCP 2026-07-28; not scored)');
     record(
       'mcp-protocol-version',
       live?.protocolVersion ? 'pass' : 'warn',

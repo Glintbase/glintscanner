@@ -35,7 +35,7 @@ The registry is the single source of truth for each check's **points** and **bon
 |---|---:|---:|---:|
 | Discovery | 18 | 10 (21) | 8 (14) |
 | Access | 47 | 35 (51) | 12 (17) |
-| Usability | 66 | 24 (41) | 42 (73) |
+| Usability | 66 | 24 (41) | 42 (69) |
 | Payments | 6 | 0 | 6 (16) |
 
 Several registered checks are not probed yet and always report `na` (for example `http2-support`, `dns-caa-record`, `mcp-view-csp`, `mcp-ssrf-guard`, `brand-search-accuracy`). Every scan reports how many checks it actually measured (see *Evidence coverage*); publish that number, not the registry size.
@@ -95,7 +95,7 @@ Every check result carries a `measurement` (`probes/measurement.ts`):
 
 ## Reported, unscored checks
 
-Two checks have 0 points and are reported only:
+Five checks have 0 points and are reported only: `mcp-logging-notifications`, `mcp-sampling-support` and `mcp-roots-support` (features MCP 2026-07-28 deprecates, SEP-2577), plus these two:
 - `poppy-discovery`: a valid Personal Agent Protocol `/.well-known/poppy.json` (draft 0.2: `protocol_version`, `organization` with a `domain` equal to the serving host, `auth` where required, typed HTTPS `apis`), and, when `auth.issuer` is set, the issuer's RFC 8414 metadata has a matching `issuer` and lists the domain in `poppy_domains`. Emerging: not scored until a second large vendor adopts it.
 - `robots-edge-consistency`: `warn` when robots.txt allows AI agents but the edge challenged or refused the scanner (as in The Silent Wall). The refusal itself is scored by the `anti-crawler-challenge-free` gate, so it is not counted twice.
 
@@ -153,6 +153,7 @@ Only for e-commerce archetypes or commerce signals: ACP, UCP, AP2, x402, MPP.
 - **llms.txt** is optional: `llms-txt-exists` and `llms-txt-formatting` become bonus checks (formatting drops from 2 to 1 point), soft-404 bodies are rejected, and reachability needs an `href`.
 - **New bonus checks:** `markdown-alternate-link`, `mcp-protocol-modern`, `mcp-server-card`, `mcp-tools-menu-size`, `mcp-tools-schema-dialect`, `mcp-auth-scope-challenge`.
 - **New reported (0-pt) checks:** `poppy-discovery`, `robots-edge-consistency`. The registry has 137 checks.
+- **Deprecated MCP features are no longer rewarded:** `mcp-logging-notifications`, `mcp-sampling-support` and `mcp-roots-support` become reported 0-point checks, because MCP 2026-07-28 deprecates Logging, Sampling and Roots (SEP-2577; still functional for at least twelve months).
 - **A plain HTTP 403 on the homepage** fails `anti-crawler-challenge-free`, like a challenge.
 - **YAML OpenAPI specs** are parsed.
 - **Measurement kinds** on every result, and `pillars.runtimeMeasured`.
