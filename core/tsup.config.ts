@@ -13,8 +13,9 @@ export default defineConfig({
   sourcemap: true,
   // The engine (../src/lib/scanner via the @scanner alias) is bundled into dist.
   // It only uses Node built-ins and global fetch at runtime, so the published
-  // package has no runtime dependencies. Anything under node_modules stays external.
-  noExternal: [/^@scanner\//],
+  // package has no runtime dependencies. `yaml` (zero-dependency) is bundled too;
+  // anything else under node_modules stays external.
+  noExternal: [/^@scanner\//, /^yaml(\/|$)/],
   esbuildOptions(options) {
     // Resolve @scanner/* path alias to the actual scanner source
     options.alias = {

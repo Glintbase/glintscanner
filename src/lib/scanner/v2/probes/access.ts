@@ -4,6 +4,7 @@
  * Content negotiation, OpenAPI specs, and developer portals.
  */
 
+import { parse as parseYaml } from 'yaml';
 import { fetchResource, type FetchResourceResult } from '../fetchResource';
 import { getChecksForLayer } from './registry';
 import type { CheckResult } from './types';
@@ -37,7 +38,7 @@ export interface AccessProbeResult {
     found: boolean;
     url?: string;
     version?: string;
-    /** Parsed document when the spec is JSON; YAML specs are detected but not parsed. */
+    /** Parsed document (JSON or YAML). Undefined only when a YAML spec failed to parse. */
     spec?: any;
   };
 }
@@ -80,6 +81,25 @@ export function looksLikeLlmsTxt(body: string, contentType?: string): boolean {
   if (/<html|<!doctype|<head\b|<body\b/i.test(text.slice(0, 2000))) return false;
   if (/html/i.test(contentType || '') && /<[a-z][\s\S]*>/i.test(text.slice(0, 2000))) return false;
   return /^#\s+\S/m.test(text) || /\[[^\]]+\]\([^)\s]+\)/.test(text);
+}
+
+/** An OpenAPI / Swagger document parsed from JSON or YAML, or undefined if the body is neither. */
+export function parseOpenApiDocument(body: string): any {
+  const isSpec = (doc: any) => doc && typeof doc === 'object' && !Array.isArray(doc) && (doc.openapi || doc.swagger);
+  try {
+    const doc = JSON.parse(body);
+    return isSpec(doc) ? doc : undefined;
+  } catch {
+    /* not JSON */
+  }
+  if (!/^(?:---\s*\n)?\s*(openapi|swagger):/m.test(body)) return undefined;
+  try {
+    // maxAliasCount guards against alias-expansion ("billion laughs") documents.
+    const doc = parseYaml(body, { maxAliasCount: 1000 });
+    return isSpec(doc) ? doc : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Entries of an RFC 8288 `Link` header value. */
@@ -677,13 +697,10 @@ export async function probeAccess(
       // Large public specs (Stripe, GitHub) run to several MB.
       const oRes = await fetchResource(oPath, { timeoutMs: 6000, maxBytes: 12_000_000 });
       if (!oRes.ok || !oRes.body || oRes.body.includes('<html')) return null;
-      try {
-        const parsed = JSON.parse(oRes.body);
-        return parsed && (parsed.openapi || parsed.swagger) ? { url: oPath, spec: parsed } : null;
-      } catch {
-        // Fallback: Check for YAML OpenAPI/Swagger document
-        return /^(?:---\s*\n)?\s*(openapi|swagger):\s*['"]?[23]/m.test(oRes.body) ? { url: oPath } : null;
-      }
+      const parsed = parseOpenApiDocument(oRes.body);
+      if (parsed) return { url: oPath, spec: parsed };
+      // A YAML spec that doesn't parse is still evidence that a spec exists; its quality checks skip.
+      return /^(?:---\s*\n)?\s*(openapi|swagger):\s*['"]?[23]/m.test(oRes.body) ? { url: oPath } : null;
     };
     const viaByUrl = new Map(linkedSpecs.slice(0, 4).map((s) => [s.url, s.via]));
     const uniquePaths = Array.from(new Set([...viaByUrl.keys(), ...openApiPaths]));

@@ -866,7 +866,7 @@ export async function probeUsability(
     if (!hasOpenApi) {
       record(checkId, 'na', 'OpenAPI specification not detected (excluded from score)');
     } else if (!api) {
-      record(checkId, 'skip', 'OpenAPI spec found but not inspected (YAML or local file)');
+      record(checkId, 'skip', 'OpenAPI spec found but not inspected (YAML that failed to parse, or a local file)');
     } else {
       const [passed, passMsg, failMsg] = evaluate(api);
       record(checkId, passed ? 'pass' : 'warn', passed ? passMsg : failMsg);

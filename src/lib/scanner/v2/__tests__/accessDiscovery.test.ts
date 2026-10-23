@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml } from '../probes/access';
+import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml, parseOpenApiDocument } from '../probes/access';
 
 describe('looksLikeLlmsTxt', () => {
   it('accepts a Markdown index with a heading and links', () => {
@@ -65,5 +65,19 @@ describe('OpenAPI discovery helpers', () => {
   it('finds spec links and rel="service-desc" in page HTML', () => {
     const html = '<link rel="service-desc" href="/api/spec"><a href="/reference/openapi.yaml">Spec</a><a href="/blog/openapi-tips">Tips</a>';
     expect(openApiLinksFromHtml(html)).toEqual(['/api/spec', '/reference/openapi.yaml']);
+  });
+});
+
+describe('parseOpenApiDocument', () => {
+  it('parses JSON and YAML specs', () => {
+    expect(parseOpenApiDocument('{"openapi":"3.1.0","paths":{}}')?.openapi).toBe('3.1.0');
+    const yaml = 'openapi: 3.0.3\ninfo:\n  title: Acme\n  version: "1"\npaths:\n  /items:\n    get:\n      operationId: listItems\n';
+    expect(parseOpenApiDocument(yaml)?.paths['/items'].get.operationId).toBe('listItems');
+  });
+
+  it('rejects documents that are not specs', () => {
+    expect(parseOpenApiDocument('{"name":"x"}')).toBeUndefined();
+    expect(parseOpenApiDocument('title: not a spec\n')).toBeUndefined();
+    expect(parseOpenApiDocument('openapi: [unclosed')).toBeUndefined();
   });
 });
