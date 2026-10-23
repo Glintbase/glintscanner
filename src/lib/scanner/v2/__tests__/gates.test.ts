@@ -32,6 +32,9 @@ describe('score gates', () => {
     const { scorecard } = await runArs3ProbesDetailed('https://gated.example.com/', { kind: 'product' });
 
     expect(scorecard.gates?.map((g) => g.checkId)).toContain('content-no-js');
+    // Every result says what kind of evidence it rests on, and the measured runtime pillar is reported.
+    expect(scorecard.results.filter((r) => !r.measurement).map((r) => r.checkId)).toEqual([]);
+    expect(scorecard.pillars?.runtimeMeasured).toBeDefined();
     expect(scorecard.score).toBeLessThanOrEqual(GATE_SCORE_CAP);
     expect(scorecard.uncappedScore).toBeGreaterThanOrEqual(scorecard.score);
   }, 60000);

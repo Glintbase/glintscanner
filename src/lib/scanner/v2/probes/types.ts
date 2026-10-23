@@ -33,11 +33,15 @@ export interface CheckDefinition {
   remediationId?: string;
 }
 
+/** What kind of evidence a check rests on; see probes/measurement.ts. */
+export type CheckMeasurement = 'live' | 'content' | 'presence' | 'declared';
+
 export interface CheckResult {
   checkId: string;
   name?: string;
   layer?: LayerId;
   status: CheckStatus;
+  measurement?: CheckMeasurement;
   earnedPoints: number;
   maxPoints: number;
   isBonus: boolean;
@@ -140,6 +144,8 @@ export interface Ars3Scorecard {
   pillars?: {
     discoverability: ArsPillarSummary;
     runtimeErgonomics: ArsPillarSummary;
+    /** Runtime pillar from `live` and `content` base checks only (no presence, no bonus). */
+    runtimeMeasured?: ArsPillarSummary & { checksCounted: number };
   };
   layers: {
     discovery: LayerScoreSummary;

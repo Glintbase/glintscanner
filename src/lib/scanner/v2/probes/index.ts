@@ -14,6 +14,7 @@ import { probePayments, PaymentsProbeResult } from './payments';
 import { getArsGrade } from '../../shared/scoreBand';
 import { getAllChecks, getCheckById, getChecksForLayer } from './registry';
 import { ARS_SCORE_VERSION } from '../../version';
+import { measurementFor } from './measurement';
 import type {
   Ars3Scorecard,
   ScanEvidenceSummary,
@@ -102,8 +103,9 @@ export interface RunProbesOptions {
  * Probes only decide the status; earned points are the full registry value on pass, else 0
  * (no partial credit for warn).
  */
-function alignWithRegistry<T extends { checks: CheckResult[] }>(probe: T): T {
+function alignWithRegistry<T extends { checks: CheckResult[] }>(probe: T, isLocalCodebase = false): T {
   for (const check of probe.checks) {
+    check.measurement = isLocalCodebase && measurementFor(check.checkId) === 'presence' ? 'declared' : measurementFor(check.checkId);
     const def = getCheckById(check.checkId);
     if (!def) continue;
     check.maxPoints = def.points;
@@ -235,14 +237,14 @@ export async function runArs3ProbesDetailed(
   };
 
   // 2. Execute 4 Layer probes in parallel with real-time layer callbacks
-  const discoveryPromise = probeDiscovery(url, baseLocalContext).then(alignWithRegistry).then((d) => {
+  const discoveryPromise = probeDiscovery(url, baseLocalContext).then((d) => alignWithRegistry(d, baseLocalContext.isLocalCodebase)).then((d) => {
     const l1Base = computeLayerBase(d.checks, archetype.layerWeights.discovery);
     const s = makeLayerSummary('discovery', 'Layer 1: Discovery', l1Base, d.checks, archetype.layerWeights.discovery);
     options.onLayerComplete?.('discovery', s);
     return d;
   });
 
-  const accessPromise = probeAccess(url, baseLocalContext).then(alignWithRegistry).then((a) => {
+  const accessPromise = probeAccess(url, baseLocalContext).then((a) => alignWithRegistry(a, baseLocalContext.isLocalCodebase)).then((a) => {
     const l2Base = computeLayerBase(a.checks, archetype.layerWeights.access);
     const s = makeLayerSummary('access', 'Layer 2: Access & Understanding', l2Base, a.checks, archetype.layerWeights.access);
     options.onLayerComplete?.('access', s);
@@ -257,7 +259,7 @@ export async function runArs3ProbesDetailed(
     };
     // Explicit kind wins; otherwise docs/knowledge-base sites get the docs MCP rubric.
     const usabilityKind = kind === 'docs' || (kind === 'auto' && archetype.canonicalArchetype === 'docs_kb') ? 'docs' : 'product';
-    const u = alignWithRegistry(await probeUsability(url, { kind: usabilityKind, localContext: sharedContext }));
+    const u = alignWithRegistry(await probeUsability(url, { kind: usabilityKind, localContext: sharedContext }), baseLocalContext.isLocalCodebase);
     const l3Base = archetype.layerWeights.usability > 0 ? computeLayerBase(u.checks, archetype.layerWeights.usability) : 0;
     const s = makeLayerSummary('usability', 'Layer 3: Usability & Interoperability', l3Base, u.checks, archetype.layerWeights.usability, archetype.layerWeights.usability > 0);
     options.onLayerComplete?.('usability', s);
@@ -265,6 +267,8 @@ export async function runArs3ProbesDetailed(
   });
 
   const paymentsPromise = probePayments(url, archetype.archetype, baseLocalContext).then((p) => {
+    // Payments keeps its own OR-scoring, so only the measurement kind is set here.
+    for (const c of p.checks) c.measurement = measurementFor(c.checkId);
     const l4Base = p.isApplicable ? p.score : 0;
     const s = makeLayerSummary('payments', 'Layer 4: Payments & Machine Commerce', l4Base, p.checks, archetype.layerWeights.payments, p.isApplicable);
     options.onLayerComplete?.('payments', s);
@@ -280,7 +284,9 @@ export async function runArs3ProbesDetailed(
 
   // Policy vs. enforcement (reported, 0 pts): robots.txt allows AI agents but the edge refused
   // the scanner. The refusal itself is scored by the anti-crawler gate; this names the mismatch.
-  access.checks.push(robotsEdgeConsistency(discovery, access));
+  const edgeCheck = robotsEdgeConsistency(discovery, access);
+  edgeCheck.measurement = measurementFor(edgeCheck.checkId);
+  access.checks.push(edgeCheck);
 
   // 3. Aggregate all checks
   const allResults: CheckResult[] = [
@@ -370,6 +376,15 @@ export async function runArs3ProbesDetailed(
   const runScore = runMax > 0 ? Math.min(100, Math.round(((runBase + runBonus) / (runMax + runBonus)) * 100)) : 0;
   const runGrade = getArsGrade(runScore).grade;
 
+  // Measured runtime pillar: only base checks whose verdict came from a live response or parsed
+  // content, so a scan can't score here on the mere presence of an MCP endpoint or spec file.
+  const measuredRuntime = [...usability.checks, ...(payments.isApplicable ? payments.checks : [])].filter(
+    (c) => !c.isBonus && (c.measurement === 'live' || c.measurement === 'content') && ['pass', 'warn', 'fail'].includes(c.status)
+  );
+  const measuredPossible = measuredRuntime.reduce((sum, c) => sum + c.maxPoints, 0);
+  const measuredEarned = measuredRuntime.filter((c) => c.status === 'pass').reduce((sum, c) => sum + c.maxPoints, 0);
+  const measuredScore = measuredPossible > 0 ? Math.round((measuredEarned / measuredPossible) * 100) : 0;
+
   const scoredLayers = (Object.keys(layerSummaries) as LayerId[]).filter(
     (id) => layerSummaries[id].applicable && layerSummaries[id].baseMax > 0 && id !== 'payments'
   );
@@ -407,6 +422,12 @@ export async function runArs3ProbesDetailed(
         grade: discGrade,
         description:
           'Measures how easily autonomous agents find, parse, and ingest documentation, sitemaps, and machine surfaces without hallucination.',
+      },
+      runtimeMeasured: {
+        score: measuredScore,
+        grade: getArsGrade(measuredScore).grade,
+        checksCounted: measuredRuntime.length,
+        description: 'Runtime pillar from live and content checks only: what the scanner observed MCP servers and API specs actually do.',
       },
       runtimeErgonomics: {
         score: runScore,
