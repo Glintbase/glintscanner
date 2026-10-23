@@ -90,6 +90,10 @@ function extractJsonPayload(body: string | undefined): any {
 
 const STATIC_CARD_RE = /(server-card\.json|manifest\.json|mcp\.json)$/i;
 
+/** Tool-menu limits for mcp-tools-menu-size (policy choice; see the methodology). */
+const MAX_TOOL_MENU = 40;
+const MAX_TOOL_MENU_TOKENS = 10_000;
+
 function isMcpLikePath(endpoint: string): boolean {
   try {
     const u = new URL(endpoint);
@@ -508,11 +512,45 @@ export async function probeUsability(
       destructiveCount > 0 ? 'pass' : 'warn',
       destructiveCount > 0 ? `${destructiveCount} tools declare destructiveHint` : 'No tool declares destructiveHint annotations'
     );
+    // Large tool menus cost every request context and hurt tool selection (ToolBottleneckBench,
+    // GatewayBench). Tokens are estimated as characters / 4.
+    const defChars = live?.toolDefinitionChars ?? 0;
+    const estTokens = Math.round(defChars / 4);
+    const menuOk = tools.length <= MAX_TOOL_MENU && estTokens <= MAX_TOOL_MENU_TOKENS;
+    record(
+      'mcp-tools-menu-size',
+      menuOk ? 'pass' : 'warn',
+      `${tools.length} tools, about ${estTokens.toLocaleString('en-US')} tokens of definitions on the first tools/list page` +
+        (menuOk ? '' : ` (over ${MAX_TOOL_MENU} tools or ${MAX_TOOL_MENU_TOKENS.toLocaleString('en-US')} tokens)`),
+      { evidence: { toolCount: tools.length, definitionChars: defChars, estimatedTokens: estTokens } }
+    );
+    // MCP's default schema dialect is JSON Schema 2020-12 (SEP-1613, spec 2025-11-25).
+    const olderDialect = tools.filter((t) => t.schemaDialect && !/2020-12/.test(t.schemaDialect)).map((t) => t.name);
+    record(
+      'mcp-tools-schema-dialect',
+      olderDialect.length === 0 ? 'pass' : 'warn',
+      olderDialect.length === 0
+        ? 'Tool schemas use JSON Schema 2020-12 (declared or by default)'
+        : `${olderDialect.length}/${tools.length} tools declare an older JSON Schema dialect (${olderDialect.slice(0, 5).join(', ')})`
+    );
   } else {
-    for (const id of ['mcp-tools-schema-strict', 'mcp-tools-readonly-hint', 'mcp-tools-destructive-hint']) {
+    for (const id of ['mcp-tools-schema-strict', 'mcp-tools-readonly-hint', 'mcp-tools-destructive-hint', 'mcp-tools-menu-size', 'mcp-tools-schema-dialect']) {
       const [s, m] = unverifiable(notVerifiableReason);
       record(id, s, m);
     }
+  }
+
+  // Step-up authorization (SEP-835): the Bearer challenge names the scopes a client should request.
+  // An insufficient_scope response needs a token, so only the anonymous challenge is checked.
+  if (live?.authGated && live.wwwAuthenticate) {
+    const hasScope = /\bscope\s*=/i.test(live.wwwAuthenticate);
+    record(
+      'mcp-auth-scope-challenge',
+      hasScope ? 'pass' : 'warn',
+      hasScope ? 'WWW-Authenticate challenge names the required scope' : 'WWW-Authenticate challenge does not name a scope'
+    );
+  } else {
+    record('mcp-auth-scope-challenge', 'na', 'No auth challenge observed');
   }
 
   // mcp-auth-requirement: is the server's auth posture right for its kind, and discoverable?

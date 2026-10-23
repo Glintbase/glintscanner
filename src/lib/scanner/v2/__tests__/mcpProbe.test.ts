@@ -244,6 +244,34 @@ describe('dual-era MCP live prober', () => {
     expect(result.tools.every((t) => !t.annotatedReadOnly)).toBe(true);
   });
 
+  it('records tool definition size and declared schema dialects', async () => {
+    fixtureServer((req) => {
+      const { method, id } = req.body;
+      if (method === 'server/discover') return rpc(id, { result: { supportedVersions: ['2026-07-28'] } });
+      if (method === 'tools/list') {
+        return rpc(id, {
+          result: {
+            tools: [
+              { name: 'a', inputSchema: { $schema: 'http://json-schema.org/draft-07/schema#', type: 'object', properties: {} } },
+              { name: 'b', inputSchema: { $schema: 'https://json-schema.org/draft/2020-12/schema', type: 'object', properties: {} } },
+              { name: 'c', inputSchema: { type: 'object', properties: {} } },
+            ],
+          },
+        });
+      }
+      return rpc(id, { error: { code: -32602, message: 'Unknown tool' } });
+    });
+
+    const result = await probeMcpServer('https://mcp.example.com/mcp');
+
+    expect(result.toolDefinitionChars).toBeGreaterThan(100);
+    expect(result.tools.map((t) => t.schemaDialect)).toEqual([
+      'http://json-schema.org/draft-07/schema#',
+      'https://json-schema.org/draft/2020-12/schema',
+      undefined,
+    ]);
+  });
+
   it('reports no handshake for an endpoint that does not speak MCP', async () => {
     const requests = fixtureServer(() => ({ httpStatus: 200, body: '<html><body>Hello</body></html>' }));
 

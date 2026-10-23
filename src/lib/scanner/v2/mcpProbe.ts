@@ -78,7 +78,11 @@ export interface McpLiveProbeResult {
     /** inputSchema is an object schema whose properties all declare a type. */
     schemaStrict: boolean;
     declaredRequiredCount: number;
+    /** `$schema` declared on inputSchema, if any (MCP's default dialect is JSON Schema 2020-12). */
+    schemaDialect?: string;
   }>;
+  /** Characters in the serialized tool definitions from the first tools/list page. */
+  toolDefinitionChars: number;
   steps: McpProbeStepResult[];
   reliabilityScore: number; // 0 - 100
 }
@@ -291,6 +295,7 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
   const t1 = Date.now();
   let toolsListed = false;
   let toolsListPassed = false;
+  let toolDefinitionChars = 0;
   let listStatus: number | undefined;
 
   if (handshakePassed) {
@@ -322,8 +327,10 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
           props.every((p) => p && typeof p === 'object' && (p.type || p.enum || p.const !== undefined || p.anyOf || p.oneOf || p.allOf || p.$ref))
         ),
         declaredRequiredCount: reqList.length,
+        schemaDialect: typeof t.inputSchema?.$schema === 'string' ? t.inputSchema.$schema : undefined,
       });
     }
+    toolDefinitionChars = JSON.stringify(rawTools).length;
   }
 
   steps.push({
@@ -457,6 +464,7 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
     inChannelErrorsVerified,
     toolCount: tools.length,
     toolsListed,
+    toolDefinitionChars,
     capabilities,
     wwwAuthenticate,
     safeCallTool: zeroArgTool?.name,
