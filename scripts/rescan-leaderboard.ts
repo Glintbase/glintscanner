@@ -5,6 +5,7 @@
  *   npx tsx --env-file=.env.local scripts/rescan-leaderboard.ts --apply    # also save results (marks them is_latest)
  *
  * Options: --limit <n>  --concurrency <n> (default 2)  --force (rescan domains already on the current version)
+ *          --out <file.jsonl> (one line per domain: score, gates and every check's status, for analysis)
  *
  * Runs the scan engine directly instead of calling /api/scan, which is rate limited to 5 scans/hour per IP.
  * Only run --apply against production after the new scoring code is deployed, so the site and the
@@ -12,6 +13,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { appendFileSync, writeFileSync } from 'fs';
 import { createClient } from '@supabase/supabase-js';
 import { runScan } from '../src/lib/scanner/core/runScan';
 import { persistScan } from '../src/lib/scanner/persistScan';
@@ -35,6 +37,10 @@ const ONLY = (() => {
   return i >= 0 && args[i + 1] ? args[i + 1].split(',').map((h) => h.trim().toLowerCase().replace(/^www\./, '')).filter(Boolean) : null;
 })();
 const CONCURRENCY = Math.max(1, option('concurrency', 2));
+const OUT = (() => {
+  const i = args.indexOf('--out');
+  return i >= 0 && args[i + 1] ? args[i + 1] : null;
+})();
 
 async function main() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -67,6 +73,7 @@ async function main() {
 
   console.log(`${latest.length} companies on the leaderboard; rescanning ${queue.length} with ${ARS_SCORE_VERSION}${APPLY ? '' : ' (dry run, nothing saved)'}\n`);
 
+  if (OUT) writeFileSync(OUT, '');
   const results: Array<{ url: string; old: number; oldVersion: string; score?: number; grade?: string; coverage?: number; saved?: boolean; error?: string }> = [];
   let next = 0;
 
@@ -79,6 +86,26 @@ async function main() {
         entry.score = result.score;
         entry.grade = result.grade;
         entry.coverage = result.scorecard?.evidence?.baseCoverage;
+        if (OUT) {
+          const sc = result.scorecard;
+          appendFileSync(
+            OUT,
+            JSON.stringify({
+              url: row.url,
+              oldScore: row.score,
+              oldVersion: row.score_version,
+              score: result.score,
+              grade: result.grade,
+              version: sc?.version,
+              archetype: sc?.archetype?.archetype,
+              uncappedScore: sc?.uncappedScore,
+              gates: sc?.gates,
+              runtimeMeasured: sc?.pillars?.runtimeMeasured?.score,
+              evidence: sc?.evidence,
+              checks: Object.fromEntries((sc?.results || []).map((c) => [c.checkId, c.status])),
+            }) + '\n'
+          );
+        }
         if (APPLY) {
           entry.saved = await persistScan(supabase, {
             result,
