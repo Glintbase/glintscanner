@@ -16,6 +16,8 @@ export default defineConfig({
   // package has no runtime dependencies. `yaml` (zero-dependency) is bundled too;
   // anything else under node_modules stays external.
   noExternal: [/^@scanner\//, /^yaml(\/|$)/],
+  // `yaml` is CommonJS and requires Node built-ins; give the ESM bundle a real `require`.
+  banner: { js: "import { createRequire as __glintbaseCreateRequire } from 'node:module'; const require = __glintbaseCreateRequire(import.meta.url);" },
   esbuildOptions(options) {
     // Resolve @scanner/* path alias to the actual scanner source
     options.alias = {

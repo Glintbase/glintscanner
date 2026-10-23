@@ -11,6 +11,8 @@ export default defineConfig({
   sourcemap: true,
   // Bundle scanner-core into the output, keep MCP SDK external
   noExternal: [/^(?!@modelcontextprotocol)/],
+  // Bundled CommonJS dependencies (e.g. `yaml`) require Node built-ins; give the ESM bundle a real `require`.
+  banner: { js: "import { createRequire as __glintbaseCreateRequire } from 'node:module'; const require = __glintbaseCreateRequire(import.meta.url);" },
   esbuildOptions(options) {
     // Resolve @scanner/* path alias to the actual scanner source
     options.alias = {
