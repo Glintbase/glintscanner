@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml, parseOpenApiDocument } from '../probes/access';
+import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml, parseOpenApiDocument, looksJavaScriptRendered } from '../probes/access';
 
 describe('looksLikeLlmsTxt', () => {
   it('accepts a Markdown index with a heading and links', () => {
@@ -79,5 +79,17 @@ describe('parseOpenApiDocument', () => {
     expect(parseOpenApiDocument('{"name":"x"}')).toBeUndefined();
     expect(parseOpenApiDocument('title: not a spec\n')).toBeUndefined();
     expect(parseOpenApiDocument('openapi: [unclosed')).toBeUndefined();
+  });
+});
+
+describe('looksJavaScriptRendered', () => {
+  it('flags an SPA shell', () => {
+    expect(looksJavaScriptRendered('<html><body><div id="root"></div><script src="/app.js"></script></body></html>', 0)).toBe(true);
+    expect(looksJavaScriptRendered('<noscript>You need to enable JavaScript to run this app.</noscript><script src="/a.js"></script>', 10)).toBe(true);
+  });
+
+  it('does not flag a short static page', () => {
+    expect(looksJavaScriptRendered('<html><body><h1>Example Domain</h1><p>This domain is for use in examples.</p></body></html>', 60)).toBe(false);
+    expect(looksJavaScriptRendered('<html><body><h1>Hi</h1><p>Short page.</p><script>console.log(1)</script></body></html>', 40)).toBe(false);
   });
 });

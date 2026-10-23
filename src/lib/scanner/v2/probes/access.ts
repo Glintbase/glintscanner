@@ -84,6 +84,19 @@ export function looksLikeLlmsTxt(body: string, contentType?: string): boolean {
   return /^#\s+\S/m.test(text) || /\[[^\]]+\]\([^)\s]+\)/.test(text);
 }
 
+/**
+ * True when a page with little prose relies on JavaScript to render: an SPA root element,
+ * a <noscript> notice asking for JavaScript, or script markup far outweighing the prose.
+ */
+export function looksJavaScriptRendered(html: string, proseChars: number): boolean {
+  const scripts = html.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) || [];
+  if (!scripts.length) return false;
+  const appRoot = /<(?:div|main|body)\b[^>]*\bid\s*=\s*["']?(?:root|app|__next|__nuxt|svelte|q-app|main-app)["'\s>]/i.test(html);
+  const noscriptJs = /<noscript\b[^>]*>[\s\S]*?javascript[\s\S]*?<\/noscript>/i.test(html);
+  const scriptChars = scripts.reduce((n, s) => n + s.length, 0);
+  return appRoot || noscriptJs || scriptChars >= 20 * Math.max(proseChars, 50);
+}
+
 /** An OpenAPI / Swagger document parsed from JSON or YAML, or undefined if the body is neither. */
 export function parseOpenApiDocument(body: string): any {
   const isSpec = (doc: any) => doc && typeof doc === 'object' && !Array.isArray(doc) && (doc.openapi || doc.swagger);
@@ -274,6 +287,9 @@ export async function probeAccess(
   }
 
   const zeroJsPassed = proseLength >= 500 && hasH1 && !skipsHeading && (textDensityPercent >= 5 || rawHtml.includes('#'));
+  // A short page is not the same as a JavaScript-only page: only a page that relies on scripts
+  // to render (an app root, a "needs JavaScript" notice, or far more script than prose) gates.
+  const jsDependent = looksJavaScriptRendered(rawHtml, proseLength);
 
   results.push({
     checkId: 'content-no-js',
@@ -283,7 +299,8 @@ export async function probeAccess(
     isBonus: false,
     message: zeroJsPassed
       ? `Zero-JS readability confirmed (${proseLength} chars prose, ${textDensityPercent}% density, valid h1)`
-      : `Zero-JS readability issues: ${proseLength < 500 ? '<500 chars prose; ' : ''}${!hasH1 ? 'missing <h1>; ' : ''}${skipsHeading ? 'skipped heading levels; ' : ''}`,
+      : `Zero-JS readability issues: ${proseLength < 500 ? '<500 chars prose; ' : ''}${!hasH1 ? 'missing <h1>; ' : ''}${skipsHeading ? 'skipped heading levels; ' : ''}${proseLength < 300 ? (jsDependent ? 'content appears to need JavaScript' : 'short static page (not JavaScript-rendered)') : ''}`,
+    evidence: { proseChars: proseLength, jsDependent },
     remediation: !zeroJsPassed ? {
       title: 'Ensure Server-Rendered Semantic HTML',
       file: 'app/page.tsx',
@@ -440,7 +457,8 @@ export async function probeAccess(
       sampledLinks.map((href) => fetchResource(href, { timeoutMs: 4000, maxBytes: 200_000 }).catch(() => null))
     );
     linkResults.forEach((r, i) => {
-      if (r?.ok) resolvedCount++;
+      // A 2xx page over the size cap still resolved; only the body was too large to read in full.
+      if (r?.ok || (r?.status === 'too_large' && (r.httpStatus ?? 0) < 400)) resolvedCount++;
       else brokenLinks.push(sampledLinks[i]);
     });
   }
@@ -566,7 +584,10 @@ export async function probeAccess(
     try {
       alternateUrl = new URL(alternateHref, targetUrl).href;
       const altRes = await fetchResource(alternateUrl, { timeoutMs: 3000, maxBytes: 500_000 });
-      alternateResolves = Boolean(altRes.ok && altRes.body && !/<html|<!doctype/i.test(altRes.body));
+      alternateResolves =
+        altRes.status === 'too_large'
+          ? (altRes.httpStatus ?? 0) < 400 && !/html/i.test(altRes.contentType || '')
+          : Boolean(altRes.ok && altRes.body && !/<html|<!doctype/i.test(altRes.body));
     } catch {
       /* invalid href */
     }

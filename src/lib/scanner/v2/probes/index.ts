@@ -122,9 +122,10 @@ export const MIN_LAYER_COVERAGE = 0.5;
 export const GATE_SCORE_CAP = 47;
 
 /** Checks whose `fail` stops a plain-fetch agent outright. */
-const GATE_CHECKS: Array<[string, string]> = [
-  ['anti-crawler-challenge-free', 'The homepage served a bot challenge or HTTP 403 to the scanner'],
-  ['content-no-js', 'The homepage has almost no content without JavaScript'],
+const GATE_CHECKS: Array<[string, string, (c: CheckResult) => boolean]> = [
+  ['anti-crawler-challenge-free', 'The homepage served a bot challenge or HTTP 403 to the scanner', () => true],
+  // A short static page is not JavaScript-only: only gate when the page relies on scripts to render.
+  ['content-no-js', 'The homepage has almost no content without JavaScript', (c) => c.evidence?.jsDependent === true],
 ];
 
 function layerCoverage(layer: LayerId, checks: CheckResult[]): { verified: number; registered: number } {
@@ -327,9 +328,9 @@ export async function runArs3ProbesDetailed(
   // (agents refused at the edge, answer only after running JavaScript). Weighted points can't
   // offset them, so any gate caps the score.
   const gates: ScoreGate[] = [];
-  for (const [checkId, reason] of GATE_CHECKS) {
+  for (const [checkId, reason, applies] of GATE_CHECKS) {
     const check = allResults.find((c) => c.checkId === checkId);
-    if (check?.status === 'fail') gates.push({ checkId, reason });
+    if (check?.status === 'fail' && applies(check)) gates.push({ checkId, reason });
   }
   const score = gates.length ? Math.min(uncappedScore, GATE_SCORE_CAP) : uncappedScore;
 

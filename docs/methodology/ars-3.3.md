@@ -59,7 +59,7 @@ Several registered checks are not probed yet and always report `na` (for example
    | Gate check | Fails when |
    |---|---|
    | `anti-crawler-challenge-free` | The homepage serves a bot challenge (challenge markers or `cf-mitigated: challenge`) or HTTP 403 to the scanner's request |
-   | `content-no-js` | The homepage has under 300 characters of prose without JavaScript |
+   | `content-no-js` | The homepage has under 300 characters of prose without JavaScript and relies on scripts to render (an app root, a noscript notice, or far more script than text) |
 
    These are the two failures that stopped retrieval outright in AgentReady.org's controlled experiment (19 configurations of one docs site; only a JavaScript-only answer and a 403 to agent user-agents stopped retrieval). Weighted points can't offset a site an agent can't read. The cap value is a policy choice.
 
