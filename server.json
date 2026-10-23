@@ -1,7 +1,7 @@
 {
   "$schema": "https://registry.modelcontextprotocol.io/schema/server.json",
   "name": "io.github.Glintbase/glintbase-mcp",
-  "version": "3.3.1",
+  "version": "3.5.0",
   "description": "Zero-config agent-readiness auditor and Flight Simulator tools for AI coding agents",
   "author": {
     "name": "Glintbase",
@@ -25,7 +25,7 @@
   "distribution": {
     "npm": {
       "package": "@glintbase/mcp",
-      "version": "3.3.1",
+      "version": "3.5.0",
       "command": "npx",
       "args": ["-y", "@glintbase/mcp"]
     },
