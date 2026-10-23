@@ -1,0 +1,10 @@
+{
+  "specVersion": "1.0",
+  "entries": [
+    {
+      "identifier": "urn:air:scan.glintbase.dev:mcp:glintbase",
+      "type": "application/mcp-server-card+json",
+      "url": "https://scan.glintbase.dev/api/mcp/server-card"
+    }
+  ]
+}

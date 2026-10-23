@@ -239,6 +239,28 @@ const PROMPTS_MANIFEST = Object.values(BUNDLED_SKILLS).map(skill => ({
   ],
 }));
 
+// Dual-era MCP (spec 2026-07-28, basic/versioning): modern requests carry the version in _meta
+// and are served statelessly; an `initialize` request selects legacy semantics.
+const MODERN_PROTOCOL_VERSION = '2026-07-28';
+const LEGACY_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
+const SUPPORTED_PROTOCOL_VERSIONS = [MODERN_PROTOCOL_VERSION, ...LEGACY_PROTOCOL_VERSIONS];
+const SERVER_CAPABILITIES = {
+  tools: { listChanged: false },
+  prompts: { listChanged: false },
+  resources: { subscribe: false, listChanged: false },
+  logging: {},
+};
+const SERVER_INSTRUCTIONS =
+  'Glintbase scores how ready a website, API or MCP server is for AI agents (Agent Readiness Score). Call audit or get_score with a URL.';
+
+/** Protocol version a modern request declares (per-request _meta, else the MCP-Protocol-Version header). */
+function modernRequestVersion(params: any, req: NextRequest): string | undefined {
+  const fromMeta = params?._meta?.['io.modelcontextprotocol/protocolVersion'];
+  if (typeof fromMeta === 'string') return fromMeta;
+  const header = req.headers.get('mcp-protocol-version');
+  return header && !LEGACY_PROTOCOL_VERSIONS.includes(header) ? header : undefined;
+}
+
 const RESOURCES_MANIFEST = [
   ...Object.values(BUNDLED_SKILLS).map(skill => ({
     uri: skill.uri,
@@ -266,7 +288,7 @@ export async function OPTIONS() {
     headers: {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, DELETE',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-MCP-Version, Accept',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-MCP-Version, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id',
     },
   });
 }
@@ -295,7 +317,9 @@ export async function GET(req: NextRequest) {
           status: 'ok',
           server: 'glintbase-hosted-mcp',
           version: GLINTBASE_VERSION,
-          protocol: '2024-11-05',
+          protocol: MODERN_PROTOCOL_VERSION,
+          supportedProtocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
+          serverCard: 'https://scan.glintbase.dev/api/mcp/server-card',
           description: 'Hosted Glintbase MCP Endpoint for AI Agents (Claude Desktop, Cursor, Windsurf, ChatGPT)',
           endpoint: 'https://scan.glintbase.dev/api/mcp',
           supportedTools: TOOLS_MANIFEST.map(t => t.name),
@@ -398,23 +422,45 @@ export async function POST(req: NextRequest) {
   const params = body.params || {};
 
   let rpcResponse: any;
+  const requestedModern = method === 'initialize' ? undefined : modernRequestVersion(params, req);
 
-  if (method === 'initialize') {
+  if (requestedModern && requestedModern !== MODERN_PROTOCOL_VERSION && !LEGACY_PROTOCOL_VERSIONS.includes(requestedModern)) {
+    // UnsupportedProtocolVersionError: the client retries with a version from `supported`.
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      error: {
+        code: -32022,
+        message: 'Unsupported protocol version',
+        data: { supported: SUPPORTED_PROTOCOL_VERSIONS, requested: requestedModern },
+      },
+    };
+  } else if (method === 'server/discover') {
     rpcResponse = {
       jsonrpc: '2.0',
       id,
       result: {
-        protocolVersion: '2024-11-05',
-        capabilities: {
-          tools: { listChanged: false },
-          prompts: { listChanged: false },
-          resources: { subscribe: false, listChanged: false },
-          logging: {},
-        },
+        resultType: 'complete',
+        supportedVersions: SUPPORTED_PROTOCOL_VERSIONS,
+        capabilities: SERVER_CAPABILITIES,
+        _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'glintbase', version: GLINTBASE_VERSION } },
+        instructions: SERVER_INSTRUCTIONS,
+      },
+    };
+  } else if (method === 'initialize') {
+    // Legacy handshake: echo a supported legacy revision, else offer the newest one.
+    const requested = typeof params.protocolVersion === 'string' ? params.protocolVersion : '';
+    rpcResponse = {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        protocolVersion: LEGACY_PROTOCOL_VERSIONS.includes(requested) ? requested : LEGACY_PROTOCOL_VERSIONS[0],
+        capabilities: SERVER_CAPABILITIES,
         serverInfo: {
           name: 'glintbase',
           version: GLINTBASE_VERSION,
         },
+        instructions: SERVER_INSTRUCTIONS,
       },
     };
   } else if (method === 'notifications/initialized') {

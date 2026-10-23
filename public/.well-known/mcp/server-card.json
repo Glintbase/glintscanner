@@ -1,13 +1,13 @@
 {
   "$schema": "https://json.schemastore.org/mcp-server-card.json",
   "name": "glintbase",
-  "displayName": "Glintbase ARS 3.2",
-  "description": "Autonomous Agent-Readiness Audit Suite, Machine Entrypoint Discovery, ARS 3.2 Playbooks, and Interactive Visual Flight Simulator.",
+  "displayName": "Glintbase ARS 3.3",
+  "description": "Autonomous Agent-Readiness Audit Suite, Machine Entrypoint Discovery, ARS 3.3 Playbooks, and Interactive Visual Flight Simulator.",
   "version": "3.3.0",
   "homepage": "https://glintbase.dev",
   "repository": "https://github.com/athertech/glintbase",
   "endpoint": "https://scan.glintbase.dev/api/mcp",
-  "protocolVersion": "2024-11-05",
+  "protocolVersion": "2026-07-28",
   "transport": "streamable-http",
   "capabilities": {
     "tools": true,
@@ -22,11 +22,11 @@
   "tools": [
     {
       "name": "glintbase_audit",
-      "description": "Execute full ARS 3.2 agent-readiness audit on a target URL."
+      "description": "Execute full ARS 3.3 agent-readiness audit on a target URL."
     },
     {
       "name": "glintbase_get_score",
-      "description": "Fetch ultra-compact ARS 3.2 score card (<200 tokens)."
+      "description": "Fetch ultra-compact ARS 3.3 score card (<200 tokens)."
     },
     {
       "name": "glintbase_simulate_flight",
