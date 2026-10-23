@@ -1,13 +1,32 @@
 /**
- * 4-Step Empirical MCP Live Prober (SPEC-09 / ARS 3.1)
- * Evaluates production MCP servers across:
- * 1. Dual Wire-Form Handshake (2026-07-28 in _meta/headers vs legacy)
- * 2. Anonymous Tools Discovery & Hidden Auth Gates
- * 3. Safe Execution Probe & Schema Honesty
- * 4. Error Channel Integrity (isError: true vs 200 string masquerade)
+ * Dual-era MCP live prober (ARS 3.3)
+ *
+ * Follows the client-side backward-compatibility procedure in MCP 2026-07-28, as the
+ * Remote MCP Server Reliability study harness does (glintbase-research,
+ * benchmarks/production-mcp-reliability-crisis/harness/probe.py):
+ *
+ * 1. Handshake: `server/discover` with per-request `_meta` and `MCP-Protocol-Version` /
+ *    `Mcp-Method` headers. A DiscoverResult (`supportedVersions`) or a modern-only error
+ *    marks the server as modern. Otherwise `initialize` (2025-11-25, retried with 2025-03-26),
+ *    then `notifications/initialized` with the session id if one was issued.
+ * 2. Anonymous tools discovery (`tools/list`) and hidden auth gates.
+ * 3. Safe execution probe: only a zero-argument tool the server annotates `readOnlyHint: true`.
+ * 4. Error channel integrity: a call to a non-existent tool must come back in-channel.
  */
 
-import { fetchResource } from './fetchResource';
+import { fetchResource, type FetchResourceResult } from './fetchResource';
+
+export const MODERN_PROTOCOL_VERSION = '2026-07-28';
+const LEGACY_PROTOCOL_VERSION = '2025-11-25';
+const LEGACY_FALLBACK_VERSION = '2025-03-26';
+/** Legacy revisions that define the MCP-Protocol-Version header on post-initialize requests. */
+const HEADER_VERSIONS = new Set(['2025-06-18', '2025-11-25']);
+/** Errors only a modern server emits about the request itself (no legacy fallback). */
+const MODERN_ONLY_ERROR_CODES = new Set([-32020, -32021]);
+/** UnsupportedProtocolVersion: a dual-era client retries with an older revision. */
+const UNSUPPORTED_VERSION_CODE = -32022;
+const CANARY_TOOL = '__glintbase_canary_invalid_tool_probe__';
+const CLIENT_INFO = { name: 'glintbase-live-probe', version: '3.3.0' };
 
 export interface McpProbeStepResult {
   step: 'handshake' | 'tools_list' | 'safe_call' | 'error_channel';
@@ -22,9 +41,14 @@ export interface McpProbeStepResult {
 export interface McpLiveProbeResult {
   live: boolean;
   endpoint: string;
-  /** initialize returned a JSON-RPC result on either wire form. */
+  /** The server completed a handshake (server/discover result or initialize result). */
   handshakeAccepted: boolean;
+  /** `modern` answered server/discover; `legacy` completed initialize. */
+  era?: 'modern' | 'legacy';
   protocolVersion?: string;
+  /** Revisions a modern server lists in its DiscoverResult. */
+  supportedVersions?: string[];
+  /** Modern server that also completed a legacy initialize handshake. */
   dualWireCompatible: boolean;
   wireForm2026Supported: boolean;
   legacyWireSupported: boolean;
@@ -35,7 +59,7 @@ export interface McpLiveProbeResult {
   toolCount: number;
   /** True only when tools/list returned a well-formed tools array. */
   toolsListed: boolean;
-  /** Server capabilities from the initialize result (prompts, resources, logging, ...). */
+  /** Server capabilities from the handshake result (prompts, resources, logging, ...). */
   capabilities: Record<string, any>;
   /** Raw WWW-Authenticate header when the endpoint answered 401. */
   wwwAuthenticate?: string;
@@ -59,142 +83,204 @@ export interface McpLiveProbeResult {
   reliabilityScore: number; // 0 - 100
 }
 
-function extractJson(body?: string): any {
+/** JSON objects carried in SSE `data:` fields, one per event. */
+function parseSseMessages(text: string): any[] {
+  const out: any[] = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trimStart());
+    if (!data.length) continue;
+    try {
+      const obj = JSON.parse(data.join('\n'));
+      if (obj && typeof obj === 'object') out.push(obj);
+    } catch {
+      /* not JSON */
+    }
+  }
+  return out;
+}
+
+/** The JSON-RPC response in a body (plain JSON or an SSE stream), preferring the given id. */
+function extractJson(body?: string, rpcId?: number): any {
   if (!body) return null;
   const trimmed = body.trim();
+  if (!trimmed) return null;
   try {
     return JSON.parse(trimmed);
   } catch {
-    // Attempt to locate JSON inside JSON-RPC / SSE stream chunks
-    const m = trimmed.match(/\{[\s\S]*\}/);
-    if (m) {
-      try {
-        return JSON.parse(m[0]);
-      } catch {}
+    /* SSE or embedded JSON */
+  }
+  const messages = parseSseMessages(trimmed);
+  const isResponse = (m: any) => 'result' in m || 'error' in m;
+  const match = messages.find((m) => m.id === rpcId && isResponse(m)) || messages.find(isResponse);
+  if (match) return match;
+  const m = trimmed.match(/\{[\s\S]*\}/);
+  if (m) {
+    try {
+      return JSON.parse(m[0]);
+    } catch {
+      /* give up */
     }
   }
   return null;
 }
 
+function modernMeta() {
+  return {
+    'io.modelcontextprotocol/protocolVersion': MODERN_PROTOCOL_VERSION,
+    'io.modelcontextprotocol/clientInfo': CLIENT_INFO,
+    'io.modelcontextprotocol/clientCapabilities': {},
+  };
+}
+
+function modernHeaders(method: string, name?: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+    'mcp-protocol-version': MODERN_PROTOCOL_VERSION,
+    'mcp-method': method,
+    ...(name ? { 'mcp-name': name } : {}),
+  };
+}
+
+function legacyHeaders(version?: string, session?: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    Accept: 'application/json, text/event-stream',
+    ...(version && HEADER_VERSIONS.has(version) ? { 'mcp-protocol-version': version } : {}),
+    ...(session ? { 'mcp-session-id': session } : {}),
+  };
+}
+
+function isAuthChallenge(res: FetchResourceResult): boolean {
+  return res.httpStatus === 401 || (res.httpStatus === 403 && Boolean(res.headers?.['www-authenticate']));
+}
+
 /**
- * Executes the 4-step MCP live diagnostic probe against an endpoint.
+ * Executes the dual-era MCP live diagnostic probe against an endpoint.
  */
 export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeResult> {
   const steps: McpProbeStepResult[] = [];
   let wireForm2026Supported = false;
   let legacyWireSupported = false;
+  let dualWireCompatible = false;
   let authGated = false;
   let hiddenAuthGateDetected = false;
   let dishonestSchemaDetected = false;
   let inChannelErrorsVerified = false;
   let protocolVersion: string | undefined;
+  let supportedVersions: string[] | undefined;
+  let era: McpLiveProbeResult['era'];
+  let capabilities: Record<string, any> = {};
+  let session: string | undefined;
+  let wwwAuthenticate: string | undefined;
   const tools: McpLiveProbeResult['tools'] = [];
 
+  const post = (body: object, headers: Record<string, string>, timeoutMs = 3500) =>
+    fetchResource(endpointUrl, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      timeoutMs,
+      headers,
+      allowErrorBody: true,
+    });
+
+  const noteAuth = (res: FetchResourceResult) => {
+    if (!isAuthChallenge(res)) return false;
+    authGated = true;
+    wwwAuthenticate = wwwAuthenticate || res.headers?.['www-authenticate'];
+    return true;
+  };
+
+  /** Headers and _meta for a request after the handshake, in the server's era. */
+  const requestShape = (method: string, name?: string) =>
+    era === 'modern'
+      ? { headers: modernHeaders(method, name), meta: { _meta: modernMeta() } }
+      : { headers: legacyHeaders(protocolVersion, session), meta: {} };
+
   // =========================================================================
-  // STEP 1: Handshake Probe (Dual Wire Form)
+  // STEP 1: Handshake (server/discover, then initialize)
   // =========================================================================
   const t0 = Date.now();
 
-  // Test modern 2026-07-28 wire form with _meta and headers
-  const modernInitPayload = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2026-07-28',
-      _meta: { protocolVersion: '2026-07-28' },
-      capabilities: { tools: { listChanged: true } },
-      clientInfo: { name: 'glintbase-live-probe', version: '3.1.0' },
-    },
-  });
-
-  const modernRes = await fetchResource(endpointUrl, {
-    method: 'POST',
-    body: modernInitPayload,
-    timeoutMs: 3500,
-    headers: {
-      'Content-Type': 'application/json',
-      'mcp-protocol-version': '2026-07-28',
-      Accept: 'application/json, text/event-stream',
-    },
-    allowErrorBody: true,
-  });
-
-  const modernJson = extractJson(modernRes.body);
-  // The server picks the version in its initialize result. Answering a 2026-07-28 request
-  // with an older protocolVersion means it does NOT support the 2026-07-28 wire form.
-  const modernAnswered = Boolean(modernJson?.result?.serverInfo || modernJson?.result?.protocolVersion);
-  const modernSuccess = Boolean(
-    modernJson?.result?.protocolVersion === '2026-07-28' ||
-    (modernAnswered && modernRes.headers?.['mcp-protocol-version'] === '2026-07-28')
+  const discoverRes = await post(
+    { jsonrpc: '2.0', id: 1, method: 'server/discover', params: { _meta: modernMeta() } },
+    modernHeaders('server/discover')
   );
+  const discoverJson = extractJson(discoverRes.body, 1);
+  const discoverResult = discoverJson?.result;
+  const discoverErrorCode = typeof discoverJson?.error?.code === 'number' ? discoverJson.error.code : undefined;
+  noteAuth(discoverRes);
 
-  if (modernSuccess) {
+  const isModern =
+    (discoverResult && typeof discoverResult === 'object' && Array.isArray(discoverResult.supportedVersions)) ||
+    (discoverErrorCode !== undefined && MODERN_ONLY_ERROR_CODES.has(discoverErrorCode));
+
+  let initRes: FetchResourceResult | undefined;
+  if (isModern) {
+    era = 'modern';
     wireForm2026Supported = true;
-    protocolVersion = '2026-07-28';
-  } else if (modernAnswered && typeof modernJson?.result?.protocolVersion === 'string') {
-    protocolVersion = modernJson.result.protocolVersion;
-  }
-
-  // Also probe legacy 2025-03-26 / 2024-11-05 wire form
-  const legacyInitPayload = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 2,
-    method: 'initialize',
-    params: {
-      protocolVersion: '2025-03-26',
-      capabilities: { tools: { listChanged: true } },
-      clientInfo: { name: 'glintbase-live-probe', version: '3.1.0' },
-    },
-  });
-
-  const legacyRes = await fetchResource(endpointUrl, {
-    method: 'POST',
-    body: legacyInitPayload,
-    timeoutMs: 3500,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
-    },
-    allowErrorBody: true,
-  });
-
-  const legacyJson = extractJson(legacyRes.body);
-  const legacySuccess = Boolean(
-    legacyJson?.result?.serverInfo ||
-    legacyJson?.result?.capabilities ||
-    legacyJson?.result?.protocolVersion
-  );
-
-  if (legacySuccess) {
-    legacyWireSupported = true;
-    if (!protocolVersion) {
-      protocolVersion = legacyJson?.result?.protocolVersion || '2025-03-26';
+    protocolVersion = MODERN_PROTOCOL_VERSION;
+    if (Array.isArray(discoverResult?.supportedVersions)) {
+      supportedVersions = discoverResult.supportedVersions.filter((v: unknown): v is string => typeof v === 'string');
+    }
+    if (discoverResult?.capabilities && typeof discoverResult.capabilities === 'object') {
+      capabilities = discoverResult.capabilities;
     }
   }
 
-  const handshakePassed = wireForm2026Supported || legacyWireSupported || modernAnswered;
-  const isAuthProtected = modernRes.httpStatus === 401 || legacyRes.httpStatus === 401;
-  const capabilities: Record<string, any> =
-    modernJson?.result?.capabilities || legacyJson?.result?.capabilities || {};
-  // Streamable HTTP servers may require the session from initialize on later requests.
-  const sessionId = modernRes.headers?.['mcp-session-id'] || legacyRes.headers?.['mcp-session-id'];
-  const sessionHeaders: Record<string, string> = sessionId ? { 'mcp-session-id': sessionId } : {};
-  const wwwAuthenticate = modernRes.headers?.['www-authenticate'] || legacyRes.headers?.['www-authenticate'];
-
-  if (isAuthProtected) {
-    authGated = true;
+  // Legacy initialize: the handshake for legacy servers, and the dual-era check for modern
+  // servers that say they still accept an older revision.
+  const claimsLegacy = Boolean(supportedVersions?.some((v) => v !== MODERN_PROTOCOL_VERSION));
+  if (!authGated && (!isModern || claimsLegacy)) {
+    const initialize = (version: string) =>
+      post(
+        {
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'initialize',
+          params: { protocolVersion: version, capabilities: {}, clientInfo: CLIENT_INFO },
+        },
+        legacyHeaders()
+      );
+    initRes = await initialize(LEGACY_PROTOCOL_VERSION);
+    let initJson = extractJson(initRes.body, 2);
+    if (initJson?.error && !initJson?.result) {
+      // Some older servers reject an unknown protocolVersion instead of negotiating down.
+      initRes = await initialize(LEGACY_FALLBACK_VERSION);
+      initJson = extractJson(initRes.body, 2);
+    }
+    noteAuth(initRes);
+    const initResult = initJson?.result;
+    if (initResult && typeof initResult === 'object') {
+      legacyWireSupported = true;
+      if (isModern) {
+        dualWireCompatible = true;
+      } else {
+        era = 'legacy';
+        protocolVersion = typeof initResult.protocolVersion === 'string' ? initResult.protocolVersion : undefined;
+        if (initResult.capabilities && typeof initResult.capabilities === 'object') capabilities = initResult.capabilities;
+        session = initRes.headers?.['mcp-session-id'];
+        await post({ jsonrpc: '2.0', method: 'notifications/initialized' }, legacyHeaders(protocolVersion, session), 2500);
+      }
+    }
   }
+
+  const handshakePassed = era !== undefined;
 
   steps.push({
     step: 'handshake',
-    passed: handshakePassed || isAuthProtected,
-    wireFormat: wireForm2026Supported ? '2026-07-28' : legacyWireSupported ? '2025-03-26' : 'unsupported',
+    passed: handshakePassed || authGated,
+    wireFormat: era === 'modern' ? '2026-07-28' : era === 'legacy' ? 'legacy' : 'unsupported',
     latencyMs: Date.now() - t0,
-    httpStatus: modernRes.httpStatus || legacyRes.httpStatus,
+    httpStatus: discoverRes.httpStatus || initRes?.httpStatus,
     message: handshakePassed
-      ? `Handshake accepted (2026-07-28: ${wireForm2026Supported ? 'yes' : 'no'}, legacy: ${legacyWireSupported ? 'yes' : 'no'})`
-      : isAuthProtected
+      ? era === 'modern'
+        ? `server/discover answered (2026-07-28${dualWireCompatible ? '; legacy initialize also accepted' : ''})`
+        : `initialize accepted (negotiated ${protocolVersion || 'no version'}; server/discover not supported${discoverErrorCode === UNSUPPORTED_VERSION_CODE ? ': 2026-07-28 rejected' : ''})`
+      : authGated
       ? 'Endpoint requires authentication at handshake stage'
       : 'Handshake failed or invalid JSON-RPC response',
   });
@@ -203,66 +289,53 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
   // STEP 2: Tools Discovery (tools/list)
   // =========================================================================
   const t1 = Date.now();
-  const listPayload = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 3,
-    method: 'tools/list',
-    params: {},
-  });
+  let toolsListed = false;
+  let toolsListPassed = false;
+  let listStatus: number | undefined;
 
-  const listRes = await fetchResource(endpointUrl, {
-    method: 'POST',
-    body: listPayload,
-    timeoutMs: 3500,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(wireForm2026Supported ? { 'mcp-protocol-version': '2026-07-28' } : {}),
-      ...sessionHeaders,
-      Accept: 'application/json, text/event-stream',
-    },
-    allowErrorBody: true,
-  });
+  if (handshakePassed) {
+    const shape = requestShape('tools/list');
+    const listRes = await post({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: { ...shape.meta } }, shape.headers);
+    listStatus = listRes.httpStatus;
+    noteAuth(listRes);
+    const listJson = extractJson(listRes.body, 3);
+    const rawTools = Array.isArray(listJson?.result?.tools) ? listJson.result.tools : [];
+    toolsListed = Array.isArray(listJson?.result?.tools);
+    toolsListPassed = toolsListed;
 
-  const listJson = extractJson(listRes.body);
-  const rawTools = Array.isArray(listJson?.result?.tools)
-    ? listJson.result.tools
-    : Array.isArray(listJson?.tools)
-    ? listJson.tools
-    : [];
-
-  const toolsListed = Array.isArray(listJson?.result?.tools) || Array.isArray(listJson?.tools);
-  const toolsListPassed = rawTools.length > 0 || (listJson?.jsonrpc === '2.0' && !listJson.error);
-
-  for (const t of rawTools) {
-    if (!t?.name) continue;
-    const reqList = Array.isArray(t.inputSchema?.required) ? t.inputSchema.required : [];
-    const props = t.inputSchema?.properties && typeof t.inputSchema.properties === 'object' ? Object.values<any>(t.inputSchema.properties) : [];
-    const annotatedReadOnly = t.annotations?.readOnlyHint === true || t.readOnlyHint === true;
-    const annotatedDestructive = typeof t.annotations?.destructiveHint === 'boolean' || typeof t.destructiveHint === 'boolean';
-    tools.push({
-      name: t.name,
-      description: t.description,
-      readOnly: Boolean(annotatedReadOnly || t.name.startsWith('get_') || t.name.startsWith('list_')),
-      destructive: Boolean(t.annotations?.destructiveHint || t.destructiveHint || t.name.startsWith('delete_') || t.name.startsWith('drop_')),
-      annotatedReadOnly,
-      annotatedDestructive,
-      schemaValid: Boolean(t.inputSchema && typeof t.inputSchema === 'object'),
-      schemaStrict: Boolean(
-        t.inputSchema?.type === 'object' &&
-        props.every((p) => p && typeof p === 'object' && (p.type || p.enum || p.anyOf || p.oneOf || p.$ref))
-      ),
-      declaredRequiredCount: reqList.length,
-    });
+    for (const t of rawTools) {
+      if (!t?.name) continue;
+      const reqList = Array.isArray(t.inputSchema?.required) ? t.inputSchema.required : [];
+      const props = t.inputSchema?.properties && typeof t.inputSchema.properties === 'object' ? Object.values<any>(t.inputSchema.properties) : [];
+      const annotatedReadOnly = t.annotations?.readOnlyHint === true || t.readOnlyHint === true;
+      const annotatedDestructive = typeof t.annotations?.destructiveHint === 'boolean' || typeof t.destructiveHint === 'boolean';
+      tools.push({
+        name: t.name,
+        description: t.description,
+        readOnly: Boolean(annotatedReadOnly || t.name.startsWith('get_') || t.name.startsWith('list_')),
+        destructive: Boolean(t.annotations?.destructiveHint || t.destructiveHint || t.name.startsWith('delete_') || t.name.startsWith('drop_')),
+        annotatedReadOnly,
+        annotatedDestructive,
+        schemaValid: Boolean(t.inputSchema && typeof t.inputSchema === 'object'),
+        schemaStrict: Boolean(
+          t.inputSchema?.type === 'object' &&
+          props.every((p) => p && typeof p === 'object' && (p.type || p.enum || p.const !== undefined || p.anyOf || p.oneOf || p.allOf || p.$ref))
+        ),
+        declaredRequiredCount: reqList.length,
+      });
+    }
   }
 
   steps.push({
     step: 'tools_list',
     passed: toolsListPassed,
     latencyMs: Date.now() - t1,
-    httpStatus: listRes.httpStatus,
+    httpStatus: listStatus,
     message: toolsListPassed
       ? `Discovered ${tools.length} declared tools`
-      : 'Failed to retrieve tools catalog anonymously',
+      : handshakePassed
+      ? 'Failed to retrieve tools catalog anonymously'
+      : 'Skipped: no handshake',
     data: { declaredCount: tools.length },
   });
 
@@ -277,42 +350,25 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
   const zeroArgTool = tools.find((t) => t.declaredRequiredCount === 0 && t.annotatedReadOnly);
 
   if (zeroArgTool) {
-    const callPayload = JSON.stringify({
-      jsonrpc: '2.0',
-      id: 4,
-      method: 'tools/call',
-      params: {
-        name: zeroArgTool.name,
-        arguments: {},
-      },
-    });
+    const shape = requestShape('tools/call', zeroArgTool.name);
+    const callRes = await post(
+      { jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: zeroArgTool.name, arguments: {}, ...shape.meta } },
+      shape.headers,
+      4000
+    );
+    const callJson = extractJson(callRes.body, 4);
 
-    const callRes = await fetchResource(endpointUrl, {
-      method: 'POST',
-      body: callPayload,
-      timeoutMs: 4000,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(wireForm2026Supported ? { 'mcp-protocol-version': '2026-07-28' } : {}),
-        ...sessionHeaders,
-        Accept: 'application/json, text/event-stream',
-      },
-      allowErrorBody: true,
-    });
-
-    const callJson = extractJson(callRes.body);
-
-    // Check for Hidden Auth Gate: handshake passed anonymously, but call requires auth
+    // Hidden auth gate: the handshake worked anonymously, but the call requires auth.
     if (callRes.httpStatus === 401 || (callJson?.error?.code === -32001 && /auth|token|credential/i.test(callJson?.error?.message || ''))) {
       hiddenAuthGateDetected = true;
     }
 
-    // Check for Dishonest Schema: declared 0 required args, but server complains about missing required args
+    // Dishonest schema: declared 0 required args, but the server complains about missing ones.
     if (/missing.*required|argument.*required|validation.*failed/i.test(callJson?.error?.message || '')) {
       dishonestSchemaDetected = true;
     }
 
-    if (callJson?.result?.content || (callJson?.jsonrpc === '2.0' && !callJson.error)) {
+    if (callJson?.result?.content || (callJson?.jsonrpc === '2.0' && callJson.result && !callJson.error)) {
       safeCallPassed = true;
     }
 
@@ -332,46 +388,31 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
   } else {
     steps.push({
       step: 'safe_call',
-      passed: tools.length > 0, // Soft pass if tools exist but none is safe to call
+      passed: false,
       latencyMs: Date.now() - t2,
       message: tools.length === 0 ? 'Skipped: No tools discovered' : 'Skipped: No zero-argument tool annotated readOnlyHint: true',
     });
   }
 
   // =========================================================================
-  // STEP 4: Error Channel Integrity Probe (In-channel vs 200 masquerade)
+  // STEP 4: Error Channel Integrity Probe (in-channel vs 200 masquerade)
   // =========================================================================
   const t3 = Date.now();
-  const canaryInvalidPayload = JSON.stringify({
-    jsonrpc: '2.0',
-    id: 5,
-    method: 'tools/call',
-    params: {
-      name: '__glintbase_canary_invalid_tool_probe__',
-      arguments: {},
-    },
-  });
+  let errStatus: number | undefined;
 
-  const errRes = await fetchResource(endpointUrl, {
-    method: 'POST',
-    body: canaryInvalidPayload,
-    timeoutMs: 3000,
-    headers: {
-      'Content-Type': 'application/json',
-      ...sessionHeaders,
-      Accept: 'application/json, text/event-stream',
-    },
-    allowErrorBody: true,
-  });
-
-  const errJson = extractJson(errRes.body);
-
-  // In-channel error verification:
-  // Must return valid JSON-RPC error or result.isError: true, NOT raw HTML or HTTP 200 plain text masquerade
-  if (errJson) {
-    if (errJson.error && typeof errJson.error === 'object') {
+  if (handshakePassed) {
+    const shape = requestShape('tools/call', CANARY_TOOL);
+    const errRes = await post(
+      { jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: CANARY_TOOL, arguments: {}, ...shape.meta } },
+      shape.headers,
+      3000
+    );
+    errStatus = errRes.httpStatus;
+    const errJson = extractJson(errRes.body, 5);
+    // Must be a JSON-RPC error or result.isError: true, not HTML or an HTTP 200 plain-text masquerade.
+    if (errJson?.error && typeof errJson.error === 'object') {
       inChannelErrorsVerified = true;
-    } else if (errJson.result?.isError === true) {
+    } else if (errJson?.result?.isError === true) {
       inChannelErrorsVerified = true;
     }
   }
@@ -380,10 +421,12 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
     step: 'error_channel',
     passed: inChannelErrorsVerified,
     latencyMs: Date.now() - t3,
-    httpStatus: errRes.httpStatus,
+    httpStatus: errStatus,
     message: inChannelErrorsVerified
       ? 'Errors signalled properly in-channel via JSON-RPC error envelope or isError: true'
-      : 'Failed: Error was masqueraded as HTTP 200 plain string, HTML, or unparseable envelope',
+      : handshakePassed
+      ? 'Failed: Error was masqueraded as HTTP 200 plain string, HTML, or unparseable envelope'
+      : 'Skipped: no handshake',
   });
 
   // =========================================================================
@@ -394,16 +437,18 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
   if (wireForm2026Supported) score += 10;
   if (toolsListPassed) score += 25;
   if (safeCallPassed) score += 15;
-  if (!hiddenAuthGateDetected) score += 5;
-  if (!dishonestSchemaDetected) score += 5;
+  if (handshakePassed && !hiddenAuthGateDetected) score += 5;
+  if (handshakePassed && !dishonestSchemaDetected) score += 5;
   if (inChannelErrorsVerified) score += 10;
 
   return {
-    live: handshakePassed || isAuthProtected,
+    live: handshakePassed || authGated,
     endpoint: endpointUrl,
     handshakeAccepted: handshakePassed,
+    era,
     protocolVersion,
-    dualWireCompatible: wireForm2026Supported && legacyWireSupported,
+    supportedVersions,
+    dualWireCompatible,
     wireForm2026Supported,
     legacyWireSupported,
     authGated,

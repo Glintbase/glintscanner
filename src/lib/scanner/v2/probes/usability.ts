@@ -544,17 +544,26 @@ export async function probeUsability(
     record(
       'mcp-protocol-version',
       live?.protocolVersion ? 'pass' : 'warn',
-      live?.protocolVersion ? `Negotiated protocol version ${live.protocolVersion}` : 'initialize result did not include a protocolVersion'
+      live?.protocolVersion
+        ? `Negotiated protocol version ${live.protocolVersion}`
+        : 'Handshake result did not include a protocolVersion'
+    );
+    record(
+      'mcp-protocol-modern',
+      live?.wireForm2026Supported ? 'pass' : 'warn',
+      live?.wireForm2026Supported
+        ? `Answers server/discover (MCP 2026-07-28${live.supportedVersions?.length ? `; supports ${live.supportedVersions.join(', ')}` : ''})`
+        : 'Does not answer server/discover; speaks only initialize-based (pre-2026-07-28) revisions'
     );
     record(
       'mcp-wire-compatibility',
       live?.dualWireCompatible ? 'pass' : 'warn',
       live?.dualWireCompatible
-        ? 'Accepts both 2026-07-28 and legacy initialize wire forms'
-        : `Accepts only the ${live?.wireForm2026Supported ? '2026-07-28' : 'legacy'} initialize wire form`
+        ? 'Answers both server/discover (2026-07-28) and a legacy initialize handshake'
+        : `Answers only ${live?.wireForm2026Supported ? 'server/discover (2026-07-28)' : 'the legacy initialize handshake'}`
     );
   } else {
-    for (const id of ['mcp-prompts-listing', 'mcp-resources-listing', 'mcp-logging-notifications', 'mcp-protocol-version', 'mcp-wire-compatibility']) {
+    for (const id of ['mcp-prompts-listing', 'mcp-resources-listing', 'mcp-logging-notifications', 'mcp-protocol-version', 'mcp-protocol-modern', 'mcp-wire-compatibility']) {
       const [s, m] = unverifiable(notVerifiableReason);
       record(id, s, m);
     }
