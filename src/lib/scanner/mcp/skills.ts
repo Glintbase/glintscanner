@@ -26,7 +26,7 @@ export const BUNDLED_SKILLS: Record<string, BundledSkill> = {
     content: `---
 name: glintbase-agent-readiness
 title: Glintbase Agent Readiness Master Playbook (ARS 3.3)
-version: 3.2.0
+version: 3.3.0
 layers: [discovery, access, usability, payments]
 ---
 
