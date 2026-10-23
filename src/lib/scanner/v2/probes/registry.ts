@@ -673,6 +673,17 @@ export const ALL_CHECKS: CheckDefinition[] = [
     evaluatorMode: 'live_probe',
     description: 'Public documentation endpoints do not trigger Cloudflare/Imperva JavaScript captcha walls for AI agents.',
   },
+  {
+    id: 'robots-edge-consistency',
+    name: 'robots.txt vs. Edge Enforcement',
+    layer: 'access',
+    points: 0,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Reported, not scored: flags sites whose robots.txt allows AI agents while the edge challenges or refuses the scanner (the refusal itself is scored by the anti-crawler gate).',
+  },
 
   // =============================================================
   // LAYER 3: USABILITY & INTEROPERABILITY (56 Checks | 40 Base Pts)

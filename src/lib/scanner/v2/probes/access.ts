@@ -12,8 +12,9 @@ import type { CheckResult } from './types';
 export interface AccessProbeResult {
   /** False when the homepage request got no HTTP response at all (DNS/TLS/connect failure or timeout). */
   targetReachable: boolean;
-  /** The homepage served a bot challenge, so its content was not observed. */
-  homepageChallenged?: boolean;
+  /** The homepage served a bot challenge or HTTP 403 to the scanner, so its content was not observed. */
+  homepageBlocked?: boolean;
+  homepageStatus?: number;
   score: number;
   baseEarned: number;
   bonusEarned: number;
@@ -1064,12 +1065,15 @@ export async function probeAccess(
   const challengeMarker = challengeMarkers.find((m) => lowerHome.includes(m));
   const challengeHeader = (challengeRes.headers?.['cf-mitigated'] || homeRes.headers?.['cf-mitigated'] || '').toLowerCase() === 'challenge';
   const challenged = !localContext?.isLocalCodebase && (Boolean(challengeMarker) || challengeHeader);
+  // A plain 403 on the homepage refuses the scanner just as a challenge does.
+  const refused = !localContext?.isLocalCodebase && !challenged && homeRes.httpStatus === 403;
+  const blocked = challenged || refused;
   // Nothing served and no challenge observed: there is no evidence either way.
-  const challengeUnverifiable = !localContext?.isLocalCodebase && !challenged && homepageFailed;
+  const challengeUnverifiable = !localContext?.isLocalCodebase && !blocked && homepageFailed;
   results.push({
     checkId: 'anti-crawler-challenge-free',
-    status: localContext?.isLocalCodebase || challengeUnverifiable ? 'skip' : challenged ? 'fail' : 'pass',
-    earnedPoints: !localContext?.isLocalCodebase && !challenged && !challengeUnverifiable ? 2 : 0,
+    status: localContext?.isLocalCodebase || challengeUnverifiable ? 'skip' : blocked ? 'fail' : 'pass',
+    earnedPoints: !localContext?.isLocalCodebase && !blocked && !challengeUnverifiable ? 2 : 0,
     maxPoints: 2,
     isBonus: false,
     message: localContext?.isLocalCodebase
@@ -1078,19 +1082,23 @@ export async function probeAccess(
       ? HOMEPAGE_UNAVAILABLE
       : challenged
       ? `Homepage served a bot challenge to the scanner (${challengeHeader ? 'cf-mitigated: challenge' : challengeMarker})`
+      : refused
+      ? 'Homepage refused the scanner with HTTP 403'
       : 'Homepage served content without a captcha or JS challenge',
   });
 
   // ARS 3.2: points only for observed evidence. When the homepage could not be fetched,
   // checks derived from its HTML or response headers have nothing to inspect.
-  // A challenge page is not the site's content either: those checks were not observed
-  // (draft-shah-agent-readiness-evaluation-00 calls this "not observed"). The challenge itself
-  // is recorded by anti-crawler-challenge-free, which gates the score.
-  if (homepageFailed || challenged) {
-    const reason = homepageFailed ? HOMEPAGE_UNAVAILABLE : 'Not observed: the homepage served a bot challenge to the scanner';
+  // A challenge or refusal page is not the site's content either: those checks were not observed
+  // (draft-shah-agent-readiness-evaluation-00 calls this "not observed"). The block itself is
+  // recorded by anti-crawler-challenge-free, which gates the score.
+  if (homepageFailed || blocked) {
+    const reason = homepageFailed
+      ? HOMEPAGE_UNAVAILABLE
+      : `Not observed: the homepage ${challenged ? 'served a bot challenge to' : 'refused'} the scanner`;
     for (const r of results) {
       const derived = HOMEPAGE_DERIVED_CHECKS.has(r.checkId) ||
-        (r.checkId === 'status-code-accuracy' && (homeRes.httpStatus === undefined || challenged)) ||
+        (r.checkId === 'status-code-accuracy' && (homeRes.httpStatus === undefined || blocked)) ||
         (r.checkId === 'llms-txt-graph-reachability' && r.status !== 'na');
       if (!derived) continue;
       r.status = 'skip';
@@ -1129,7 +1137,8 @@ export async function probeAccess(
 
   return {
     targetReachable,
-    homepageChallenged: challenged,
+    homepageBlocked: blocked,
+    homepageStatus: homeRes.httpStatus,
     score,
     baseEarned,
     bonusEarned,

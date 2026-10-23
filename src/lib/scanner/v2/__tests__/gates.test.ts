@@ -3,11 +3,14 @@ import { runArs3ProbesDetailed, GATE_SCORE_CAP } from '../probes';
 
 const originalFetch = global.fetch;
 
-/** Serves `home` for the homepage and 404 for everything else (registries, probes, canaries). */
-function mockSite(home: () => Response) {
+/** Serves `home` for the homepage, an optional robots.txt, and 404 for everything else. */
+function mockSite(home: () => Response, robots?: string) {
   global.fetch = (async (input: any) => {
     const url = new URL(String(input));
     if (url.hostname === 'gated.example.com' && (url.pathname === '/' || url.pathname === '')) return home();
+    if (robots && url.hostname === 'gated.example.com' && url.pathname === '/robots.txt') {
+      return new Response(robots, { status: 200, headers: { 'content-type': 'text/plain' } });
+    }
     return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } });
   }) as typeof fetch;
 }
@@ -48,8 +51,24 @@ describe('score gates', () => {
     expect(byId('anti-crawler-challenge-free')?.status).toBe('fail');
     expect(byId('content-no-js')?.status).toBe('skip');
     expect(byId('content-no-js')?.message).toMatch(/Not observed/);
-    expect(scorecard.evidence?.homepageChallenged).toBe(true);
+    expect(scorecard.evidence?.homepageBlocked).toBe(true);
     expect(scorecard.gates?.map((g) => g.checkId)).toEqual(['anti-crawler-challenge-free']);
+    expect(scorecard.score).toBeLessThanOrEqual(GATE_SCORE_CAP);
+  }, 60000);
+
+  it('gates on a plain 403 and flags robots.txt that allows agents the edge refuses', async () => {
+    mockSite(
+      () => new Response('<html><body><h1>Forbidden</h1></body></html>', { status: 403, headers: { 'content-type': 'text/html' } }),
+      'User-agent: *\nAllow: /\n'
+    );
+
+    const { scorecard } = await runArs3ProbesDetailed('https://gated.example.com/', { kind: 'product' });
+    const byId = (id: string) => scorecard.results.find((r) => r.checkId === id);
+
+    expect(byId('anti-crawler-challenge-free')?.status).toBe('fail');
+    expect(byId('anti-crawler-challenge-free')?.message).toMatch(/403/);
+    expect(byId('robots-edge-consistency')?.status).toBe('warn');
+    expect(byId('robots-edge-consistency')?.earnedPoints).toBe(0);
     expect(scorecard.score).toBeLessThanOrEqual(GATE_SCORE_CAP);
   }, 60000);
 });

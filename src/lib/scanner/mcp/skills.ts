@@ -44,7 +44,7 @@ Layer weights depend on the site's archetype (API/devtool and docs: Discovery 20
    - An npm package under your brand that links back to your domain; Wikidata official-website claim (bonus).
 
 2. **Access & Understanding** (46 checks):
-   - Content readable without JavaScript and no bot challenge for an honestly identified agent. These two are gates: failing either caps the score at 47.
+   - Content readable without JavaScript and no bot challenge or HTTP 403 for the scanner's request. These two are gates: failing either caps the score at 47.
    - Genuine HTTP 404 for missing routes (no SPA soft-200 shells).
    - /llms.txt is optional and never costs points when absent. When present it must be a real text index (not a soft-404), its links must resolve (the scanner fetches up to 8; at least 80% must), and linking it from your pages earns a bonus.
    - Accept: text/markdown content negotiation (with Vary: Accept) and a <link rel="alternate" type="text/markdown"> (bonus); an OpenAPI spec found via Link rel="service-desc", an RFC 9727 /.well-known/api-catalog, a page link or a standard path; sitemap.xml, meta description, canonical URL, JSON-LD, security headers.

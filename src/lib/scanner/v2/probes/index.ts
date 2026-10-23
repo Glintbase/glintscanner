@@ -121,7 +121,7 @@ export const GATE_SCORE_CAP = 47;
 
 /** Checks whose `fail` stops a plain-fetch agent outright. */
 const GATE_CHECKS: Array<[string, string]> = [
-  ['anti-crawler-challenge-free', 'The site served a bot challenge to an honestly identified agent'],
+  ['anti-crawler-challenge-free', 'The homepage served a bot challenge or HTTP 403 to the scanner'],
   ['content-no-js', 'The homepage has almost no content without JavaScript'],
 ];
 
@@ -141,6 +141,32 @@ export async function runArs3Probes(
 }
 
 /** Same as runArs3Probes, but also returns each layer's raw probe output. */
+/** Does the edge honour what robots.txt allows? (The Silent Wall, RQ3.) */
+export function robotsEdgeConsistency(discovery: DiscoveryProbeResult, access: AccessProbeResult): CheckResult {
+  const base = { checkId: 'robots-edge-consistency', earnedPoints: 0, maxPoints: 0, isBonus: true };
+  const policy = discovery.robotsPolicy;
+  const blockedCheck = access.checks.find((c) => c.checkId === 'anti-crawler-challenge-free');
+  if (!policy?.found || !blockedCheck || blockedCheck.status === 'skip') {
+    return { ...base, status: 'na', message: 'Needs both a robots.txt and an observed homepage response' };
+  }
+  const allows = policy.botsAllowed.length > 0;
+  const refused = blockedCheck.status === 'fail';
+  if (allows && refused) {
+    return {
+      ...base,
+      status: 'warn',
+      message: `robots.txt allows AI agents (${policy.botsAllowed.join(', ')}) but the edge refused the scanner: ${blockedCheck.message}`,
+    };
+  }
+  return {
+    ...base,
+    status: 'pass',
+    message: refused
+      ? 'robots.txt and the edge agree: both refuse AI agents'
+      : `The edge served the homepage${allows ? ', as robots.txt allows' : ''}`,
+  };
+}
+
 export async function runArs3ProbesDetailed(
   url: string,
   options: RunProbesOptions = {}
@@ -252,6 +278,10 @@ export async function runArs3ProbesDetailed(
     paymentsPromise,
   ]);
 
+  // Policy vs. enforcement (reported, 0 pts): robots.txt allows AI agents but the edge refused
+  // the scanner. The refusal itself is scored by the anti-crawler gate; this names the mismatch.
+  access.checks.push(robotsEdgeConsistency(discovery, access));
+
   // 3. Aggregate all checks
   const allResults: CheckResult[] = [
     ...discovery.checks,
@@ -356,7 +386,7 @@ export async function runArs3ProbesDetailed(
     checksEvaluated: allResults.filter((c) => c.status === 'pass' || c.status === 'warn' || c.status === 'fail').length,
     baseCoverage: coverageTotals.registered > 0 ? Math.min(1, coverageTotals.verified / coverageTotals.registered) : 0,
     lowConfidenceLayers: scoredLayers.filter((id) => layerSummaries[id].lowConfidence),
-    homepageChallenged: Boolean(access.homepageChallenged),
+    homepageBlocked: Boolean(access.homepageBlocked),
   };
 
   const scorecard: Ars3Scorecard = {

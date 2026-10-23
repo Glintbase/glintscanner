@@ -58,7 +58,7 @@ Several registered checks are not probed yet and always report `na` (for example
 
    | Gate check | Fails when |
    |---|---|
-   | `anti-crawler-challenge-free` | The homepage serves a bot challenge to the scanner's honestly identified request (challenge markers or `cf-mitigated: challenge`) |
+   | `anti-crawler-challenge-free` | The homepage serves a bot challenge (challenge markers or `cf-mitigated: challenge`) or HTTP 403 to the scanner's request |
    | `content-no-js` | The homepage has under 300 characters of prose without JavaScript |
 
    These are the two failures that stopped retrieval outright in AgentReady.org's controlled experiment (19 configurations of one docs site; only a JavaScript-only answer and a 403 to agent user-agents stopped retrieval). Weighted points can't offset a site an agent can't read. The cap value is a policy choice.
@@ -111,7 +111,7 @@ Zero-JS content, soft-404 canary, `llms-full.txt`, markdown negotiation, HTTP hy
 
 If the homepage cannot be fetched (no successful response and no body), every check derived from its HTML or response headers is `skip` ("Homepage could not be fetched"), and `anti-crawler-challenge-free` is `skip` unless a challenge was actually observed.
 
-**Not observed.** If the homepage serves a bot challenge, the checks that would read its content are `skip` ("Not observed: the homepage served a bot challenge to the scanner") instead of scoring the challenge page, and `evidence.homepageChallenged` is set. The challenge itself fails `anti-crawler-challenge-free`, which is a gate. The term follows draft-shah-agent-readiness-evaluation-00. If the soft-404 canary request does not complete (timeout / unreachable), `anti-spa-404` is `skip`. An HTML page served at `/robots.txt` counts as no robots.txt; `#` comments are stripped before directives are read.
+**Not observed.** If the homepage serves a bot challenge or HTTP 403, the checks that would read its content are `skip` ("Not observed: ...") instead of scoring the refusal page, and `evidence.homepageBlocked` is set. The block itself fails `anti-crawler-challenge-free`, which is a gate. The term follows draft-shah-agent-readiness-evaluation-00. If the soft-404 canary request does not complete (timeout / unreachable), `anti-spa-404` is `skip`. An HTML page served at `/robots.txt` counts as no robots.txt; `#` comments are stripped before directives are read.
 
 ### Usability
 - **MCP discovery** tries standard paths on the site, `docs.` / `api.` / `mcp.` subdomains of the registrable domain (so `www.acme.co.uk` probes `docs.acme.co.uk`), and the root plus standard paths of `mcp.` subdomains. A 401/403 only counts as an MCP server on an MCP-like path or host **and** when the response is a JSON-RPC envelope or carries an RFC 9728 `WWW-Authenticate: ... resource_metadata=` challenge (GET and POST). A generic 401 (any `WWW-Authenticate`, or a JSON error body) is not MCP evidence.

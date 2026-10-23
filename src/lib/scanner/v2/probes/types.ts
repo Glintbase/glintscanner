@@ -72,8 +72,8 @@ export interface ScanEvidenceSummary {
   /** Verified base points / registered base points across applicable layers (0-1). */
   baseCoverage: number;
   lowConfidenceLayers: LayerId[];
-  /** The homepage served a bot challenge; checks derived from it are `skip` ("not observed"). */
-  homepageChallenged?: boolean;
+  /** The homepage served a bot challenge or HTTP 403; checks derived from it are `skip` ("not observed"). */
+  homepageBlocked?: boolean;
 }
 
 /** A failure that stops a plain-fetch agent outright; any gate caps the score (see GATE_SCORE_CAP). */

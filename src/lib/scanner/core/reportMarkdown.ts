@@ -24,8 +24,8 @@ export function formatScanMarkdown(result: ScanResult): string {
     if (evidence.lowConfidenceLayers.length) {
       lines.push(`**Low-evidence layers:** ${evidence.lowConfidenceLayers.join(', ')} (less than half of their scored checks could be verified)`);
     }
-    if (evidence.homepageChallenged) {
-      lines.push('**Not observed:** the homepage served a bot challenge, so checks that read its content were skipped');
+    if (evidence.homepageBlocked) {
+      lines.push('**Not observed:** the homepage served a bot challenge or HTTP 403, so checks that read its content were skipped');
     }
   }
   const gates = result.scorecard?.gates;
