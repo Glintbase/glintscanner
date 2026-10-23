@@ -9,6 +9,7 @@ import { getChecksForLayer } from './registry';
 import { brandFromHostname, registrableDomain } from '../../shared/url';
 import type { CheckResult } from './types';
 import { lookupMcpRegistry, lookupSkillsSh, type ListingLookup } from './registryListings';
+import { findPoppyDocument } from '../poppy';
 
 export interface DiscoveryProbeResult {
   score: number;
@@ -321,6 +322,25 @@ export async function probeDiscovery(
     message: foundAiCatalog
       ? 'Published official Agent-Card WG ai-catalog.json'
       : 'Agent-Card WG ai-catalog.json not published (bonus skipped)',
+  });
+
+  // Check: poppy-discovery (0 pts, emerging): Personal Agent Protocol draft. Reported, not scored,
+  // until a second large vendor adopts it.
+  const poppy = localContext?.isLocalCodebase ? undefined : await findPoppyDocument(origin).catch(() => undefined);
+  results.push({
+    checkId: 'poppy-discovery',
+    status: localContext?.isLocalCodebase ? 'skip' : poppy?.valid ? 'pass' : poppy ? 'warn' : 'na',
+    earnedPoints: 0,
+    maxPoints: 0,
+    isBonus: true,
+    message: localContext?.isLocalCodebase
+      ? 'poppy.json needs a live site'
+      : poppy?.valid
+      ? `Valid /.well-known/poppy.json (Personal Agent Protocol ${poppy.protocolVersion}${poppy.issuer ? `; issuer ${poppy.issuer} lists this domain` : ''})`
+      : poppy
+      ? `/.well-known/poppy.json has problems: ${poppy.problems.slice(0, 3).join('; ')}`
+      : 'No /.well-known/poppy.json (emerging; not scored)',
+    evidence: poppy ? { url: poppy.url, problems: poppy.problems } : undefined,
   });
 
   // Check: ard-entries-valid (2 pts, bonus)

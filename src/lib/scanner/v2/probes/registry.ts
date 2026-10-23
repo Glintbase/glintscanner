@@ -47,6 +47,17 @@ export const ALL_CHECKS: CheckDefinition[] = [
     remediationId: 'ai-catalog',
   },
   {
+    id: 'poppy-discovery',
+    name: 'Personal Agent Protocol (poppy.json)',
+    layer: 'discovery',
+    points: 0,
+    isBonus: true,
+    tier: 'emerging',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Emerging, reported but not scored: /.well-known/poppy.json (draft 0.2) is valid and its OAuth issuer metadata lists the domain in poppy_domains.',
+  },
+  {
     id: 'ard-entries-valid',
     name: 'ARD Catalog Entries Validated',
     layer: 'discovery',
