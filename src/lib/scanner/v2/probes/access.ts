@@ -64,7 +64,32 @@ const HOMEPAGE_DERIVED_CHECKS = new Set([
   'text-density-ratio',
   'link-header-canonical',
   'security-headers-csp',
+  'markdown-alternate-link',
 ]);
+
+/**
+ * True when a /llms.txt response is a real text index rather than an HTML page served with
+ * 200 (soft-404) or a plain error string: it must not be HTML and must carry a Markdown
+ * heading or link.
+ */
+export function looksLikeLlmsTxt(body: string, contentType?: string): boolean {
+  const text = body.trim();
+  if (!text) return false;
+  if (/<html|<!doctype|<head\b|<body\b/i.test(text.slice(0, 2000))) return false;
+  if (/html/i.test(contentType || '') && /<[a-z][\s\S]*>/i.test(text.slice(0, 2000))) return false;
+  return /^#\s+\S/m.test(text) || /\[[^\]]+\]\([^)\s]+\)/.test(text);
+}
+
+/** href of `<link rel="alternate" type="text/markdown" href=...>` in the page head, if any. */
+export function findMarkdownAlternate(html: string): string | undefined {
+  for (const tag of html.match(/<link\b[^>]*>/gi) || []) {
+    const attr = (name: string) => tag.match(new RegExp(`\\b${name}\\s*=\\s*["']?([^"'\\s>]+)`, 'i'))?.[1];
+    if (/(^|\s)alternate(\s|$)/i.test(attr('rel') || '') && /^text\/markdown$/i.test(attr('type') || '')) {
+      return attr('href');
+    }
+  }
+  return undefined;
+}
 
 /**
  * Homepage fetch with one retry when no HTTP response arrived at all. Hosts with several A
@@ -258,20 +283,30 @@ export async function probeAccess(
     : await fetchResource(`${origin}/llms.txt`, { timeoutMs: 3000 });
   let hasLlms = Boolean(localContext?.hasLlmsFile);
   let llmsContent = localContext?.llmsContent || '';
+  // A 200 is not enough: soft-404 pages, HTML shells and plain "Not found" text are common.
+  let llmsRejectedReason: string | undefined;
 
-  if (!llmsContent && llmsRes.ok && llmsRes.body && !llmsRes.body.includes('<html')) {
-    hasLlms = true;
-    llmsContent = llmsRes.body;
+  if (!llmsContent && llmsRes.ok && llmsRes.body) {
+    if (looksLikeLlmsTxt(llmsRes.body, llmsRes.contentType ?? undefined)) {
+      hasLlms = true;
+      llmsContent = llmsRes.body;
+    } else {
+      llmsRejectedReason = /html/i.test(llmsRes.contentType || '') || /<html|<!doctype/i.test(llmsRes.body)
+        ? '/llms.txt returns an HTML page (likely a soft-404), not a text index'
+        : '/llms.txt returns text without a Markdown heading or links (likely an error page)';
+    }
   }
 
-  // llms-txt-exists (1 pt)
+  // llms-txt-exists (1 pt bonus). Presence alone shows no measured benefit, so it never costs points.
   results.push({
     checkId: 'llms-txt-exists',
-    status: hasLlms ? 'pass' : 'warn',
+    status: hasLlms ? 'pass' : 'na',
     earnedPoints: hasLlms ? 1 : 0,
     maxPoints: 1,
-    isBonus: false,
-    message: hasLlms ? 'Found /llms.txt documentation context index' : 'Missing /llms.txt context index',
+    isBonus: true,
+    message: hasLlms
+      ? 'Found /llms.txt documentation context index'
+      : llmsRejectedReason || 'No /llms.txt context index (optional; scored only when present)',
     remediation: !hasLlms ? {
       title: 'Generate Standard llms.txt',
       file: 'public/llms.txt',
@@ -299,9 +334,9 @@ export async function probeAccess(
   results.push({
     checkId: 'llms-txt-formatting',
     status: formattingStatus,
-    earnedPoints: formattingPassed ? 2 : 0,
-    maxPoints: 2,
-    isBonus: false,
+    earnedPoints: formattingPassed ? 1 : 0,
+    maxPoints: 1,
+    isBonus: true,
     message: formattingPassed
       ? 'llms.txt adheres to format specifications (heading, link syntax, line counts)'
       : formattingStatus === 'skip'
@@ -362,8 +397,8 @@ export async function probeAccess(
     evidence: sampledLinks.length ? { sampled: sampledLinks.length, resolved: resolvedCount, broken: brokenLinks } : undefined,
   });
 
-  // llms-txt-graph-reachability (2 pts bonus)
-  const isLlmsLinked = hasLlms && (rawHtml.toLowerCase().includes('llms.txt') || rawHtml.toLowerCase().includes('/llms.txt'));
+  // llms-txt-graph-reachability (2 pts bonus): agents mostly reach llms.txt by following a link.
+  const isLlmsLinked = hasLlms && /\bhref\s*=\s*["']?[^"'\s>]*llms(?:-full)?\.txt/i.test(rawHtml);
   results.push({
     checkId: 'llms-txt-graph-reachability',
     status: isLlmsLinked ? 'pass' : (hasLlms ? 'warn' : 'na'),
@@ -446,6 +481,32 @@ export async function probeAccess(
     message: Boolean(mdTwinUrl)
       ? `Direct .md URL twin verified at ${mdTwinUrl}`
       : 'Direct .md URL twin not detected (bonus skipped)',
+  });
+
+  // markdown-alternate-link (1 pt bonus): <link rel="alternate" type="text/markdown"> that resolves.
+  const alternateHref = findMarkdownAlternate(rawHtml);
+  let alternateUrl: string | undefined;
+  let alternateResolves = false;
+  if (alternateHref && !localContext?.isLocalCodebase) {
+    try {
+      alternateUrl = new URL(alternateHref, targetUrl).href;
+      const altRes = await fetchResource(alternateUrl, { timeoutMs: 3000, maxBytes: 500_000 });
+      alternateResolves = Boolean(altRes.ok && altRes.body && !/<html|<!doctype/i.test(altRes.body));
+    } catch {
+      /* invalid href */
+    }
+  }
+  results.push({
+    checkId: 'markdown-alternate-link',
+    status: alternateResolves ? 'pass' : alternateHref ? 'warn' : 'na',
+    earnedPoints: alternateResolves ? 1 : 0,
+    maxPoints: 1,
+    isBonus: true,
+    message: alternateResolves
+      ? `Homepage advertises a Markdown alternate that resolves (${alternateUrl})`
+      : alternateHref
+      ? `Homepage advertises a Markdown alternate that does not resolve to Markdown (${alternateUrl || alternateHref})`
+      : 'No <link rel="alternate" type="text/markdown"> on the homepage (bonus skipped)',
   });
 
   // markdown-html-parity (2 pts bonus)
