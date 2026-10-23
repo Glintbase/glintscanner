@@ -20,14 +20,14 @@ Analyze whether AI coding agents (Cursor, Claude Code, Copilot, …) can discove
 - **Hosted:** [scan.glintbase.dev](https://scan.glintbase.dev)  
 - **Flight Simulator Cockpit:** [scan.glintbase.dev/simulate](https://scan.glintbase.dev/simulate)
 - **Resources:** [Developer Tools hub](https://scan.glintbase.dev/tools) · [MCP gateway](https://scan.glintbase.dev/mcp) · in-repo [`skills/`](./skills) agent skill  
-- **Methodology:** [docs/methodology/ars-3.2.md](./docs/methodology/ars-3.2.md)  
+- **Methodology:** [docs/methodology/ars-3.3.md](./docs/methodology/ars-3.3.md)  
 - **Roadmap / specs:** [docs/](./docs/)
 
 ## Features
 
 - **Surface discovery** — `llms.txt`, `OpenAPI`, `MCP`, `sitemap.xml`, `auth.md`, `ard.json`, `robots.txt`
 - **Content validation** — empty/HTML soft-404s don’t max machine scores
-- **ARS 3.x probe engine** — 129 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
+- **ARS 3.x probe engine** — 132 registered checks across 4 layers (discovery, access, usability, payments) with Dynamic Denominator scoring. Checks that cannot be verified are reported as `skip`/`na` and excluded, never passed by assumption
 - **Live MCP probing** — handshake (2026-07-28 + legacy wire forms), `tools/list`, schema and annotation inspection, error-channel canary, and a read-only call only on tools annotated `readOnlyHint: true`
 - **OpenAPI inspection** — operationIds, request/error schemas, pagination, rate-limit headers, problem+json and more, read from the spec itself
 - **Flight Simulator** — separate agent journey simulations with visual DAGs and state replay (`#data=`) at `/simulate`; not part of the ARS score
@@ -160,10 +160,10 @@ Agent: "Score: 82/100 (AI-Friendly). Top fix: add llms.txt with quickstart links
 
 The Glintbase CLI lives in its own repository: [athertech/glintbase-cli](https://github.com/athertech/glintbase-cli)
 ([npm](https://www.npmjs.com/package/@glintbase/cli)). From 3.3.0 it scores with `@glintbase/scanner-core`,
-so a CLI audit and a scan on scan.glintbase.dev use the same ARS 3.2 rules.
+so a CLI audit and a scan on scan.glintbase.dev use the same ARS 3.3 rules.
 
 ```bash
-npx @glintbase/cli audit https://docs.example.com            # ARS 3.2 audit
+npx @glintbase/cli audit https://docs.example.com            # ARS 3.3 audit
 npx @glintbase/cli audit https://docs.example.com --fail-under 70
 npx @glintbase/cli mcp lint https://api.example.com/api/mcp   # MCP server lint
 ```
@@ -179,14 +179,14 @@ The engine is published as [`@glintbase/scanner-core`](./core) (built from `core
 import { runArs3Probes, runScan, formatScanMarkdown } from '@glintbase/scanner-core';
 
 const scorecard = await runArs3Probes('https://docs.example.com');
-console.log(scorecard.score, scorecard.version, scorecard.evidence); // e.g. 74, ars-3.2.1
+console.log(scorecard.score, scorecard.version, scorecard.evidence); // e.g. 74, ars-3.3.0
 
 const result = await runScan(
   { url: 'https://docs.example.com', options: { profile: 'quick' } },
   { onProgress: (e) => console.error(e) }
 );
 
-console.log(result.score, result.score_version); // e.g. 74, ars-3.2.1
+console.log(result.score, result.score_version); // e.g. 74, ars-3.3.0
 console.log(formatScanMarkdown(result));
 ```
 
@@ -207,7 +207,7 @@ See [`.env.local.example`](./.env.local.example).
 
 Apply DB schema updates from [`migration.sql`](./migration.sql) in Supabase SQL editor when using persistence.
 
-## Grades and bands (ARS 3.2)
+## Grades and bands (ARS 3.3)
 
 Defined once in [`src/lib/scanner/shared/scoreBand.ts`](./src/lib/scanner/shared/scoreBand.ts); bands are groups of grades, so they always agree.
 

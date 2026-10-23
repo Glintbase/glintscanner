@@ -1,6 +1,6 @@
 /**
- * ARS 3.2 Central Check Registry
- * Specification: GLINTBASE_AUDIT_3_0_UPGRADE_SPEC.md, methodology: docs/methodology/ars-3.2.md
+ * ARS 3.3 Central Check Registry
+ * Specification: GLINTBASE_AUDIT_3_0_UPGRADE_SPEC.md, methodology: docs/methodology/ars-3.3.md
  * Single source of truth for each check's points and bonus status (count: getAllChecks().length).
  */
 

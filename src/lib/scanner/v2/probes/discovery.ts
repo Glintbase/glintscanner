@@ -1,5 +1,5 @@
 /**
- * ARS 3.2 Layer 1 Probe: Discovery
+ * ARS 3.3 Layer 1 Probe: Discovery
  * Evaluates robots.txt AI policy, ARD/Agent-Card catalogs, Wikidata P856,
  * MCP registry branding, agent rules, and package listings.
  */

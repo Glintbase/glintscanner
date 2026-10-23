@@ -1,6 +1,6 @@
 # Agent Readiness Score (ARS) 3.2 — Methodology
 
-**Status:** active (supersedes [ARS 1.0](./ars-1.0.md) and ARS 3.0 / 3.1)
+**Status:** superseded by [ARS 3.3](./ars-3.3.md) on 2026-10-23
 **score_version:** `ars-3.2.1` (defined in `src/lib/scanner/version.ts`; see [ars-3.2.1](#ars-321) for what changed from `ars-3.2.0`)
 **Implementation:** `src/lib/scanner/v2/probes/` (entry: `runArs3Probes`, called by `runScan`)
 **Check registry:** `src/lib/scanner/v2/probes/registry.ts`

@@ -1,7 +1,7 @@
 /**
  * @glintbase/scanner-core
  *
- * The ARS 3.2 agent-readiness engine used by scan.glintbase.dev, published as a
+ * The ARS 3.3 agent-readiness engine used by scan.glintbase.dev, published as a
  * standalone package so the CLI (and anyone else) scores sites with exactly the same
  * probes, check registry and scoring rules. The engine source lives in
  * ../src/lib/scanner and is bundled into dist by tsup (see tsup.config.ts).

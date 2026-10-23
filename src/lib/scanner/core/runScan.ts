@@ -420,7 +420,7 @@ export async function runScan(
     type: 'progress',
     check: 'probes',
     status: 'running',
-    message: 'Executing ARS 3.2 probe suite & surface discovery...',
+    message: 'Executing ARS 3.3 probe suite & surface discovery...',
   });
 
   // Parallel execution of surface discovery & ARS 3.0 4-layer probe suite with real-time layer streaming

@@ -78,7 +78,7 @@ function resolveSkill(nameOrQuery?: string): BundledSkill | undefined {
 const TOOLS_MANIFEST = [
   {
     name: 'glintbase_audit',
-    description: 'Execute a full ARS 3.2 agent-readiness audit on a target URL. Probes Discovery, Access, Usability and Payments; checks that cannot be verified are reported as skipped and excluded from the score.',
+    description: 'Execute a full ARS 3.3 agent-readiness audit on a target URL. Probes Discovery, Access, Usability and Payments; checks that cannot be verified are reported as skipped and excluded from the score.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -108,7 +108,7 @@ const TOOLS_MANIFEST = [
   },
   {
     name: 'glintbase_get_score',
-    description: 'Fetch ultra-compact ARS 3.2 score card (<200 tokens). Ideal for quick checks and CI status monitoring without burning agent context.',
+    description: 'Fetch ultra-compact ARS 3.3 score card (<200 tokens). Ideal for quick checks and CI status monitoring without burning agent context.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -248,8 +248,8 @@ const RESOURCES_MANIFEST = [
   })),
   {
     uri: 'glintbase://schemas/ars3-spec',
-    name: 'ARS 3.2 Check Registry Specification',
-    description: 'ARS 3.2 check registry across 4 layers (Discovery, Access, Usability, Payments)',
+    name: 'ARS 3.3 Check Registry Specification',
+    description: 'ARS 3.3 check registry across 4 layers (Discovery, Access, Usability, Payments)',
     mimeType: 'application/json',
   },
   {
@@ -457,7 +457,7 @@ export async function POST(req: NextRequest) {
               role: 'user',
               content: {
                 type: 'text',
-                text: `You are executing the Glintbase ARS 3.2 Playbook: **${skill.title}**.\n\nTarget: ${target}\n${notes ? `Notes: ${notes}\n` : ''}\n## Playbook Reference Manual\n\n${skill.content}`,
+                text: `You are executing the Glintbase ARS 3.3 Playbook: **${skill.title}**.\n\nTarget: ${target}\n${notes ? `Notes: ${notes}\n` : ''}\n## Playbook Reference Manual\n\n${skill.content}`,
               },
             },
           ],
@@ -813,7 +813,7 @@ ${mermaidDiagram}`;
               content: [
                 {
                   type: 'text',
-                  text: `Skill "${skillQuery}" not found. Available ARS 3.2 playbooks:\n\n${available}\n\nCall get_skill with any of the skill names above.`,
+                  text: `Skill "${skillQuery}" not found. Available ARS 3.3 playbooks:\n\n${available}\n\nCall get_skill with any of the skill names above.`,
                 },
               ],
               isError: true,
