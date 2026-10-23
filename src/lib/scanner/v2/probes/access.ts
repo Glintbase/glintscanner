@@ -11,6 +11,8 @@ import type { CheckResult } from './types';
 export interface AccessProbeResult {
   /** False when the homepage request got no HTTP response at all (DNS/TLS/connect failure or timeout). */
   targetReachable: boolean;
+  /** The homepage served a bot challenge, so its content was not observed. */
+  homepageChallenged?: boolean;
   score: number;
   baseEarned: number;
   bonusEarned: number;
@@ -983,15 +985,19 @@ export async function probeAccess(
 
   // ARS 3.2: points only for observed evidence. When the homepage could not be fetched,
   // checks derived from its HTML or response headers have nothing to inspect.
-  if (homepageFailed) {
+  // A challenge page is not the site's content either: those checks were not observed
+  // (draft-shah-agent-readiness-evaluation-00 calls this "not observed"). The challenge itself
+  // is recorded by anti-crawler-challenge-free, which gates the score.
+  if (homepageFailed || challenged) {
+    const reason = homepageFailed ? HOMEPAGE_UNAVAILABLE : 'Not observed: the homepage served a bot challenge to the scanner';
     for (const r of results) {
       const derived = HOMEPAGE_DERIVED_CHECKS.has(r.checkId) ||
-        (r.checkId === 'status-code-accuracy' && homeRes.httpStatus === undefined) ||
+        (r.checkId === 'status-code-accuracy' && (homeRes.httpStatus === undefined || challenged)) ||
         (r.checkId === 'llms-txt-graph-reachability' && r.status !== 'na');
       if (!derived) continue;
       r.status = 'skip';
       r.earnedPoints = 0;
-      r.message = HOMEPAGE_UNAVAILABLE;
+      r.message = reason;
       r.remediation = undefined;
     }
   }
@@ -1025,6 +1031,7 @@ export async function probeAccess(
 
   return {
     targetReachable,
+    homepageChallenged: challenged,
     score,
     baseEarned,
     bonusEarned,

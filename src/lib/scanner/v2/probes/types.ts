@@ -72,6 +72,14 @@ export interface ScanEvidenceSummary {
   /** Verified base points / registered base points across applicable layers (0-1). */
   baseCoverage: number;
   lowConfidenceLayers: LayerId[];
+  /** The homepage served a bot challenge; checks derived from it are `skip` ("not observed"). */
+  homepageChallenged?: boolean;
+}
+
+/** A failure that stops a plain-fetch agent outright; any gate caps the score (see GATE_SCORE_CAP). */
+export interface ScoreGate {
+  checkId: string;
+  reason: string;
 }
 
 export interface RemediationSummary {
@@ -142,6 +150,9 @@ export interface Ars3Scorecard {
   results: CheckResult[];
   remediations: RemediationSummary[];
   evidence?: ScanEvidenceSummary;
+  /** Failed gates. When non-empty, `score` is capped and `uncappedScore` holds the weighted result. */
+  gates?: ScoreGate[];
+  uncappedScore?: number;
   criticalVulnerabilities?: CriticalVulnerability[];
   simulation?: SimulationResult;
   durationMs?: number;

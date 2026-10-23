@@ -24,6 +24,15 @@ export function formatScanMarkdown(result: ScanResult): string {
     if (evidence.lowConfidenceLayers.length) {
       lines.push(`**Low-evidence layers:** ${evidence.lowConfidenceLayers.join(', ')} (less than half of their scored checks could be verified)`);
     }
+    if (evidence.homepageChallenged) {
+      lines.push('**Not observed:** the homepage served a bot challenge, so checks that read its content were skipped');
+    }
+  }
+  const gates = result.scorecard?.gates;
+  if (gates?.length) {
+    lines.push(
+      `**Blockers (score capped at ${result.scorecard?.score}, ${result.scorecard?.uncappedScore} before the cap):** ${gates.map((g) => `${g.reason} (\`${g.checkId}\`)`).join('; ')}`
+    );
   }
   lines.push('');
   lines.push(`## Surfaces`);

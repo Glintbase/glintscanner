@@ -21,6 +21,7 @@ import type {
   RemediationSummary,
   LayerId,
   LayerScoreSummary,
+  ScoreGate,
 } from './types';
 
 export type {
@@ -114,6 +115,15 @@ function alignWithRegistry<T extends { checks: CheckResult[] }>(probe: T): T {
 
 /** Below this share of verified base points a layer is flagged lowConfidence. */
 export const MIN_LAYER_COVERAGE = 0.5;
+
+/** Highest score a scan with a failed gate can get: the top of grade D. */
+export const GATE_SCORE_CAP = 47;
+
+/** Checks whose `fail` stops a plain-fetch agent outright. */
+const GATE_CHECKS: Array<[string, string]> = [
+  ['anti-crawler-challenge-free', 'The site served a bot challenge to an honestly identified agent'],
+  ['content-no-js', 'The homepage has almost no content without JavaScript'],
+];
 
 function layerCoverage(layer: LayerId, checks: CheckResult[]): { verified: number; registered: number } {
   const registered = getChecksForLayer(layer).filter((d) => !d.isBonus).reduce((sum, d) => sum + d.points, 0);
@@ -275,7 +285,17 @@ export async function runArs3ProbesDetailed(
   // Formula: min(100, round((baseEarned + bonusEarned) / activeDenominator * 100))
   const totalEarned = baseEarned + bonusEarned;
   const rawScore = Math.round((totalEarned / activeDenominator) * 100);
-  const score = Math.max(0, Math.min(100, rawScore));
+  const uncappedScore = Math.max(0, Math.min(100, rawScore));
+
+  // Gates: failures that stopped retrieval outright in AgentReady.org's controlled experiment
+  // (agents refused at the edge, answer only after running JavaScript). Weighted points can't
+  // offset them, so any gate caps the score.
+  const gates: ScoreGate[] = [];
+  for (const [checkId, reason] of GATE_CHECKS) {
+    const check = allResults.find((c) => c.checkId === checkId);
+    if (check?.status === 'fail') gates.push({ checkId, reason });
+  }
+  const score = gates.length ? Math.min(uncappedScore, GATE_SCORE_CAP) : uncappedScore;
 
   const gradeInfo = getArsGrade(score);
 
@@ -336,6 +356,7 @@ export async function runArs3ProbesDetailed(
     checksEvaluated: allResults.filter((c) => c.status === 'pass' || c.status === 'warn' || c.status === 'fail').length,
     baseCoverage: coverageTotals.registered > 0 ? Math.min(1, coverageTotals.verified / coverageTotals.registered) : 0,
     lowConfidenceLayers: scoredLayers.filter((id) => layerSummaries[id].lowConfidence),
+    homepageChallenged: Boolean(access.homepageChallenged),
   };
 
   const scorecard: Ars3Scorecard = {
@@ -368,6 +389,8 @@ export async function runArs3ProbesDetailed(
     results: allResults,
     remediations,
     evidence,
+    gates,
+    uncappedScore,
   };
 
   return { scorecard, discovery, access, usability, payments };
