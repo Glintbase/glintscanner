@@ -82,6 +82,58 @@ export function looksLikeLlmsTxt(body: string, contentType?: string): boolean {
   return /^#\s+\S/m.test(text) || /\[[^\]]+\]\([^)\s]+\)/.test(text);
 }
 
+/** Entries of an RFC 8288 `Link` header value. */
+export function parseLinkHeader(value?: string | null): Array<{ href: string; rels: string[]; type?: string }> {
+  if (!value) return [];
+  const out: Array<{ href: string; rels: string[]; type?: string }> = [];
+  for (const m of value.matchAll(/<([^>]*)>\s*((?:;\s*[^;,]+=(?:"[^"]*"|[^;,]*)\s*)*)/g)) {
+    const params = m[2] || '';
+    const param = (name: string) => params.match(new RegExp(`;\\s*${name}\\s*=\\s*(?:"([^"]*)"|([^;,\\s]*))`, 'i'));
+    const rel = param('rel');
+    const type = param('type');
+    out.push({
+      href: m[1].trim(),
+      rels: (rel?.[1] ?? rel?.[2] ?? '').toLowerCase().split(/\s+/).filter(Boolean),
+      type: type ? type[1] ?? type[2] : undefined,
+    });
+  }
+  return out;
+}
+
+/**
+ * An RFC 9727 API catalog body, parsed as an RFC 9264 linkset. Returns undefined unless the
+ * body is `{"linkset": [...]}`; `serviceDescs` are the API description (`service-desc`) hrefs.
+ */
+export function parseApiCatalog(body?: string): { serviceDescs: string[] } | undefined {
+  if (!body) return undefined;
+  let json: any;
+  try {
+    json = JSON.parse(body.trim());
+  } catch {
+    return undefined;
+  }
+  if (!json || !Array.isArray(json.linkset)) return undefined;
+  const serviceDescs: string[] = [];
+  for (const ctx of json.linkset) {
+    const targets = Array.isArray(ctx?.['service-desc']) ? ctx['service-desc'] : [];
+    for (const t of targets) if (typeof t?.href === 'string') serviceDescs.push(t.href);
+  }
+  return { serviceDescs };
+}
+
+/** OpenAPI documents a page links to: `<link rel="service-desc">` or hrefs that name a spec file. */
+export function openApiLinksFromHtml(html: string): string[] {
+  const out: string[] = [];
+  for (const tag of html.match(/<(?:a|link)\b[^>]*>/gi) || []) {
+    const href = tag.match(/\bhref\s*=\s*["']?([^"'\s>]+)/i)?.[1];
+    if (!href) continue;
+    const rel = tag.match(/\brel\s*=\s*["']?([^"'>]+)/i)?.[1] || '';
+    const namesSpec = /(?:^|\/)(?:openapi|swagger)(?:[.-][\w.-]*)?\.(?:json|ya?ml)(?:[?#]|$)/i.test(href);
+    if (/(^|\s)service-desc(\s|$)/i.test(rel) || namesSpec) out.push(href);
+  }
+  return Array.from(new Set(out)).slice(0, 4);
+}
+
 /** href of `<link rel="alternate" type="text/markdown" href=...>` in the page head, if any. */
 export function findMarkdownAlternate(html: string): string | undefined {
   for (const tag of html.match(/<link\b[^>]*>/gi) || []) {
@@ -590,6 +642,33 @@ export async function probeAccess(
   let foundOpenApi = Boolean(localContext?.hasOpenApiFile);
   let openApiUrl: string | undefined;
   let openApiSpec: any;
+  let openApiVia: string | undefined;
+
+  // RFC 9727 API catalog: read once, used both to find specs and for api-catalog-rfc9727.
+  const linksetRes: FetchResourceResult = localContext?.isLocalCodebase ? localDummy() : await fetchResource(`${origin}/.well-known/api-catalog`, {
+    timeoutMs: 2500,
+    headers: { Accept: 'application/linkset+json' },
+  });
+  const apiCatalog = linksetRes.ok ? parseApiCatalog(linksetRes.body) : undefined;
+
+  // Specs the site points to (Link header, API catalog, page links) are tried before guessing paths.
+  const linkedSpecs: Array<{ url: string; via: string }> = [];
+  const addLinked = (href: string | undefined, via: string) => {
+    if (!href) return;
+    try {
+      const abs = new URL(href, targetUrl).href;
+      if (/^https?:/i.test(abs) && !linkedSpecs.some((s) => s.url === abs)) linkedSpecs.push({ url: abs, via });
+    } catch {
+      /* invalid href */
+    }
+  };
+  if (!localContext?.isLocalCodebase && !homepageFailed) {
+    for (const link of parseLinkHeader(homeRes.headers?.link)) {
+      if (link.rels.some((r) => r === 'service-desc' || r === 'describedby')) addLinked(link.href, `Link: rel="${link.rels.join(' ')}"`);
+    }
+  }
+  for (const href of apiCatalog?.serviceDescs || []) addLinked(href, '/.well-known/api-catalog (service-desc)');
+  for (const href of openApiLinksFromHtml(rawHtml)) addLinked(href, 'link on the homepage');
 
   if (!foundOpenApi && !localContext?.isLocalCodebase) {
     // Probe candidates in small parallel batches (a sequential walk could take
@@ -606,7 +685,8 @@ export async function probeAccess(
         return /^(?:---\s*\n)?\s*(openapi|swagger):\s*['"]?[23]/m.test(oRes.body) ? { url: oPath } : null;
       }
     };
-    const uniquePaths = Array.from(new Set(openApiPaths));
+    const viaByUrl = new Map(linkedSpecs.slice(0, 4).map((s) => [s.url, s.via]));
+    const uniquePaths = Array.from(new Set([...viaByUrl.keys(), ...openApiPaths]));
     const OPENAPI_BATCH = 4;
     for (let i = 0; i < uniquePaths.length && !foundOpenApi; i += OPENAPI_BATCH) {
       const batch = await Promise.all(uniquePaths.slice(i, i + OPENAPI_BATCH).map((p) => inspectSpec(p).catch(() => null)));
@@ -615,6 +695,7 @@ export async function probeAccess(
         foundOpenApi = true;
         openApiUrl = hit.url;
         openApiSpec = hit.spec;
+        openApiVia = viaByUrl.get(hit.url) || 'standard path';
       }
     }
   }
@@ -626,7 +707,9 @@ export async function probeAccess(
     maxPoints: 7,
     isBonus: false,
     message: foundOpenApi
-      ? `Discovered OpenAPI specification at ${openApiUrl || 'codebase'}`
+      ? `Discovered OpenAPI specification at ${openApiUrl || 'codebase'}${openApiVia ? ` (via ${openApiVia})` : ''}`
+      : linkedSpecs.length
+      ? `No OpenAPI document at the ${linkedSpecs.length} linked location(s) or standard paths`
       : 'Missing OpenAPI 3.x machine specification (/openapi.json)',
     remediation: !foundOpenApi ? {
       title: 'Generate OpenAPI 3.1 Specification',
@@ -657,20 +740,18 @@ export async function probeAccess(
       : 'No self-serve developer portal (/developers or /docs) detected',
   });
 
-  // api-catalog-rfc9727 (2 pts bonus)
-  const linksetRes: FetchResourceResult = localContext?.isLocalCodebase ? localDummy() : await fetchResource(`${origin}/.well-known/api-catalog`, {
-    timeoutMs: 2000,
-    headers: { Accept: 'application/linkset+json' },
-  });
-  const hasLinkset = linksetRes.ok && linksetRes.body && !linksetRes.body.includes('<html');
+  // api-catalog-rfc9727 (2 pts bonus): must parse as an RFC 9264 linkset, not just answer 200.
+  const hasLinkset = Boolean(apiCatalog);
   results.push({
     checkId: 'api-catalog-rfc9727',
-    status: hasLinkset ? 'pass' : 'na',
+    status: hasLinkset ? 'pass' : linksetRes.ok && linksetRes.body ? 'warn' : 'na',
     earnedPoints: hasLinkset ? 2 : 0,
     maxPoints: 2,
     isBonus: true,
     message: hasLinkset
-      ? 'RFC 9727 /.well-known/api-catalog linkset verified'
+      ? `RFC 9727 /.well-known/api-catalog linkset verified (${apiCatalog!.serviceDescs.length} service-desc link(s))`
+      : linksetRes.ok && linksetRes.body
+      ? '/.well-known/api-catalog answers but is not an RFC 9264 linkset ({"linkset": [...]})'
       : 'RFC 9727 API catalog not published (bonus skipped)',
   });
 

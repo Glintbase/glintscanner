@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikeLlmsTxt, findMarkdownAlternate } from '../probes/access';
+import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml } from '../probes/access';
 
 describe('looksLikeLlmsTxt', () => {
   it('accepts a Markdown index with a heading and links', () => {
@@ -37,5 +37,33 @@ describe('findMarkdownAlternate', () => {
   it('ignores other alternates and stylesheets', () => {
     const html = '<link rel="alternate" type="application/rss+xml" href="/feed.xml"><link rel="stylesheet" href="/a.css">';
     expect(findMarkdownAlternate(html)).toBeUndefined();
+  });
+});
+
+describe('OpenAPI discovery helpers', () => {
+  it('parses Link headers with several relations and quoted params', () => {
+    const links = parseLinkHeader('</openapi.json>; rel="service-desc describedby"; type="application/openapi+json", </docs>; rel=service-doc');
+    expect(links).toEqual([
+      { href: '/openapi.json', rels: ['service-desc', 'describedby'], type: 'application/openapi+json' },
+      { href: '/docs', rels: ['service-doc'], type: undefined },
+    ]);
+    expect(parseLinkHeader(undefined)).toEqual([]);
+  });
+
+  it('reads service-desc hrefs from an RFC 9264 linkset and rejects other JSON', () => {
+    const body = JSON.stringify({
+      linkset: [
+        { anchor: 'https://api.example.com/v1', 'service-desc': [{ href: 'https://api.example.com/v1/openapi.json', type: 'application/openapi+json' }] },
+        { anchor: 'https://api.example.com/v2', 'service-doc': [{ href: 'https://example.com/docs' }] },
+      ],
+    });
+    expect(parseApiCatalog(body)).toEqual({ serviceDescs: ['https://api.example.com/v1/openapi.json'] });
+    expect(parseApiCatalog('{"apis": []}')).toBeUndefined();
+    expect(parseApiCatalog('<html></html>')).toBeUndefined();
+  });
+
+  it('finds spec links and rel="service-desc" in page HTML', () => {
+    const html = '<link rel="service-desc" href="/api/spec"><a href="/reference/openapi.yaml">Spec</a><a href="/blog/openapi-tips">Tips</a>';
+    expect(openApiLinksFromHtml(html)).toEqual(['/api/spec', '/reference/openapi.yaml']);
   });
 });
