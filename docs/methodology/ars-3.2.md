@@ -67,6 +67,10 @@ Defined once in `src/lib/scanner/shared/scoreBand.ts`. Bands are groups of grade
 | 28–47 | D | Legacy |
 | 0–27 | F | Legacy |
 
+### Where the weights come from
+
+The four layers, their base weights (20 / 30 / 40 / 10, kept for the e-commerce archetype) and the grade cut-offs follow the structure ora.ai publishes at <https://ora.ai/methodology>. ARS adds the archetype weights, evidence-only scoring (unknowns are excluded, no partial credit) and evidence coverage. The weights themselves are not validated against agent outcomes (see top). A crosswalk to AgentReady.org, ora and draft-shah-agent-readiness-evaluation-00 is published at <https://glintbase.dev/blog/how-ars-compares-agentready-ora-ietf>.
+
 ## Evidence coverage
 
 Because unverifiable checks are excluded, a layer with few verifiable checks rests on little evidence. Every scorecard therefore includes:
