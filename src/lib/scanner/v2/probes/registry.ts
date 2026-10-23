@@ -1457,6 +1457,17 @@ export const ALL_CHECKS: CheckDefinition[] = [
     description: 'Verifies the server answers server/discover with a DiscoverResult, as the stateless MCP 2026-07-28 revision requires.',
   },
   {
+    id: 'mcp-server-card',
+    name: 'MCP Server Card (SEP-2127)',
+    layer: 'usability',
+    points: 1,
+    isBonus: true,
+    tier: 'emerging',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'A valid Server Card ($schema, name, version, description) is listed in /.well-known/ai-catalog.json or served at <mcp-endpoint>/server-card.',
+  },
+  {
     id: 'mcp-ssrf-guard',
     name: 'MCP Endpoint Private Network Guard',
     layer: 'usability',

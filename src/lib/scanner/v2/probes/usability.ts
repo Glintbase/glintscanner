@@ -14,6 +14,7 @@
 
 import { fetchResource } from '../fetchResource';
 import { probeMcpServer, type McpLiveProbeResult } from '../mcpProbe';
+import { findCatalogServerCard, findEndpointServerCard, findLegacyServerCard } from '../serverCard';
 import { inspectOpenApi } from '../openapiInspect';
 import { getChecksForLayer } from './registry';
 import { registrableDomain } from '../../shared/url';
@@ -277,6 +278,15 @@ export async function probeUsability(
     }
   }
 
+  // Server Cards listed in the AI Catalog name the site's own MCP endpoints: probe those first.
+  const catalogCard = isLocal ? undefined : await findCatalogServerCard(origin).catch(() => undefined);
+  for (const remote of [...(catalogCard?.remotes || [])].reverse()) {
+    if (remote.type === 'sse' || endpointCandidates[0] === remote.url) continue;
+    const existing = endpointCandidates.indexOf(remote.url);
+    if (existing >= 0) endpointCandidates.splice(existing, 1);
+    endpointCandidates.unshift(remote.url);
+  }
+
   // A local codebase can declare an MCP route, but nothing about it can be verified remotely.
   let mcpLive = Boolean(options?.localContext?.hasMcpRoute);
   let mcpEndpoint: string | undefined = mcpLive ? '/api/mcp' : undefined;
@@ -382,6 +392,30 @@ export async function probeUsability(
   if (rpcEndpoint && !isLocal) {
     live = await probeMcpServer(rpcEndpoint).catch(() => undefined);
   }
+
+  // MCP Server Card: AI Catalog, then <endpoint>/server-card, then the superseded well-known path.
+  let serverCard = catalogCard;
+  if (!isLocal && !serverCard?.valid && rpcEndpoint) {
+    serverCard = (await findEndpointServerCard(rpcEndpoint).catch(() => undefined)) || serverCard;
+  }
+  if (!isLocal && !serverCard) {
+    serverCard = await findLegacyServerCard(origin).catch(() => undefined);
+  }
+  const cardAtSpecLocation = Boolean(serverCard?.valid && serverCard.location !== 'legacy-well-known');
+  record(
+    'mcp-server-card',
+    isLocal ? 'skip' : cardAtSpecLocation ? 'pass' : serverCard ? 'warn' : 'na',
+    isLocal
+      ? 'Server Card discovery needs a live site'
+      : cardAtSpecLocation
+      ? `Valid MCP Server Card ${serverCard!.location === 'ai-catalog' ? 'listed in /.well-known/ai-catalog.json' : 'at the endpoint\'s /server-card'} (${serverCard!.url || 'inline'})`
+      : serverCard && !serverCard.valid
+      ? `MCP Server Card at ${serverCard.url || 'AI Catalog entry'} is missing required fields: ${serverCard.problems.join(', ')}`
+      : serverCard
+      ? `Server Card only at the superseded ${serverCard.url} path; list it in /.well-known/ai-catalog.json or serve it at <mcp-endpoint>/server-card`
+      : 'No MCP Server Card found (AI Catalog, <endpoint>/server-card or legacy well-known path)',
+    serverCard ? { evidence: { location: serverCard.location, url: serverCard.url, problems: serverCard.problems } } : {}
+  );
 
   const authGated = Boolean(live?.authGated);
   const handshakeOk = Boolean(live?.handshakeAccepted);
