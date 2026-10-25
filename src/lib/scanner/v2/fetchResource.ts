@@ -4,6 +4,7 @@
  * Applies URL policy SSRF guards before network I/O.
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { validateScanUrl } from './urlPolicy';
 
 export type FetchStatus =
@@ -44,7 +45,30 @@ export interface FetchResourceResult {
   error?: string;
 }
 
-const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+/**
+ * Client identities the scanner can present. `agent` declares itself honestly (the common
+ * "compatible" crawler form) and links to the bot page; `browser` is a desktop Chrome string.
+ */
+export const SCANNER_USER_AGENTS = {
+  agent: 'Mozilla/5.0 (compatible; GlintbaseScanner/3.5; +https://glintbase.dev/research/bot)',
+  browser: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+} as const;
+export type ScannerIdentity = keyof typeof SCANNER_USER_AGENTS;
+
+/** Identity used when no override is active. */
+export const DEFAULT_SCANNER_IDENTITY: ScannerIdentity = 'browser';
+
+const uaStore = new AsyncLocalStorage<string>();
+
+/** Runs `fn` with every scanner request sent under `identity` (concurrency-safe). */
+export function runWithScannerIdentity<T>(identity: ScannerIdentity, fn: () => Promise<T>): Promise<T> {
+  return uaStore.run(SCANNER_USER_AGENTS[identity], fn);
+}
+
+/** User-Agent for the current request: the active override, else the default identity. */
+export function currentScannerUserAgent(): string {
+  return uaStore.getStore() || SCANNER_USER_AGENTS[DEFAULT_SCANNER_IDENTITY];
+}
 const DEFAULT_TIMEOUT = 8000;
 const DEFAULT_MAX_BYTES = 2_000_000;
 
@@ -189,7 +213,7 @@ export async function fetchResource(
         signal: controller.signal,
         redirect: 'manual',
         headers: {
-          'User-Agent': DEFAULT_UA,
+          'User-Agent': currentScannerUserAgent(),
           Accept: '*/*',
           ...options.headers,
         },
