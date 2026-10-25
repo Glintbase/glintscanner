@@ -1,7 +1,7 @@
 # Agent Readiness Score (ARS) 3.3 — Methodology
 
 **Status:** active since 2026-10-23 (supersedes [ARS 3.2](./ars-3.2.md))
-**score_version:** `ars-3.3.0` (defined in `src/lib/scanner/version.ts`; see [Changes from ARS 3.2](#changes-from-ars-32))
+**score_version:** `ars-3.3.1` (defined in `src/lib/scanner/version.ts`; see [ars-3.3.1](#ars-331) and [Changes from ARS 3.2](#changes-from-ars-32))
 **Implementation:** `src/lib/scanner/v2/probes/` (entry: `runArs3Probes`, called by `runScan`)
 **Check registry:** `src/lib/scanner/v2/probes/registry.ts`
 
@@ -146,6 +146,29 @@ If the homepage cannot be fetched (no successful response and no body), every ch
 ### Payments
 Only for e-commerce archetypes or commerce signals: ACP, UCP, AP2, x402, MPP.
 
+## Scanner identity
+
+Since `ars-3.3.1` every scored request declares itself:
+
+```
+Mozilla/5.0 (compatible; GlintbaseScanner/3.5; +https://glintbase.dev/research/bot)
+```
+
+The bot page at https://glintbase.dev/research/bot lists what a scan requests. A scan is made on behalf of the person who asked for it (on scan.glintbase.dev, in the CLI or through the MCP server) or is a scheduled re-check of a company already on the public leaderboard. The scanner reads robots.txt as evidence, but it treats scans as user-initiated and doesn't treat rules aimed at its own name as an opt-out. To have a site removed from scheduled rescans, email research@glintbase.dev.
+
+**Why not a browser string:** before `ars-3.3.1` the scanner sent a desktop Chrome user agent. Before switching, we scanned every leaderboard company under both identities, back to back, from Vercel's network (102 sites; one unreachable):
+- The honest identity was never blocked where Chrome was served. One site challenged Chrome and served the honest identity.
+- Average scores were 49.1 (Chrome) and 50.0 (honest), with 83 sites identical.
+- On two sites the identity changed what the scanner saw. One served a JavaScript shell to the browser string and full HTML to the declared agent. The other returned an error page to the browser string. The honest identity measures what agents that identify themselves actually receive.
+
+## ars-3.3.1
+
+Same rubric, registry and weights as `ars-3.3.0`. Two changes:
+- Scored requests use the honest identity above instead of a desktop Chrome user agent.
+- The `.md` twin probe derives its URL from the page path on the same host (`/` → `/index.md`). Previously a scan of `https://example.com` requested `https://example.com.md`, an unrelated host.
+
+Because measured inputs changed, `ars-3.3.1` scores are not compared with `ars-3.3.0` scores.
+
 ## Changes from ARS 3.2
 
 - **Gates:** a failed `anti-crawler-challenge-free` or `content-no-js` caps the score at 47.
@@ -192,7 +215,8 @@ Same rubric, registry and weights as `ars-3.2.0`. Two Discovery checks that were
 - **Registry availability:** registry checks depend on the MCP Registry and skills.sh answering in time; when they do not, the check is skipped, so the same site can show a skipped or a measured result on different scans. skills.sh search is not a versioned public API.
 - **GitHub owner match:** matching a brand to a GitHub owner of the same name assumes the brand owns that GitHub account.
 - **OpenAPI discovery:** specs are followed from `Link` headers, the API catalog and homepage links, but not from llms.txt or deeper pages.
-- **The scanner sends a browser user agent,** not an agent identity, so the anti-crawler gate measures how a site treats an unlabelled browser-like client, not a declared AI agent.
+- **Declared, not verified, identity:** the scanner identifies itself honestly (see *Scanner identity*) but doesn't sign requests (Web Bot Auth) or come from published IP ranges, so the anti-crawler gate measures how a site treats a declared but unverified agent. Edges may treat verified crawlers differently.
+- **One network vantage point per scan:** edge decisions depend on IP reputation; scans run from Vercel's network (hosted scanner) or the user's machine (CLI).
 - **Endpoint choice:** when several MCP candidates respond, the first to answer is used.
 - **Auth-gated MCP without RFC 9728:** a gated MCP server that answers 401 with neither a JSON-RPC body nor `resource_metadata=` is not detected.
 - **Absent MCP weighs heavily:** for API and docs archetypes, a site without an MCP server or OpenAPI spec typically scores 0 on most of the 35-point usability layer. This is intended by the current weights but is a policy choice worth revisiting.

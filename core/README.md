@@ -7,7 +7,7 @@ policy (SSRF guards) and the MCP live prober. The [Glintbase CLI](https://github
 
 - ESM only, Node.js 20+, no runtime dependencies (uses the global `fetch`).
 - Type declarations included.
-- Every scorecard carries `version` (`ars-3.3.0`): never compare scores across score versions.
+- Every scorecard carries `version` (`ars-3.3.1`): never compare scores across score versions.
 
 ## Install
 
@@ -24,7 +24,7 @@ const policy = validateScanUrl('example.com', { allowHttp: false });
 if (!policy.ok) throw new Error(policy.message);
 
 const scorecard = await runArs3Probes(policy.url!);
-console.log(scorecard.score, scorecard.grade, scorecard.version); // e.g. 78 'B' 'ars-3.3.0'
+console.log(scorecard.score, scorecard.grade, scorecard.version); // e.g. 78 'B' 'ars-3.3.1'
 console.log(`${scorecard.evidence?.checksEvaluated}/${getAllChecks().length} checks measured`);
 ```
 

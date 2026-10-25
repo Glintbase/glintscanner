@@ -5,10 +5,10 @@
  */
 
 /** Product version shared by the web app, CLI and MCP packages. */
-export const GLINTBASE_VERSION = '3.5.0';
+export const GLINTBASE_VERSION = '3.5.1';
 
 /** Scoring model version stamped on every scan result (score_version). */
-export const ARS_SCORE_VERSION = 'ars-3.3.0' as const;
+export const ARS_SCORE_VERSION = 'ars-3.3.1' as const;
 
 /** Human-readable name of the current scoring model. */
 export const ARS_LABEL = 'ARS 3.3';

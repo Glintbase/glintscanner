@@ -56,7 +56,7 @@ export const SCANNER_USER_AGENTS = {
 export type ScannerIdentity = keyof typeof SCANNER_USER_AGENTS;
 
 /** Identity used when no override is active. */
-export const DEFAULT_SCANNER_IDENTITY: ScannerIdentity = 'browser';
+export const DEFAULT_SCANNER_IDENTITY: ScannerIdentity = 'agent';
 
 const uaStore = new AsyncLocalStorage<string>();
 
