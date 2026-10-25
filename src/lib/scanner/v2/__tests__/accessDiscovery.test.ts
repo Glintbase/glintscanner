@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml, parseOpenApiDocument, looksJavaScriptRendered } from '../probes/access';
+import { looksLikeLlmsTxt, findMarkdownAlternate, parseLinkHeader, parseApiCatalog, openApiLinksFromHtml, parseOpenApiDocument, looksJavaScriptRendered, markdownTwinUrl } from '../probes/access';
 
 describe('looksLikeLlmsTxt', () => {
   it('accepts a Markdown index with a heading and links', () => {
@@ -91,5 +91,14 @@ describe('looksJavaScriptRendered', () => {
   it('does not flag a short static page', () => {
     expect(looksJavaScriptRendered('<html><body><h1>Example Domain</h1><p>This domain is for use in examples.</p></body></html>', 60)).toBe(false);
     expect(looksJavaScriptRendered('<html><body><h1>Hi</h1><p>Short page.</p><script>console.log(1)</script></body></html>', 40)).toBe(false);
+  });
+});
+
+describe('markdownTwinUrl', () => {
+  it('stays on the same host', () => {
+    expect(markdownTwinUrl('https://example.com')).toBe('https://example.com/index.md');
+    expect(markdownTwinUrl('https://example.com/')).toBe('https://example.com/index.md');
+    expect(markdownTwinUrl('https://docs.example.com/guide/')).toBe('https://docs.example.com/guide.md');
+    expect(markdownTwinUrl('https://example.com/docs/intro?x=1')).toBe('https://example.com/docs/intro.md');
   });
 });

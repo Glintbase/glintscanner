@@ -116,6 +116,17 @@ export function parseOpenApiDocument(body: string): any {
   }
 }
 
+/**
+ * The `.md` twin of a page on the same host: `/` → `/index.md`, `/docs/` → `/docs.md`,
+ * `/docs/intro` → `/docs/intro.md`. Built from the URL path, so `https://example.com`
+ * never becomes the unrelated host `example.com.md`.
+ */
+export function markdownTwinUrl(pageUrl: string): string {
+  const u = new URL(pageUrl);
+  const path = u.pathname.replace(/\/+$/, '');
+  return `${u.origin}${path ? `${path}.md` : '/index.md'}`;
+}
+
 /** Entries of an RFC 8288 `Link` header value. */
 export function parseLinkHeader(value?: string | null): Array<{ href: string; rels: string[]; type?: string }> {
   if (!value) return [];
@@ -532,7 +543,7 @@ export async function probeAccess(
 
   // Probe twin URL (.md)
   if (!markdownSupported && !localContext?.isLocalCodebase) {
-    const twinUrl = targetUrl.endsWith('/') ? `${targetUrl.slice(0, -1)}.md` : `${targetUrl}.md`;
+    const twinUrl = markdownTwinUrl(targetUrl);
     const twinRes = await fetchResource(twinUrl, { timeoutMs: 3000 });
     if (twinRes.ok && twinRes.body && !twinRes.body.includes('<html')) {
       markdownSupported = true;
