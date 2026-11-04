@@ -10,6 +10,8 @@
  */
 
 import { fetchResource } from '../fetchResource';
+import { fetchWellKnown } from '../wellKnown';
+import { inspectOpenApi } from '../openapiInspect';
 import { getChecksForLayer } from './registry';
 import type { CheckResult } from './types';
 import type { SiteArchetype } from '../archetype';
@@ -46,6 +48,8 @@ export async function probePayments(
     hasX402Header?: boolean;
     hasUcpFile?: boolean;
     hasAcpFile?: boolean;
+    /** Parsed OpenAPI document from the access probe (MPP discovery reads x-payment-info). */
+    openApiSpec?: any;
   }
 ): Promise<PaymentsProbeResult> {
   const details: string[] = [];
@@ -114,7 +118,7 @@ export async function probePayments(
   // 1. Probe UCP (/.well-known/ucp)
   let foundUcp = Boolean(localContext?.hasUcpFile);
   if (!foundUcp) {
-    const ucpRes = await fetchResource(`${origin}/.well-known/ucp`, { timeoutMs: 2500 });
+    const ucpRes = await fetchWellKnown(`${origin}/.well-known/ucp`, { timeoutMs: 2500 });
     if (ucpRes.ok && ucpRes.body && !ucpRes.body.includes('<html')) {
       foundUcp = true;
     }
@@ -142,22 +146,27 @@ export async function probePayments(
 
   // 3. Probe x402 (/api/payment)
   let supportedX402 = Boolean(localContext?.hasX402Header);
+  // MPP's challenge is an HTTP authentication scheme: 402 with WWW-Authenticate: Payment (draft-ryan-httpauth-payment).
+  let mppChallenge = false;
   if (!supportedX402) {
     const x402Res = await fetchResource(`${origin}/api/payment`, { timeoutMs: 2500 });
     if (x402Res.httpStatus === 402) {
-      supportedX402 = true;
+      mppChallenge = /^\s*payment\b/i.test(x402Res.headers?.['www-authenticate'] || '');
+      supportedX402 = !mppChallenge;
     }
   }
 
   // 4. Probe Google AP2 Mandates
   let supportedAp2 = false;
-  const ap2Res = await fetchResource(`${origin}/.well-known/ap2`, { timeoutMs: 2000 });
+  const ap2Res = await fetchWellKnown(`${origin}/.well-known/ap2`, { timeoutMs: 2000 });
   if (ap2Res.ok && ap2Res.body && !ap2Res.body.includes('<html')) {
     supportedAp2 = true;
   }
 
-  // 5. Probe MPP
-  const supportedMpp = false;
+  // 5. MPP: a 402 Payment challenge, or OpenAPI operations with x-payment-info offers and a 402
+  // response (MPP payment discovery draft; the 402 challenge stays authoritative).
+  const mppOperations = localContext?.openApiSpec ? inspectOpenApi(localContext.openApiSpec).paymentOperations : 0;
+  const supportedMpp = mppChallenge || mppOperations > 0;
 
   // Apply Payments "OR-Scoring" Rule:
   // If ANY protocol passed, award 10 full points for Layer 4!
@@ -227,7 +236,7 @@ export async function probePayments(
     earnedPoints: supportedMpp ? 2 : 0,
     maxPoints: 2,
     isBonus: true,
-    message: supportedMpp ? 'Machine Payments Protocol verified' : (anyPassed ? 'Omitted under OR-scoring' : 'MPP not detected'),
+    message: supportedMpp ? (mppChallenge ? 'Machine Payments Protocol: 402 with WWW-Authenticate: Payment' : `Machine Payments Protocol: ${mppOperations} OpenAPI operation(s) declare x-payment-info offers and a 402 response`) : (anyPassed ? 'Omitted under OR-scoring' : 'MPP not detected'),
   });
 
   let totalScore = 0;

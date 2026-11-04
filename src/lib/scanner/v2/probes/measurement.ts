@@ -14,29 +14,27 @@ import type { CheckMeasurement } from './types';
 
 const PRESENCE = [
   // Discovery
-  'ard-catalog', 'ai-catalog-published', 'ard-trust-manifest', 'chatgpt-app-listed', 'wikipedia-presence',
+  'ard-catalog', 'ai-catalog-published', 'ard-trust-manifest', 'wikipedia-presence',
   'mcp-registry-listed', 'npm-sdk-package', 'agent-plugins-repo', 'skills-sh-listed',
   // Access
   'llms-txt-exists', 'markdown-url-fallback', 'openapi-spec', 'developer-portal', 'ssl-tls-enforced',
-  'sitemap-xml-present', 'security-txt-rfc9116', 'llms-full-txt-present', 'plain-text-accessible',
+  'sitemap-xml-present', 'security-txt-rfc9116', 'llms-full-txt-present',
   // Usability
-  'mcp-server-manifest', 'api-sandbox-environment', 'api-graphql-schema', 'api-grpc-reflection',
+  'mcp-server-manifest',
   // Payments
-  'acp-support', 'acp-delegate-payment', 'ucp-support', 'ap2-support', 'x402-support', 'mpp-support',
+  'acp-support', 'acp-delegate-payment', 'ucp-support', 'ap2-support', 'x402-support',
 ];
 
 const LIVE = [
-  // Discovery
-  'brand-search-accuracy', 'agentic-search-specific', 'agentic-search-usecase',
   // Access
   'anti-spa-404', 'llms-txt-links-resolve', 'markdown-negotiation', 'markdown-negotiation-vary',
-  'markdown-alternate-link', 'http2-support', 'response-latency-p95', 'status-code-accuracy',
-  'dns-caa-record', 'anti-crawler-challenge-free', 'robots-edge-consistency',
+  'markdown-alternate-link', 'response-latency-p95', 'status-code-accuracy',
+  'anti-crawler-challenge-free', 'robots-edge-consistency',
   // Usability
   'mcp-tools-listing', 'mcp-auth-requirement', 'mcp-transport-streamable', 'mcp-error-reporting',
-  'mcp-protocol-version', 'mcp-protocol-modern', 'mcp-wire-compatibility', 'mcp-ssrf-guard',
+  'mcp-protocol-version', 'mcp-protocol-modern', 'mcp-wire-compatibility',
   'mcp-honest-schemas', 'mcp-auth-scope-challenge', 'agent-auth-www-authenticate',
-  'auth-md-walkthrough-simulation',
+  'auth-md-walkthrough-simulation', 'mcp-skills-extension', 'mcp-apps-ui-quality', 'api-graphql-schema',
 ];
 
 const DECLARED = ['agent-rules-repo'];

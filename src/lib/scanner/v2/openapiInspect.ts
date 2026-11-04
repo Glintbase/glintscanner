@@ -28,6 +28,19 @@ export interface OpenApiInspection {
   curlExamples: boolean;
   codeSamples: boolean;
   isOpenApi31: boolean;
+  /** A path or operationId naming a batch / bulk operation. */
+  bulkOperations: boolean;
+  /** A servers[] entry whose URL or description names a sandbox, test or staging environment. */
+  sandboxServer?: string;
+  /** MPP discovery (draft-payment-discovery): operations with x-payment-info offers and a 402 response. */
+  paymentOperations: number;
+}
+
+/** x-payment-info with at least one offer naming an intent and a method (single offer or offers[]). */
+function hasPaymentOffer(info: any): boolean {
+  if (!info || typeof info !== 'object') return false;
+  const offers = Array.isArray(info.offers) ? info.offers : [info];
+  return offers.some((o: any) => (o?.intent === 'charge' || o?.intent === 'session') && typeof o?.method === 'string' && o.method.length > 0);
 }
 
 export function listOperations(spec: any): OpenApiOperationRef[] {
@@ -102,6 +115,8 @@ export function inspectOpenApi(spec: any): OpenApiInspection {
   let idempotencyKey = false;
   let searchEndpoint = false;
   let cursorPagination = false;
+  let bulkOperations = false;
+  let paymentOperations = 0;
 
   for (const { method, path, op } of ops) {
     const params = parametersOf(spec, path, op);
@@ -128,6 +143,8 @@ export function inspectOpenApi(spec: any): OpenApiInspection {
     if (params.some((p) => p?.in === 'query' && /^(cursor|after|before|starting_after|ending_before|page_token|pageToken|next_token|continuation)$/i.test(p?.name || ''))) {
       cursorPagination = true;
     }
+    if (/(^|[/_.-])(batch|bulk)([/_.-]|$)/i.test(path) || /batch|bulk/i.test(String(op.operationId || ''))) bulkOperations = true;
+    if (hasPaymentOffer(op['x-payment-info']) && responses['402']) paymentOperations++;
   }
 
   const serverUrls: string[] = Array.isArray(spec?.servers) ? spec.servers.map((s: any) => String(s?.url || '')) : [];
@@ -137,6 +154,11 @@ export function inspectOpenApi(spec: any): OpenApiInspection {
     (ops.length > 0 && ops.filter(({ path }) => /^\/v\d+(\/|$)/i.test(path)).length / ops.length >= 0.5);
 
   const version = String(spec?.openapi || spec?.swagger || '');
+
+  const SANDBOX_WORDS = /\b(sandbox|test(net|ing)?|staging|mock)\b/i;
+  const sandboxServer: string | undefined = (Array.isArray(spec?.servers) ? spec.servers : [])
+    .map((sv: any) => ({ url: String(sv?.url || ''), description: String(sv?.description || '') }))
+    .find((sv: { url: string; description: string }) => SANDBOX_WORDS.test(sv.url) || SANDBOX_WORDS.test(sv.description))?.url;
 
   return {
     version,
@@ -158,5 +180,8 @@ export function inspectOpenApi(spec: any): OpenApiInspection {
     curlExamples: /curl\s+(-[a-zA-Z]|https?:|\\)/.test(raw),
     codeSamples: /"x-code-?samples"/i.test(raw),
     isOpenApi31: version.startsWith('3.1'),
+    bulkOperations,
+    sandboxServer,
+    paymentOperations,
   };
 }

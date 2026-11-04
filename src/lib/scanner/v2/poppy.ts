@@ -10,6 +10,7 @@
  */
 
 import { fetchResource } from './fetchResource';
+import { fetchWellKnown } from './wellKnown';
 
 export interface PoppyFinding {
   url: string;
@@ -66,7 +67,7 @@ export function validatePoppyDocument(doc: any, host: string): string[] {
 
 export async function findPoppyDocument(origin: string): Promise<PoppyFinding | undefined> {
   const url = `${origin}/.well-known/poppy.json`;
-  const res = await fetchResource(url, { timeoutMs: 3500, maxBytes: 200_000, headers: { Accept: 'application/json' } });
+  const res = await fetchWellKnown(url, { timeoutMs: 3500, maxBytes: 200_000, headers: { Accept: 'application/json' } });
   if (!res.ok || !res.body) return undefined;
   const doc = parseJson(res.body);
   // A 200 that isn't JSON at all (an SPA shell, say) is not a poppy.json.

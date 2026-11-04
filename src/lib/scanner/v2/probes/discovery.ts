@@ -10,6 +10,9 @@ import { brandFromHostname, registrableDomain } from '../../shared/url';
 import type { CheckResult } from './types';
 import { lookupMcpRegistry, lookupSkillsSh, type ListingLookup } from './registryListings';
 import { findPoppyDocument } from '../poppy';
+import { ARD_MEDIA_TYPE, ardFromContent, findArdManifest, type ArdFinding } from '../ard';
+import { fetchWellKnown } from '../wellKnown';
+import { parseContentSignal, type ContentSignalGroup } from '../contentSignal';
 
 export interface DiscoveryProbeResult {
   score: number;
@@ -23,6 +26,8 @@ export interface DiscoveryProbeResult {
     botsAllowed: string[];
     botsBlocked: string[];
     hasContentSignals: boolean;
+    /** `Content-Signal` lines per user-agent group (contentsignals.org), used by content-signal-consistency. */
+    contentSignals?: ContentSignalGroup[];
   };
   agentRegistries: {
     foundArd: boolean;
@@ -40,7 +45,8 @@ const EXTERNAL_LOOKUP_TIMEOUT_MS = 5000;
  */
 async function resilientFetch(url: string, timeoutMs: number = 3500): Promise<{ ok: boolean; body: string; status: number; contentType?: string | null }> {
   try {
-    const res = await fetchResource(url, { timeoutMs });
+    // .well-known paths (and the root ai-catalog.json fallback) are checked against the origin's catch-all control (ARS 3.4, S5).
+    const res = url.includes('/.well-known/') || url.endsWith('/ai-catalog.json') ? await fetchWellKnown(url, { timeoutMs }) : await fetchResource(url, { timeoutMs });
     return {
       ok: res.ok,
       body: res.body || '',
@@ -130,6 +136,7 @@ export async function probeDiscovery(
     botsAllowed: [] as string[],
     botsBlocked: [] as string[],
     hasContentSignals: false,
+    contentSignals: undefined as ContentSignalGroup[] | undefined,
   };
 
   // An HTML page at /robots.txt (SPA catch-all, soft 404) is not a robots.txt.
@@ -186,6 +193,7 @@ export async function probeDiscovery(
       }
     }
 
+    robotsPolicy.contentSignals = parseContentSignal(robotsRes.body);
     if (body.includes('search=yes') || body.includes('ai-train=')) {
       robotsPolicy.hasContentSignals = true;
       details.push('Found Content-Signals policy in robots.txt (search=yes / ai-train)');
@@ -250,26 +258,19 @@ export async function probeDiscovery(
   // ========================================================
   // 2. ARD & Agent Catalogs (.well-known/ard.json, ai-catalog.json)
   // ========================================================
-  const ardRes = localContext?.ardContent
-    ? { ok: true, body: localContext.ardContent, status: 200 }
-    : (localContext?.isLocalCodebase ? { ok: false, body: '', status: 404 } : await resilientFetch(`${origin}/.well-known/ard.json`, 3500));
+  // ARD manifest per the IETF drafts (see v2/ard.ts): well-known (one redirect), then Link rel="ard".
+  const ard: ArdFinding | undefined = localContext?.ardContent
+    ? ardFromContent(localContext.ardContent)
+    : localContext?.isLocalCodebase ? undefined : await findArdManifest(origin).catch(() => undefined);
   const aiCatRes = localContext?.isLocalCodebase ? { ok: false, body: '', status: 404 } : await resilientFetch(`${origin}/.well-known/ai-catalog.json`, 3500);
   const fallbackCatRes = localContext?.isLocalCodebase ? { ok: false, body: '', status: 404 } : await resilientFetch(`${origin}/ai-catalog.json`, 3500);
 
-  let parsedArd: any = null;
+  const parsedArd: any = ard?.manifest ?? null;
   let parsedAiCat: any = null;
-  let foundArd = false;
+  const foundArd = Boolean(ard);
   let foundAiCatalog = false;
   const foundAgentCard = false;
-  let registryUrl: string | undefined;
-
-  if (ardRes.ok && ardRes.body && !ardRes.body.includes('<html')) {
-    try {
-      parsedArd = JSON.parse(ardRes.body);
-      foundArd = true;
-      registryUrl = `${origin}/.well-known/ard.json`;
-    } catch { /* malformed */ }
-  }
+  let registryUrl: string | undefined = ard?.valid ? ard.url ?? `${origin}/.well-known/ard.json` : undefined;
 
   if (aiCatRes.ok && aiCatRes.body && !aiCatRes.body.includes('<html')) {
     try {
@@ -285,28 +286,39 @@ export async function probeDiscovery(
     } catch { /* malformed */ }
   }
 
-  // Check: ard-catalog (1 pt, required)
-  const hasValidArd = foundArd || foundAiCatalog;
+  // Check: ard-catalog (1 pt, required): a draft-00 ARD manifest, or (fallback) an AI Catalog.
+  const hasValidArd = Boolean(ard?.valid) || foundAiCatalog;
+  const ardVia = ard?.via === 'link-header' ? ' (via Link: rel="ard")' : ard?.via === 'html-link' ? ' (via <link rel="ard">)' : '';
+  const ardMediaNote = ard?.valid && ard.mediaType && ard.mediaType !== ARD_MEDIA_TYPE ? `; served as ${ard.mediaType}, the draft registers ${ARD_MEDIA_TYPE}` : '';
   results.push({
     checkId: 'ard-catalog',
     status: hasValidArd ? 'pass' : 'warn',
     earnedPoints: hasValidArd ? 1 : 0,
     maxPoints: 1,
     isBonus: false,
-    message: hasValidArd
-      ? `Discovered ARD/Agent-Card catalog at ${registryUrl}`
-      : 'Missing /.well-known/ard.json (ARD v0.91) specification',
-    evidence: { registryUrl },
+    message: ard?.valid
+      ? `ARD manifest with ${ard.entryCount} entr${ard.entryCount === 1 ? 'y' : 'ies'} at ${ard.url}${ardVia}${ardMediaNote}`
+      : hasValidArd
+      ? `AI Catalog found at ${registryUrl}${ard ? ` (ARD manifest at ${ard.url} is not valid: ${ard.problems.slice(0, 2).join('; ')})` : ''}`
+      : ard
+      ? `ARD manifest at ${ard.url} is not a valid draft-00 manifest: ${ard.problems.slice(0, 3).join('; ')}`
+      : 'No ARD manifest (/.well-known/ard.json or Link: rel="ard") and no AI Catalog',
+    evidence: { registryUrl, ardUrl: ard?.url, ardVia: ard?.via, ardMediaType: ard?.mediaType, ardProblems: ard?.problems },
     remediation: !hasValidArd ? {
-      title: 'Generate Agent Resource Discovery (ard.json)',
+      title: 'Publish an Agent Resource Discovery manifest (ard.json)',
       file: 'public/.well-known/ard.json',
       diffSnippet: [
         '+ {',
-        '+   "$schema": "https://agentcard.org/v0.91/ard.json",',
-        `+   "id": "urn:air:${hostname}:main",`,
-        `+   "name": "${brandName}",`,
-        '+   "capabilities": ["tools", "context"]',
+        '+   "entries": [',
+        '+     {',
+        `+       "identifier": "https://${hostname}/mcp",`,
+        `+       "displayName": "${brandName} MCP server",`,
+        '+       "type": "application/mcp-server-card+json",',
+        `+       "url": "https://${hostname}/mcp/server-card"`,
+        '+     }',
+        '+   ]',
         '+ }',
+        '+ (serve with Content-Type: application/ard+json)',
       ],
       fixCommand: 'glintbase remediate ard.json',
     } : undefined,
@@ -344,23 +356,19 @@ export async function probeDiscovery(
   });
 
   // Check: ard-entries-valid (2 pts, bonus)
-  let ardEntriesValid = false;
-  if (parsedArd) {
-    if (Array.isArray(parsedArd.entries) && parsedArd.entries.length > 0) {
-      ardEntriesValid = parsedArd.entries.every((e: any) => e.displayName && (e.mediaType || e.type) && (e.url || e.data));
-    } else if (parsedArd.endpoints && typeof parsedArd.endpoints === 'object' && Object.keys(parsedArd.endpoints).length > 0) {
-      ardEntriesValid = true;
-    }
-  }
+  // draft-bu-dawn-ard-discovery-00 §3.2.1: identifier, displayName, type, and exactly one of url / data.
+  const ardEntriesValid = Boolean(ard?.valid && ard.entryCount > 0);
   results.push({
     checkId: 'ard-entries-valid',
-    status: ardEntriesValid ? 'pass' : 'na',
+    status: ardEntriesValid ? 'pass' : ard ? 'warn' : 'na',
     earnedPoints: ardEntriesValid ? 2 : 0,
     maxPoints: 2,
     isBonus: true,
     message: ardEntriesValid
-      ? 'All catalog entries contain valid displayName, mediaType, and endpoint data'
-      : 'Catalog entries validation skipped (bonus)',
+      ? `All ${ard!.entryCount} ARD entries carry identifier, displayName, type and exactly one of url / data`
+      : ard
+      ? `ARD entries are not valid: ${ard.problems.slice(0, 3).join('; ') || 'no entries'}`
+      : 'No ARD manifest to validate (bonus skipped)',
   });
 
   // Check: ard-trust-manifest (2 pts, bonus)
@@ -549,38 +557,8 @@ export async function probeDiscovery(
   });
 
   // ========================================================
-  // 8. Search Discoverability & External Directories
+  // 8. External Directories (search-ranking checks were removed in ARS 3.4: no search API)
   // ========================================================
-  // brand-search-accuracy: external search lookup (needs a search API; not probed yet)
-  results.push({
-    checkId: 'brand-search-accuracy',
-    status: 'skip',
-    earnedPoints: 0,
-    maxPoints: 3,
-    isBonus: true,
-    message: 'External brand search accuracy not yet probed (excluded from score)',
-  });
-
-  // agentic-search-specific: developer documentation search
-  results.push({
-    checkId: 'agentic-search-specific',
-    status: 'skip',
-    earnedPoints: 0,
-    maxPoints: 3,
-    isBonus: true,
-    message: 'External agentic search index not yet probed (excluded from score)',
-  });
-
-  // chatgpt-app-listed (bonus)
-  results.push({
-    checkId: 'chatgpt-app-listed',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 2,
-    isBonus: true,
-    message: 'ChatGPT App Directory listing unverified (bonus skipped)',
-  });
-
   // mcp-registry-listed: official MCP Registry, under a namespace or endpoint tied to the domain
   results.push({
     checkId: 'mcp-registry-listed',
@@ -611,16 +589,6 @@ export async function probeDiscovery(
         ? `No skills.sh skills published from ${apexDomain} or a "${brandName}" GitHub owner`
         : `skills.sh listing unverified: ${skillsSh.reason}`,
     evidence: skillsSh.outcome === 'listed' ? { skill: skillsSh.match } : undefined,
-  });
-
-  // agentic-search-usecase (beta, held at N/A per spec)
-  results.push({
-    checkId: 'agentic-search-usecase',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 6,
-    isBonus: false,
-    message: 'Held at N/A (unscored) pending noise reduction per ARS 3.0 spec',
   });
 
   // Compute earned points

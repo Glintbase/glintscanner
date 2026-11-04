@@ -29,6 +29,8 @@ export interface FetchResourceOptions {
   probeOnly?: boolean;
   /** When true, reads the response body even for HTTP 4xx/5xx status codes instead of discarding it */
   allowErrorBody?: boolean;
+  /** Redirects to follow (default 5). A response that still redirects after that is `failed`. */
+  maxRedirects?: number;
 }
 
 export interface FetchResourceResult {
@@ -43,6 +45,8 @@ export interface FetchResourceResult {
   bytes?: number;
   networkError?: boolean;
   error?: string;
+  /** Redirects followed before the final response. */
+  redirects?: number;
 }
 
 /**
@@ -205,9 +209,10 @@ export async function fetchResource(
   try {
     let currentUrl = safeUrl;
     let res: Response | null = null;
-    const maxRedirects = 5;
+    const maxRedirects = options.maxRedirects ?? 5;
+    let redirects = 0;
 
-    for (let hop = 0; hop <= maxRedirects; hop++) {
+    for (;;) {
       res = await fetch(currentUrl, {
         method,
         signal: controller.signal,
@@ -223,6 +228,10 @@ export async function fetchResource(
       if ([301, 302, 303, 307, 308].includes(res.status)) {
         const location = res.headers.get('location');
         if (!location) break;
+        if (redirects >= maxRedirects) {
+          // Still redirecting after the allowed hops: there is no resource here (a 3xx used to count as ok).
+          return { ok: false, status: 'failed', httpStatus: res.status, url: safeUrl, finalUrl: currentUrl, redirects, error: `More than ${maxRedirects} redirect(s)` };
+        }
         let nextUrl: string;
         try {
           nextUrl = new URL(location, currentUrl).toString();
@@ -234,6 +243,7 @@ export async function fetchResource(
           return { ok: false, status: 'blocked', url: nextUrl };
         }
         currentUrl = nextPolicy.url;
+        redirects++;
         continue;
       }
       break;
@@ -267,6 +277,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
       };
     }
 
@@ -279,6 +290,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
       };
     }
 
@@ -293,6 +305,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
         body: sseBody,
         bytes: sseBody.length,
       };
@@ -308,6 +321,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
         bytes: bodyBytes,
       };
     }
@@ -320,6 +334,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
         body: text,
         bytes: text.length,
       };
@@ -333,6 +348,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
         body: text,
         bytes: 0,
       };
@@ -346,6 +362,7 @@ export async function fetchResource(
         headers,
         url: safeUrl,
         finalUrl: currentUrl,
+        redirects,
         body: text.slice(0, 500),
         bytes: text.length,
       };
@@ -358,6 +375,7 @@ export async function fetchResource(
       headers,
       url: safeUrl,
       finalUrl: currentUrl,
+      redirects,
       body: text,
       bytes: text.length,
     };

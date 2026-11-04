@@ -10,6 +10,7 @@
  */
 
 import { fetchResource } from './fetchResource';
+import { fetchWellKnown } from './wellKnown';
 
 export const SERVER_CARD_MEDIA_TYPE = 'application/mcp-server-card+json';
 const CARD_ACCEPT = `${SERVER_CARD_MEDIA_TYPE}, application/json;q=0.9`;
@@ -59,13 +60,14 @@ function finding(location: ServerCardLocation, card: any, url?: string): ServerC
 }
 
 async function fetchCard(url: string): Promise<any> {
-  const res = await fetchResource(url, { timeoutMs: 3500, maxBytes: 200_000, headers: { Accept: CARD_ACCEPT } });
+  const get = url.includes('/.well-known/') ? fetchWellKnown : fetchResource;
+  const res = await get(url, { timeoutMs: 3500, maxBytes: 200_000, headers: { Accept: CARD_ACCEPT } });
   return res.ok ? parseJson(res.body) : null;
 }
 
 /** Server Cards listed in the domain's AI Catalog (first valid one wins, else the first found). */
 export async function findCatalogServerCard(origin: string): Promise<ServerCardFinding | undefined> {
-  const res = await fetchResource(`${origin}/.well-known/ai-catalog.json`, {
+  const res = await fetchWellKnown(`${origin}/.well-known/ai-catalog.json`, {
     timeoutMs: 3500,
     maxBytes: 500_000,
     headers: { Accept: 'application/ai-catalog+json, application/json;q=0.9' },

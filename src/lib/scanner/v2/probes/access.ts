@@ -6,6 +6,7 @@
 
 import { parse as parseYaml } from 'yaml';
 import { fetchResource, type FetchResourceResult } from '../fetchResource';
+import { fetchWellKnown } from '../wellKnown';
 import { getChecksForLayer } from './registry';
 import type { CheckResult } from './types';
 
@@ -24,6 +25,13 @@ export interface AccessProbeResult {
     supported: boolean;
     hasVaryAccept: boolean;
     mdTwinUrl?: string;
+  };
+  /** `Content-Signal` response headers (ARS 3.4 S1): on the HTML response and on the Accept: text/markdown response. */
+  contentSignalHeaders: {
+    html?: string;
+    markdown?: string;
+    /** The Accept: text/markdown request got Markdown back. */
+    markdownServed: boolean;
   };
   antiSpa404: {
     passed: boolean;
@@ -69,6 +77,7 @@ const HOMEPAGE_DERIVED_CHECKS = new Set([
   'link-header-canonical',
   'security-headers-csp',
   'markdown-alternate-link',
+  'image-alt-prose',
 ]);
 
 /**
@@ -190,6 +199,77 @@ export function findMarkdownAlternate(html: string): string | undefined {
   return undefined;
 }
 
+/** href of a `Link: <…>; rel="alternate"; type="text/markdown"` response header entry, if any. */
+export function findMarkdownAlternateHeader(linkHeader?: string | null): string | undefined {
+  return parseLinkHeader(linkHeader).find((l) => l.rels.includes('alternate') && /^text\/markdown$/i.test((l.type || '').trim()))?.href;
+}
+
+/** Cells in one GFM table row (leading / trailing pipes optional, `\|` escaped). */
+function tableCells(line: string): number {
+  const inner = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
+  return inner.split(/(?<!\\)\|/).length;
+}
+
+const TABLE_DELIMITER = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/**
+ * GFM pipe tables in a Markdown document (outside code fences) and the ones whose header,
+ * delimiter and body rows do not have the same number of columns.
+ */
+export function markdownTableReport(md: string): { count: number; malformed: string[] } {
+  const lines = md.split(/\r?\n/);
+  let inFence = false;
+  let count = 0;
+  const malformed: string[] = [];
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (/^\s*(```|~~~)/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !lines[i].includes('|') || !TABLE_DELIMITER.test(lines[i + 1]) || !lines[i + 1].includes('-')) continue;
+    // A delimiter row needs a pipe unless the table has one column.
+    if (!lines[i + 1].includes('|') && tableCells(lines[i]) > 1) continue;
+    count++;
+    const cols = tableCells(lines[i]);
+    const problems: string[] = [];
+    if (tableCells(lines[i + 1]) !== cols) problems.push(`delimiter has ${tableCells(lines[i + 1])} columns, header ${cols}`);
+    let j = i + 2;
+    for (; j < lines.length && lines[j].trim() && lines[j].includes('|'); j++) {
+      const n = tableCells(lines[j]);
+      if (n !== cols) problems.push(`row ${j - i - 1} has ${n} columns, header ${cols}`);
+    }
+    if (problems.length) malformed.push(`table at line ${i + 1}: ${problems[0]}`);
+    i = j - 1;
+  }
+  return { count, malformed };
+}
+
+/** Share of non-decorative homepage images that must carry alt text (policy choice). */
+export const ALT_COVERAGE_MIN = 0.9;
+
+/**
+ * `<img>` alt coverage. Decorative images are excluded, as WCAG treats them: `alt=""`,
+ * `role="presentation"` / `"none"`, `aria-hidden="true"`, and 1x1 tracking pixels.
+ */
+export function imageAltReport(html: string): { total: number; informative: number; withAlt: number } {
+  const imgs = html.match(/<img\b[^>]*>/gi) || [];
+  let informative = 0;
+  let withAlt = 0;
+  for (const tag of imgs) {
+    const alt = tag.match(/\balt\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+    const altText = alt ? (alt[1] ?? alt[2] ?? alt[3] ?? '') : undefined;
+    const decorative =
+      (altText !== undefined && altText.trim() === '') ||
+      /\brole\s*=\s*["']?(presentation|none)\b/i.test(tag) ||
+      /\baria-hidden\s*=\s*["']?true\b/i.test(tag) ||
+      (/\bwidth\s*=\s*["']?[01]["'\s/>]/i.test(tag) && /\bheight\s*=\s*["']?[01]["'\s/>]/i.test(tag));
+    if (decorative) continue;
+    informative++;
+    if (altText !== undefined) withAlt++;
+  }
+  return { total: imgs.length, informative, withAlt };
+}
+
 /**
  * Homepage fetch with one retry when no HTTP response arrived at all. Hosts with several A
  * records (e.g. Vercel) can have one unreachable edge address on a given route; a second
@@ -252,6 +332,7 @@ export async function probeAccess(
       checks: results,
       details: ['Invalid target URL for access probe'],
       markdownNegotiation: { supported: false, hasVaryAccept: false },
+      contentSignalHeaders: { markdownServed: false },
       antiSpa404: { passed: false, isSoft200: false },
       zeroJsReadability: { passed: false, charCount: 0, textDensityPercent: 0 },
       openapi: { found: false },
@@ -527,12 +608,15 @@ export async function probeAccess(
   let markdownSupported = false;
   let hasVaryAccept = Boolean(localContext?.middlewareHasVaryAccept);
   let mdTwinUrl: string | undefined;
+  /** The Markdown representation the site served (negotiated or .md twin), for table checks. */
+  let markdownBody: string | undefined;
 
   if (mdRes.ok && mdRes.body) {
     const isMdHeader = (mdRes.contentType || '').includes('text/markdown');
     const isMdBody = mdRes.body.startsWith('# ') || mdRes.body.includes('\n# ') || mdRes.body.startsWith('---');
     if (isMdHeader || isMdBody) {
       markdownSupported = true;
+      markdownBody = mdRes.body;
     }
     // Check Vary header
     const varyHeader = (mdRes.headers?.vary || '').toLowerCase();
@@ -548,6 +632,7 @@ export async function probeAccess(
     if (twinRes.ok && twinRes.body && !twinRes.body.includes('<html')) {
       markdownSupported = true;
       mdTwinUrl = twinUrl;
+      markdownBody = twinRes.body;
     }
   }
 
@@ -587,33 +672,50 @@ export async function probeAccess(
       : 'Direct .md URL twin not detected (bonus skipped)',
   });
 
-  // markdown-alternate-link (1 pt bonus): <link rel="alternate" type="text/markdown"> that resolves.
-  const alternateHref = findMarkdownAlternate(rawHtml);
+  // markdown-alternate-link (1 pt bonus): a Markdown alternate that resolves, declared by
+  // <link rel="alternate" type="text/markdown"> or (ARS 3.4) by the equivalent Link response header.
+  const alternates: Array<{ href: string; via: 'html' | 'header' }> = [];
+  const htmlAlternate = findMarkdownAlternate(rawHtml);
+  if (htmlAlternate) alternates.push({ href: htmlAlternate, via: 'html' });
+  const headerAlternate = findMarkdownAlternateHeader(homeRes.headers?.link);
+  if (headerAlternate) alternates.push({ href: headerAlternate, via: 'header' });
   let alternateUrl: string | undefined;
+  let alternateVia: 'html' | 'header' | undefined;
   let alternateResolves = false;
-  if (alternateHref && !localContext?.isLocalCodebase) {
-    try {
-      alternateUrl = new URL(alternateHref, targetUrl).href;
-      const altRes = await fetchResource(alternateUrl, { timeoutMs: 3000, maxBytes: 500_000 });
-      alternateResolves =
-        altRes.status === 'too_large'
-          ? (altRes.httpStatus ?? 0) < 400 && !/html/i.test(altRes.contentType || '')
-          : Boolean(altRes.ok && altRes.body && !/<html|<!doctype/i.test(altRes.body));
-    } catch {
-      /* invalid href */
+  if (!localContext?.isLocalCodebase) {
+    for (const alt of alternates) {
+      try {
+        const url = new URL(alt.href, homeRes.finalUrl || targetUrl).href;
+        alternateUrl = alternateUrl || url;
+        const altRes = await fetchResource(url, { timeoutMs: 3000, maxBytes: 500_000 });
+        const resolves =
+          altRes.status === 'too_large'
+            ? (altRes.httpStatus ?? 0) < 400 && !/html/i.test(altRes.contentType || '')
+            : Boolean(altRes.ok && altRes.body && !/<html|<!doctype/i.test(altRes.body));
+        if (resolves) {
+          alternateResolves = true;
+          alternateUrl = url;
+          alternateVia = alt.via;
+          break;
+        }
+      } catch {
+        /* invalid href */
+      }
     }
   }
+  const declaredBy = (via?: 'html' | 'header') => (via === 'header' ? 'Link header' : '<link> element');
   results.push({
     checkId: 'markdown-alternate-link',
-    status: alternateResolves ? 'pass' : alternateHref ? 'warn' : 'na',
+    status: alternateResolves ? 'pass' : alternates.length ? 'warn' : 'na',
     earnedPoints: alternateResolves ? 1 : 0,
     maxPoints: 1,
     isBonus: true,
     message: alternateResolves
-      ? `Homepage advertises a Markdown alternate that resolves (${alternateUrl})`
-      : alternateHref
-      ? `Homepage advertises a Markdown alternate that does not resolve to Markdown (${alternateUrl || alternateHref})`
-      : 'No <link rel="alternate" type="text/markdown"> on the homepage (bonus skipped)',
+      ? `Homepage advertises a Markdown alternate (${declaredBy(alternateVia)}) that resolves (${alternateUrl})`
+      : alternates.length
+      ? `Homepage advertises a Markdown alternate (${declaredBy(alternates[0].via)}) that does not resolve to Markdown (${alternateUrl || alternates[0].href})`
+      : 'No <link rel="alternate" type="text/markdown"> element or Link header on the homepage (bonus skipped)',
+    evidence: alternates.length ? { declared: alternates, resolvedVia: alternateVia } : undefined,
   });
 
   // markdown-html-parity (2 pts bonus)
@@ -698,7 +800,7 @@ export async function probeAccess(
   let openApiVia: string | undefined;
 
   // RFC 9727 API catalog: read once, used both to find specs and for api-catalog-rfc9727.
-  const linksetRes: FetchResourceResult = localContext?.isLocalCodebase ? localDummy() : await fetchResource(`${origin}/.well-known/api-catalog`, {
+  const linksetRes: FetchResourceResult = localContext?.isLocalCodebase ? localDummy() : await fetchWellKnown(`${origin}/.well-known/api-catalog`, {
     timeoutMs: 2500,
     headers: { Accept: 'application/linkset+json' },
   });
@@ -813,15 +915,6 @@ export async function probeAccess(
     maxPoints: 1,
     isBonus: false,
     message: u.protocol === 'https:' ? 'HTTPS enforced with TLS' : 'HTTP plaintext detected',
-  });
-
-  results.push({
-    checkId: 'http2-support',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'HTTP/2 ALPN transport not yet probed (excluded from score)',
   });
 
   const corsHeader = homeRes.headers?.['access-control-allow-origin'];
@@ -978,15 +1071,6 @@ export async function probeAccess(
     message: `Text density ratio: ${textDensityPercent}%`,
   });
 
-  results.push({
-    checkId: 'pagination-rel-links',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'Collection pagination rel links not yet probed (excluded from score)',
-  });
-
   const linkHeader = homeRes.headers?.['link'];
   const hasLinkHeader = Boolean(linkHeader);
   results.push({
@@ -996,15 +1080,6 @@ export async function probeAccess(
     maxPoints: 1,
     isBonus: true,
     message: hasLinkHeader ? `Link headers available for machine twin discovery (${linkHeader ? linkHeader.slice(0, 40) : ''})` : 'Link header machine twin not declared (bonus skipped)',
-  });
-
-  results.push({
-    checkId: 'dns-caa-record',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'DNS CAA security records not yet probed (excluded from score)',
   });
 
   const cspHeader = homeRes.headers?.['content-security-policy'];
@@ -1018,7 +1093,7 @@ export async function probeAccess(
     message: hasSecurityHeaders ? 'Security headers present (CSP/nosniff/referrer-policy)' : 'Content-Security-Policy or security headers missing',
   });
 
-  const secTxtRes = await fetchResource(`${origin}/.well-known/security.txt`, { timeoutMs: 2000, maxBytes: 10000 });
+  const secTxtRes = await fetchWellKnown(`${origin}/.well-known/security.txt`, { timeoutMs: 2000, maxBytes: 10000 });
   const hasSecTxt = Boolean(secTxtRes.ok && secTxtRes.body && !secTxtRes.body.includes('<html') && (secTxtRes.body.includes('Contact:') || secTxtRes.body.includes('Expires:')));
   results.push({
     checkId: 'security-txt-rfc9116',
@@ -1043,40 +1118,38 @@ export async function probeAccess(
     message: hasLlmsFull ? 'Full llms-full.txt context document verified' : 'Optional llms-full.txt omitted (bonus)',
   });
 
+  // markdown-table-syntax (ARS 3.4): tables in the Markdown the site serves have consistent columns.
+  const tables = markdownBody ? markdownTableReport(markdownBody) : undefined;
+  const tableStatus = !tables || tables.count === 0 ? 'na' : tables.malformed.length === 0 ? 'pass' : 'warn';
   results.push({
     checkId: 'markdown-table-syntax',
-    status: 'na',
-    earnedPoints: 0,
+    status: tableStatus,
+    earnedPoints: tableStatus === 'pass' ? 1 : 0,
     maxPoints: 1,
-    isBonus: true,
-    message: 'Markdown table syntax compliance not yet probed (excluded from score)',
+    isBonus: false,
+    message: !tables
+      ? 'No Markdown representation served (table syntax not applicable)'
+      : tables.count === 0
+      ? 'The Markdown representation has no tables'
+      : tableStatus === 'pass'
+      ? `All ${tables.count} Markdown table(s) have matching header, delimiter and row column counts`
+      : `${tables.malformed.length}/${tables.count} Markdown table(s) have mismatched columns (${tables.malformed.slice(0, 3).join('; ')})`,
+    evidence: tables ? { tables: tables.count, malformed: tables.malformed.slice(0, 5) } : undefined,
   });
 
-  results.push({
-    checkId: 'relative-link-resolution',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'Relative link crawler traversal not yet probed (excluded from score)',
-  });
-
+  // image-alt-prose (ARS 3.4): homepage images carry alt text, so an agent reading HTML knows what they show.
+  const alt = imageAltReport(rawHtml);
+  const altStatus = alt.informative === 0 ? 'na' : alt.withAlt / alt.informative >= ALT_COVERAGE_MIN ? 'pass' : 'warn';
   results.push({
     checkId: 'image-alt-prose',
-    status: 'na',
-    earnedPoints: 0,
+    status: altStatus,
+    earnedPoints: altStatus === 'pass' ? 1 : 0,
     maxPoints: 1,
-    isBonus: true,
-    message: 'Image alt text coverage not yet probed (excluded from score)',
-  });
-
-  results.push({
-    checkId: 'plain-text-accessible',
-    status: 'na',
-    earnedPoints: 0,
-    maxPoints: 1,
-    isBonus: true,
-    message: 'Plain text documentation representation not yet probed (excluded from score)',
+    isBonus: false,
+    message: alt.informative === 0
+      ? 'No non-decorative images on the homepage'
+      : `${alt.withAlt}/${alt.informative} non-decorative homepage images have alt text${altStatus === 'pass' ? '' : ` (needs ${Math.round(ALT_COVERAGE_MIN * 100)}%)`}`,
+    evidence: { images: alt.total, informative: alt.informative, withAlt: alt.withAlt },
   });
 
   const challengeMarkers = [
@@ -1180,6 +1253,11 @@ export async function probeAccess(
       supported: markdownSupported,
       hasVaryAccept,
       mdTwinUrl,
+    },
+    contentSignalHeaders: {
+      html: homepageFailed || blocked ? undefined : homeRes.headers?.['content-signal'],
+      markdown: mdRes.ok ? mdRes.headers?.['content-signal'] : undefined,
+      markdownServed: Boolean(markdownBody && !mdTwinUrl),
     },
     antiSpa404: {
       passed: antiSpaPassed,

@@ -15,6 +15,7 @@ import { getArsGrade } from '../../shared/scoreBand';
 import { getAllChecks, getCheckById, getChecksForLayer } from './registry';
 import { ARS_SCORE_VERSION } from '../../version';
 import { measurementFor } from './measurement';
+import { compareSignals, parseSignalValues, robotsSignalsForAnyAgent } from '../contentSignal';
 import type {
   Ars3Scorecard,
   ScanEvidenceSummary,
@@ -170,6 +171,56 @@ export function robotsEdgeConsistency(discovery: DiscoveryProbeResult, access: A
   };
 }
 
+/**
+ * Does the site state one AI-use policy? (ARS 3.4 S1, E1.) Compares the robots.txt
+ * `Content-Signal` for any agent (`User-agent: *`) with the `Content-Signal` header on the HTML
+ * response and on the `Accept: text/markdown` response. Reported, 0 points: a header may be a
+ * CDN default the site never chose, and no AI company is known to honour either.
+ */
+export function contentSignalConsistency(discovery: DiscoveryProbeResult, access: AccessProbeResult): CheckResult {
+  const base = { checkId: 'content-signal-consistency', earnedPoints: 0, maxPoints: 0, isBonus: true };
+  const headers = access.contentSignalHeaders;
+  const htmlObserved = !access.homepageBlocked && access.targetReachable !== false && access.homepageStatus !== undefined;
+  if (!htmlObserved) {
+    return { ...base, status: 'skip', message: 'Not observed: the homepage response was not available' };
+  }
+  const groups = discovery.robotsPolicy.contentSignals || [];
+  const robots = robotsSignalsForAnyAgent(groups);
+  const surfaces = [
+    { name: 'robots.txt', values: robots },
+    { name: 'HTML header', values: parseSignalValues(headers?.html) },
+    { name: 'Markdown header', values: parseSignalValues(headers?.markdown) },
+  ];
+  const { verdict, conflicts } = compareSignals(surfaces);
+  const evidence = {
+    verdict,
+    robots: robots ?? null,
+    robotsGroups: groups.length,
+    htmlHeader: headers?.html ?? null,
+    markdownHeader: headers?.markdown ?? null,
+    markdownServed: Boolean(headers?.markdownServed),
+    conflicts,
+  };
+  const named = groups.filter((g) => !g.userAgents.includes('*')).length;
+  switch (verdict) {
+    case 'conflict':
+      return { ...base, status: 'warn', message: `Content-Signal values disagree: ${conflicts.slice(0, 2).join('; ')}`, evidence };
+    case 'agree':
+      return { ...base, status: 'pass', message: 'robots.txt and the response headers give the same Content-Signal values', evidence };
+    case 'header-only':
+      return { ...base, status: 'pass', message: `Content-Signal only in response headers (${[headers?.html && 'HTML', headers?.markdown && 'Markdown'].filter(Boolean).join(' and ')}); no conflict`, evidence };
+    case 'robots-only':
+      return { ...base, status: 'pass', message: 'Content-Signal only in robots.txt; responses send no conflicting header', evidence };
+    default:
+      return {
+        ...base,
+        status: 'na',
+        message: named ? `Content-Signal only for named user agents in robots.txt (${named} group(s)); nothing to compare` : 'No Content-Signal in robots.txt or response headers',
+        evidence,
+      };
+  }
+}
+
 export async function runArs3ProbesDetailed(
   url: string,
   options: RunProbesOptions = {}
@@ -267,7 +318,8 @@ export async function runArs3ProbesDetailed(
     return u;
   });
 
-  const paymentsPromise = probePayments(url, archetype.archetype, baseLocalContext).then((p) => {
+  // Payments reads the access probe's OpenAPI document for MPP discovery (x-payment-info).
+  const paymentsPromise = accessPromise.then((a) => probePayments(url, archetype.archetype, { ...baseLocalContext, openApiSpec: a.openapi?.spec })).then((p) => {
     // Payments keeps its own OR-scoring, so only the measurement kind is set here.
     for (const c of p.checks) c.measurement = measurementFor(c.checkId);
     const l4Base = p.isApplicable ? p.score : 0;
@@ -288,6 +340,11 @@ export async function runArs3ProbesDetailed(
   const edgeCheck = robotsEdgeConsistency(discovery, access);
   edgeCheck.measurement = measurementFor(edgeCheck.checkId);
   access.checks.push(edgeCheck);
+
+  // One AI-use policy across robots.txt and response headers (reported, 0 pts; ARS 3.4 S1).
+  const signalCheck = contentSignalConsistency(discovery, access);
+  signalCheck.measurement = measurementFor(signalCheck.checkId);
+  access.checks.push(signalCheck);
 
   // 3. Aggregate all checks
   const allResults: CheckResult[] = [
@@ -493,6 +550,7 @@ export async function runArs2Probes(
           checks: scorecard.layers.access.checks,
           details: access.details,
           markdownNegotiation: access.markdownNegotiation,
+          contentSignalHeaders: access.contentSignalHeaders,
           antiSpa404: access.antiSpa404,
           zeroJsReadability: access.zeroJsReadability,
           openapi,

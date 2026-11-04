@@ -88,7 +88,11 @@ describe('probeUsability', () => {
     expect(c.get('mcp-resources-listing')!.status).toBe('warn');
     expect(c.get('mcp-error-reporting')!.status).toBe('pass');
     expect(c.get('mcp-honest-schemas')!.status).toBe('pass');
-    expect(c.get('mcp-ssrf-guard')!.status).toBe('skip');
+    // ARS 3.4: mcp-ssrf-guard left the registry; MCP Apps and skills are read from the live server.
+    expect(c.get('mcp-ssrf-guard')).toBeUndefined();
+    expect(c.get('mcp-app-registry')!.status).toBe('warn');
+    expect(c.get('mcp-apps-ui-quality')!.status).toBe('na');
+    expect(c.get('mcp-skills-extension')!.status).toBe('na');
   });
 
   it('marks auth.md stages from content, not from the file merely existing', async () => {

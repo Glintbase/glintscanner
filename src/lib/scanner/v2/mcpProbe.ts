@@ -26,7 +26,17 @@ const MODERN_ONLY_ERROR_CODES = new Set([-32020, -32021]);
 /** UnsupportedProtocolVersion: a dual-era client retries with an older revision. */
 const UNSUPPORTED_VERSION_CODE = -32022;
 const CANARY_TOOL = '__glintbase_canary_invalid_tool_probe__';
-const CLIENT_INFO = { name: 'glintbase-live-probe', version: '3.3.0' };
+const CLIENT_INFO = { name: 'glintbase-live-probe', version: '3.4.0' };
+/** SEP-2640 extension identifier; declaring it commits the server to skills/list and skills/get. */
+export const SKILLS_EXTENSION = 'io.modelcontextprotocol/skills';
+/** MCP Apps extension identifier (ext-apps spec 2026-01-26). */
+export const UI_EXTENSION = 'io.modelcontextprotocol/ui';
+
+/** A tool's MCP Apps UI resource: `_meta.ui.resourceUri`, or the deprecated flat key; ui:// only. */
+function uiResourceUriOf(tool: any): string | undefined {
+  const uri = tool?._meta?.ui?.resourceUri ?? tool?._meta?.['ui/resourceUri'];
+  return typeof uri === 'string' && uri.startsWith('ui://') ? uri : undefined;
+}
 
 export interface McpProbeStepResult {
   step: 'handshake' | 'tools_list' | 'safe_call' | 'error_channel';
@@ -80,9 +90,17 @@ export interface McpLiveProbeResult {
     declaredRequiredCount: number;
     /** `$schema` declared on inputSchema, if any (MCP's default dialect is JSON Schema 2020-12). */
     schemaDialect?: string;
+    /** MCP Apps: `_meta.ui.resourceUri` (or the deprecated flat `_meta["ui/resourceUri"]`) when it is a ui:// URI. */
+    uiResourceUri?: string;
   }>;
   /** Characters in the serialized tool definitions from the first tools/list page. */
   toolDefinitionChars: number;
+  /** Extensions the server declares in capabilities.extensions (SEP-2133), keyed by identifier. */
+  extensions: Record<string, any>;
+  /** skills/list outcome when the server declares io.modelcontextprotocol/skills (SEP-2640). */
+  skillsList?: { answered: boolean; count?: number; hasMore?: boolean; httpStatus?: number; error?: string };
+  /** First MCP Apps UI resource a tool declares, read with resources/read. */
+  uiResource?: { uri: string; read: boolean; mimeType?: string; hasContent: boolean; csp?: Record<string, any> };
   steps: McpProbeStepResult[];
   reliabilityScore: number; // 0 - 100
 }
@@ -328,6 +346,7 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
         ),
         declaredRequiredCount: reqList.length,
         schemaDialect: typeof t.inputSchema?.$schema === 'string' ? t.inputSchema.$schema : undefined,
+        uiResourceUri: uiResourceUriOf(t),
       });
     }
     toolDefinitionChars = JSON.stringify(rawTools).length;
@@ -345,6 +364,38 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
       : 'Skipped: no handshake',
     data: { declaredCount: tools.length },
   });
+
+  // =========================================================================
+  // STEP 2b: Declared extensions (SEP-2133), Skills over MCP (SEP-2640), MCP Apps UI resource
+  // =========================================================================
+  // Read-only list / read calls; no tool is called here.
+  const extensions: Record<string, any> =
+    capabilities.extensions && typeof capabilities.extensions === 'object' && !Array.isArray(capabilities.extensions) ? capabilities.extensions : {};
+  let skillsList: McpLiveProbeResult['skillsList'];
+  if (handshakePassed && extensions[SKILLS_EXTENSION]) {
+    const shape = requestShape('skills/list');
+    const res = await post({ jsonrpc: '2.0', id: 6, method: 'skills/list', params: { ...shape.meta } }, shape.headers);
+    const json = extractJson(res.body, 6);
+    skillsList = Array.isArray(json?.result?.skills)
+      ? { answered: true, count: json.result.skills.length, hasMore: typeof json.result.nextCursor === 'string' }
+      : { answered: false, httpStatus: res.httpStatus, error: typeof json?.error?.message === 'string' ? json.error.message.slice(0, 200) : undefined };
+  }
+  let uiResource: McpLiveProbeResult['uiResource'];
+  const uiUri = tools.find((t) => t.uiResourceUri)?.uiResourceUri;
+  if (handshakePassed && uiUri) {
+    const shape = requestShape('resources/read', uiUri);
+    const res = await post({ jsonrpc: '2.0', id: 7, method: 'resources/read', params: { uri: uiUri, ...shape.meta } }, shape.headers);
+    const json = extractJson(res.body, 7);
+    const contents: any[] = Array.isArray(json?.result?.contents) ? json.result.contents : [];
+    const item = contents.find((c) => c?.uri === uiUri) || contents[0];
+    uiResource = {
+      uri: uiUri,
+      read: Boolean(item),
+      mimeType: typeof item?.mimeType === 'string' ? item.mimeType : undefined,
+      hasContent: Boolean((typeof item?.text === 'string' && item.text.trim()) || (typeof item?.blob === 'string' && item.blob)),
+      csp: item?._meta?.ui?.csp && typeof item._meta.ui.csp === 'object' ? item._meta.ui.csp : undefined,
+    };
+  }
 
   // =========================================================================
   // STEP 3: Safe Call & Schema Honesty Probe
@@ -465,6 +516,9 @@ export async function probeMcpServer(endpointUrl: string): Promise<McpLiveProbeR
     toolCount: tools.length,
     toolsListed,
     toolDefinitionChars,
+    extensions,
+    skillsList,
+    uiResource,
     capabilities,
     wwwAuthenticate,
     safeCallTool: zeroArgTool?.name,

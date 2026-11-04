@@ -13,7 +13,8 @@
  */
 
 import { fetchResource } from '../fetchResource';
-import { probeMcpServer, type McpLiveProbeResult } from '../mcpProbe';
+import { probeMcpServer, SKILLS_EXTENSION, type McpLiveProbeResult } from '../mcpProbe';
+import { fetchWellKnown } from '../wellKnown';
 import { findCatalogServerCard, findEndpointServerCard, findLegacyServerCard } from '../serverCard';
 import { inspectOpenApi } from '../openapiInspect';
 import { getChecksForLayer } from './registry';
@@ -133,6 +134,66 @@ function endpointFromCard(json: any, base: string): string | undefined {
     } catch {
       /* ignore */
     }
+  }
+  return undefined;
+}
+
+/**
+ * Script URLs on a page that carry WebMCP: a src naming webmcp (e.g. Cloudflare's /.webmcp/bridge.js)
+ * or a script tag with the bridge's data-mcp-url / data-packs attributes. Same-site only, at most 3.
+ */
+export function webMcpScriptUrls(html: string, pageUrl: string): string[] {
+  const out: string[] = [];
+  let site = '';
+  try {
+    site = registrableDomain(new URL(pageUrl).hostname) || new URL(pageUrl).hostname;
+  } catch {
+    return out;
+  }
+  for (const tag of html.match(/<script\b[^>]*\bsrc\s*=[^>]*>/gi) || []) {
+    const src = tag.match(/\bsrc\s*=\s*["']?([^"'\s>]+)/i)?.[1];
+    if (!src || !(/webmcp/i.test(src) || /\bdata-(mcp-url|packs)\s*=/i.test(tag))) continue;
+    try {
+      const abs = new URL(src, pageUrl);
+      if (!/^https?:$/.test(abs.protocol) || registrableDomain(abs.hostname) !== site) continue;
+      if (!out.includes(abs.href)) out.push(abs.href);
+    } catch {
+      /* invalid src */
+    }
+  }
+  return out.slice(0, 3);
+}
+
+const GRAPHQL_PATHS = ['/graphql', '/api/graphql'];
+
+/**
+ * First GraphQL endpoint on the origin that answers `{ __schema { queryType { name } } }` with a
+ * GraphQL response (`data` or an `errors` array). `schema` is the query type name when
+ * introspection is enabled.
+ */
+export async function probeGraphql(origin: string): Promise<{ url: string; schema?: string } | undefined> {
+  for (const path of GRAPHQL_PATHS) {
+    const url = `${origin}${path}`;
+    const res = await fetchResource(url, {
+      method: 'POST',
+      timeoutMs: 3000,
+      maxBytes: 100_000,
+      allowErrorBody: true,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/graphql-response+json, application/json' },
+      body: JSON.stringify({ query: '{ __schema { queryType { name } } }' }),
+    }).catch(() => undefined);
+    // A JSON 404 / 405 ({"errors": [...]}) is a generic API error, not a GraphQL endpoint.
+    if (!res || res.httpStatus === 404 || res.httpStatus === 405) continue;
+    let json: any;
+    try {
+      json = res.body ? JSON.parse(res.body) : undefined;
+    } catch {
+      json = undefined;
+    }
+    if (!json || typeof json !== 'object' || Array.isArray(json)) continue;
+    const schema = json.data?.__schema?.queryType?.name;
+    if (typeof schema === 'string') return { url, schema };
+    if (Array.isArray(json.errors) && json.errors.some((e: any) => typeof e?.message === 'string')) return { url };
   }
   return undefined;
 }
@@ -603,10 +664,65 @@ export async function probeUsability(
     );
   }
 
-  // MCP UI and App Specs (not yet probed)
-  record('mcp-app-registry', 'na', 'MCP App UI resource schemas not probed (bonus)');
-  record('mcp-apps-ui-quality', 'na', 'MCP App HTML profile compliance not probed (bonus)');
-  record('mcp-view-csp', 'na', 'MCP View CSP frame-ancestors not yet probed (bonus)');
+  // MCP Apps (io.modelcontextprotocol/ui): a tool declares a ui:// resource, which is read once.
+  const uiTool = tools?.find((t) => t.uiResourceUri);
+  const ui = live?.uiResource;
+  if (!canInspectTools) {
+    for (const id of ['mcp-app-registry', 'mcp-apps-ui-quality', 'mcp-view-csp']) {
+      const [s, m] = unverifiable(notVerifiableReason);
+      record(id, s, m);
+    }
+  } else if (!uiTool) {
+    record('mcp-app-registry', 'warn', `None of the ${tools!.length} tools declares an MCP Apps UI resource (_meta.ui.resourceUri)`);
+    record('mcp-apps-ui-quality', 'na', 'No MCP Apps UI resource declared');
+    record('mcp-view-csp', 'na', 'No MCP Apps UI resource declared');
+  } else {
+    record('mcp-app-registry', 'pass', `Tool "${uiTool.name}" declares the MCP Apps UI resource ${uiTool.uiResourceUri}`);
+    const profileOk = Boolean(ui?.read && ui.hasContent && /^text\/html\s*;\s*profile\s*=\s*"?mcp-app"?$/i.test(ui.mimeType || ''));
+    record(
+      'mcp-apps-ui-quality',
+      profileOk ? 'pass' : ui?.read ? 'warn' : 'skip',
+      profileOk
+        ? `resources/read serves ${ui!.uri} as text/html;profile=mcp-app`
+        : ui?.read
+        ? `${ui.uri} is served as ${ui.mimeType || 'no mimeType'}${ui.hasContent ? '' : ' without content'}; MCP Apps requires text/html;profile=mcp-app`
+        : `resources/read did not return ${uiTool.uiResourceUri}`
+    );
+    const cspKeys = ui?.csp ? ['connectDomains', 'resourceDomains', 'frameDomains', 'baseUriDomains'].filter((k) => Array.isArray(ui.csp![k])) : [];
+    record(
+      'mcp-view-csp',
+      cspKeys.length ? 'pass' : ui?.read ? 'warn' : 'skip',
+      cspKeys.length
+        ? `UI resource declares _meta.ui.csp (${cspKeys.join(', ')})`
+        : ui?.read
+        ? 'UI resource declares no _meta.ui.csp; hosts fall back to a deny-all policy for external origins'
+        : `resources/read did not return ${uiTool.uiResourceUri}`
+    );
+  }
+
+  // Skills over MCP (SEP-2640), reported: the extension is declared and skills/list answers.
+  const extensionIds = Object.keys(live?.extensions || {});
+  if (!handshakeOk) {
+    const [s, m] = unverifiable(notVerifiableReason);
+    record('mcp-skills-extension', s, m);
+  } else if (!live?.extensions?.[SKILLS_EXTENSION]) {
+    record(
+      'mcp-skills-extension',
+      'na',
+      extensionIds.length ? `Server declares ${extensionIds.join(', ')}; not ${SKILLS_EXTENSION}` : 'Server declares no extensions',
+      { evidence: { extensions: extensionIds } }
+    );
+  } else {
+    const sl = live.skillsList;
+    record(
+      'mcp-skills-extension',
+      sl?.answered ? 'pass' : 'warn',
+      sl?.answered
+        ? `Declares ${SKILLS_EXTENSION} and skills/list returns ${sl.count} skill(s)${sl.hasMore ? ' (more pages)' : ''}`
+        : `Declares ${SKILLS_EXTENSION} but skills/list did not return a skills array${sl?.error ? ` (${sl.error})` : ''}`,
+      { evidence: { extensions: extensionIds, skillsList: sl } }
+    );
+  }
 
   // Capabilities from the initialize result
   if (handshakeOk) {
@@ -666,9 +782,6 @@ export async function probeUsability(
     record('mcp-honest-schemas', s, m);
   }
 
-  record('mcp-ssrf-guard', mcpLive ? 'skip' : 'na', mcpLive ? 'SSRF guard not probed (requires sending private-network URLs to the server)' : 'No MCP server detected');
-  record('mcp-sampling-support', 'na', 'MCP sampling is a client capability; not probed (bonus)');
-  record('mcp-roots-support', 'na', 'MCP roots is a client capability; not probed (bonus)');
 
   // ========================================================
   // 2. WorkOS auth.md 8-Stage Parser & Non-Mutating GET Simulation
@@ -685,7 +798,7 @@ export async function probeUsability(
 
   if (!authContent && !isLocal) {
     for (const checkUrl of authChecks) {
-      const res = await fetchResource(checkUrl, { timeoutMs: 3000 });
+      const res = await (checkUrl.includes('/.well-known/') ? fetchWellKnown : fetchResource)(checkUrl, { timeoutMs: 3000 });
       if (res.ok && res.body && !res.body.includes('<html')) {
         foundAuth = true;
         authUrl = checkUrl;
@@ -761,7 +874,7 @@ export async function probeUsability(
   // Non-mutating GET simulation: PRM hop -> AS metadata hop -> zero side effects
   const readJsonDoc = async (url: string) => {
     if (isLocal) return null;
-    const res = await fetchResource(url, { timeoutMs: 2500 });
+    const res = await fetchWellKnown(url, { timeoutMs: 2500 });
     if (!res.ok) return null;
     const json = extractJsonPayload(res.body);
     return json && typeof json === 'object' ? json : null;
@@ -833,26 +946,45 @@ export async function probeUsability(
     : await fetchResource(targetUrl, { timeoutMs: 3000 });
   const homeBody = homeRes.body || '';
 
-  const hasModelContext = homeBody.includes('modelContext') || homeBody.includes('window.modelContext');
+  // Edge-injected WebMCP (ARS 3.4, S6): Cloudflare's WebMCP bridge, used by Commerce.com storefronts,
+  // adds <script type="module" src="/.webmcp/bridge.js" data-mcp-url="/api/mcp">. The page itself never
+  // mentions modelContext; the registrations live in the script, so WebMCP-named scripts are read.
+  const webMcpScripts = isLocal ? [] : webMcpScriptUrls(homeBody, targetUrl);
+  let scriptWithRegistration: string | undefined;
+  let scriptMentionsModelContext = false;
+  for (const src of webMcpScripts) {
+    const js = await fetchResource(src, { timeoutMs: 3000, maxBytes: 1_000_000 }).catch(() => undefined);
+    const body = js?.ok ? js.body || '' : '';
+    if (/<html|<!doctype/i.test(body.slice(0, 500)) || !body.includes('modelContext')) continue;
+    scriptMentionsModelContext = true;
+    if (/registerTool\s*\(/.test(body)) {
+      scriptWithRegistration = src;
+      break;
+    }
+  }
+
+  const hasModelContext = homeBody.includes('modelContext') || homeBody.includes('window.modelContext') || scriptMentionsModelContext;
   const hasFormAttributes = /<form\b[^>]*\btoolname=/i.test(homeBody) || /<form\b[^>]*\btooldescription=/i.test(homeBody);
   const webMcpPassed = hasModelContext || hasFormAttributes;
+  const viaScript = scriptWithRegistration ? ` (via ${new URL(scriptWithRegistration).pathname})` : '';
 
   record(
     'webmcp',
     webMcpPassed ? 'pass' : 'na',
     webMcpPassed
-      ? 'W3C WebMCP declarations verified (modelContext & declarative tool attributes)'
-      : 'WebMCP in-browser tools not declared (bonus skipped)'
+      ? `W3C WebMCP declarations verified (modelContext & declarative tool attributes)${viaScript}`
+      : 'WebMCP in-browser tools not declared (bonus skipped)',
+    webMcpScripts.length ? { evidence: { webMcpScripts, registeringScript: scriptWithRegistration } } : {}
   );
-  record('webmcp-model-context', hasModelContext ? 'pass' : 'na', hasModelContext ? 'window.modelContext tool registration verified' : 'modelContext omitted (bonus)');
+  record('webmcp-model-context', hasModelContext ? 'pass' : 'na', hasModelContext ? `modelContext tool registration verified${viaScript}` : 'modelContext omitted (bonus)');
   record('webmcp-form-attributes', hasFormAttributes ? 'pass' : 'na', hasFormAttributes ? 'Declarative HTML form tool attributes found' : 'Form tool attributes omitted (bonus)');
 
-  const hasTopLevelJsRegistration = /registerTool\s*\(/i.test(homeBody) || /document\.modelContext\.registerTool/i.test(homeBody) || /window\.modelContext\.registerTool/i.test(homeBody);
+  const hasTopLevelJsRegistration = /registerTool\s*\(/i.test(homeBody) || /document\.modelContext\.registerTool/i.test(homeBody) || /window\.modelContext\.registerTool/i.test(homeBody) || Boolean(scriptWithRegistration);
   record(
     'webmcp-js-registration',
     hasTopLevelJsRegistration ? 'pass' : (hasFormAttributes ? 'warn' : 'na'),
     hasTopLevelJsRegistration
-      ? 'Top-level document.modelContext.registerTool registration verified for ChatGPT Site Tools'
+      ? `Top-level document.modelContext.registerTool registration verified for ChatGPT Site Tools${viaScript}`
       : (hasFormAttributes
         ? 'WebMCP tools defined only via HTML form attributes (visible to Chrome, but invisible to ChatGPT Site Tools)'
         : 'WebMCP top-level JS registration omitted (bonus skipped)')
@@ -898,6 +1030,8 @@ export async function probeUsability(
     ['api-pagination-cursor', (a) => [a.cursorPagination, 'Cursor-style pagination parameters declared', 'No cursor pagination parameters declared']],
     ['api-webhook-declarations', (a) => [a.webhooks, 'Webhooks or callbacks declared', 'No webhooks or callbacks declared']],
     ['api-openapi-3-1-strict', (a) => [a.isOpenApi31, `OpenAPI ${a.version} document`, `Spec is ${a.version || 'unknown version'}, not OpenAPI 3.1`]],
+    ['api-bulk-batch-operations', (a) => [a.bulkOperations, 'Batch / bulk operation declared', 'No batch or bulk operation declared']],
+    ['api-sandbox-environment', (a) => [Boolean(a.sandboxServer), `Sandbox / test server declared (${a.sandboxServer})`, 'No sandbox, test or staging server in servers[]']],
   ];
 
   for (const [checkId, evaluate] of apiChecks) {
@@ -911,12 +1045,20 @@ export async function probeUsability(
     }
   }
 
-  record('api-sdk-documentation', hasOpenApi ? 'skip' : 'na', hasOpenApi ? 'SDK documentation not yet probed' : 'OpenAPI specification not detected (excluded from score)');
-  record('api-error-actionability', hasOpenApi || mcpLive ? 'skip' : 'na', 'Error payload actionability not yet probed (bonus)');
-  record('api-bulk-batch-operations', 'na', 'Bulk batch endpoints not probed (bonus)');
-  record('api-sandbox-environment', 'na', 'Public testnet sandbox URL not probed (bonus)');
-  record('api-graphql-schema', 'na', 'GraphQL schema not probed (bonus)');
-  record('api-grpc-reflection', 'na', 'gRPC reflection not probed (bonus)');
+  // api-graphql-schema (ARS 3.4): a read-only introspection query at the conventional paths.
+  const graphql = isLocal ? undefined : await probeGraphql(origin);
+  record(
+    'api-graphql-schema',
+    isLocal ? 'skip' : graphql?.schema ? 'pass' : graphql ? 'warn' : 'na',
+    isLocal
+      ? 'GraphQL introspection needs a live site'
+      : graphql?.schema
+      ? `GraphQL endpoint ${graphql.url} answers introspection (query type ${graphql.schema})`
+      : graphql
+      ? `GraphQL endpoint ${graphql.url} answers but introspection is disabled or failed`
+      : 'No GraphQL endpoint at /graphql or /api/graphql',
+    graphql ? { evidence: { url: graphql.url } } : {}
+  );
 
   // Calculate totals
   let baseEarned = 0;

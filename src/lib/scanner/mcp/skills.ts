@@ -1,5 +1,5 @@
 /**
- * Glintbase Bundled MCP Skills (ARS 3.3)
+ * Glintbase Bundled MCP Skills (ARS 3.4)
  *
  * Comprehensive suite of 8 production-grade playbooks delivered tri-modally:
  * 1. MCP Resources (skill://glintbase/<name>)
@@ -19,22 +19,22 @@ export interface BundledSkill {
 export const BUNDLED_SKILLS: Record<string, BundledSkill> = {
   'glintbase-agent-readiness': {
     name: 'glintbase-agent-readiness',
-    title: 'Glintbase Agent Readiness Master Playbook (ARS 3.3)',
-    description: 'Master framework for auditing, scoring, and optimizing web applications and APIs across the 4 ARS 3.3 layers.',
+    title: 'Glintbase Agent Readiness Master Playbook (ARS 3.4)',
+    description: 'Master framework for auditing, scoring, and optimizing web applications and APIs across the 4 ARS 3.4 layers.',
     uri: 'skill://glintbase/agent-readiness',
-    tags: ['ars-3.3', 'audit', 'playbook', 'standards'],
+    tags: ['ars-3.4', 'audit', 'playbook', 'standards'],
     content: `---
 name: glintbase-agent-readiness
-title: Glintbase Agent Readiness Master Playbook (ARS 3.3)
+title: Glintbase Agent Readiness Master Playbook (ARS 3.4)
 version: 3.3.0
 layers: [discovery, access, usability, payments]
 ---
 
-# Glintbase Agent Readiness Master Playbook (ARS 3.3)
+# Glintbase Agent Readiness Master Playbook (ARS 3.4)
 
-Glintbase evaluates websites, developer portals, and APIs on the **Agent Readiness Score (ARS 3.3)**: a 0-100 score of which agent-readiness signals a product exposes and whether they work when probed. A check earns points only when the scanner observed the evidence; checks it could not verify are reported as skipped and excluded from the score. ARS 3.3 is not yet validated as a predictor of agent task success. Full methodology: https://glintbase.dev/methodology
+Glintbase evaluates websites, developer portals, and APIs on the **Agent Readiness Score (ARS 3.4)**: a 0-100 score of which agent-readiness signals a product exposes and whether they work when probed. A check earns points only when the scanner observed the evidence; checks it could not verify are reported as skipped and excluded from the score. ARS 3.4 is not yet validated as a predictor of agent task success. Full methodology: https://glintbase.dev/methodology
 
-## The 4 Layers of ARS 3.3 (137 registered checks)
+## The 4 Layers of ARS 3.4 (124 registered checks)
 
 Layer weights depend on the site's archetype (API/devtool and docs: Discovery 20, Access 30, Usability 35; e-commerce adds Payments 10).
 
@@ -61,7 +61,7 @@ Layer weights depend on the site's archetype (API/devtool and docs: Discovery 20
 
 - Fix what the scan reports as warn/fail; skipped checks mean the scanner could not verify something, not that you failed it.
 - Check the evidence coverage line: layers flagged "low evidence" rest on few verifiable checks.
-- Don't publish surfaces you don't support (fake OAuth metadata, placeholder APIs): ARS 3.3 inspects content, so empty or fabricated artifacts earn nothing.
+- Don't publish surfaces you don't support (fake OAuth metadata, placeholder APIs): ARS 3.4 inspects content, so empty or fabricated artifacts earn nothing.
 `,
   },
 

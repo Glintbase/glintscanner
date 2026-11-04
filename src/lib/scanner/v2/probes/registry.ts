@@ -1,6 +1,6 @@
 /**
- * ARS 3.3 Central Check Registry
- * Specification: GLINTBASE_AUDIT_3_0_UPGRADE_SPEC.md, methodology: docs/methodology/ars-3.3.md
+ * ARS 3.4 Central Check Registry
+ * Specification: GLINTBASE_AUDIT_3_0_UPGRADE_SPEC.md, methodology: docs/methodology/ars-3.4.md
  * Single source of truth for each check's points and bonus status (count: getAllChecks().length).
  */
 
@@ -8,7 +8,7 @@ import { CheckDefinition, LayerId } from './types';
 
 export const ALL_CHECKS: CheckDefinition[] = [
   // ==========================================
-  // LAYER 1: DISCOVERY (16 Checks | 20 Base Pts)
+  // LAYER 1: DISCOVERY (14 checks | 9 base pts registered)
   // ==========================================
   {
     id: 'registry-branding',
@@ -24,14 +24,14 @@ export const ALL_CHECKS: CheckDefinition[] = [
   },
   {
     id: 'ard-catalog',
-    name: 'Agent Resource Discovery (ARD v0.91)',
+    name: 'Agent Resource Discovery (IETF ARD draft-00)',
     layer: 'discovery',
     points: 1,
     isBonus: false,
     tier: 'required',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Probes /.well-known/ard.json or fallback ai-catalog.json enforcing urn:air identifiers.',
+    description: 'An ARD manifest (application/ard+json, top-level entries array) at /.well-known/ard.json with at most one redirect, or via Link: rel="ard" on the root; an AI Catalog (/.well-known/ai-catalog.json) is accepted as a fallback.',
     remediationId: 'ard-json',
   },
   {
@@ -66,7 +66,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Validates each catalog entry carries displayName, valid mediaType, and resolvable url/data.',
+    description: 'Every ARD manifest entry carries identifier, displayName and type, and exactly one of url or data (draft-bu-dawn-ard-discovery-00 §3.2.1).',
   },
   {
     id: 'ard-trust-manifest',
@@ -78,39 +78,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     targetKind: 'generic',
     evaluatorMode: 'both',
     description: 'Validates presence of cryptographic signatures or attestation blocks in ARD catalog.',
-  },
-  {
-    id: 'chatgpt-app-listed',
-    name: 'OpenAI ChatGPT Directory Listing',
-    layer: 'discovery',
-    points: 2,
-    isBonus: true,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Checks inclusion and domain verification in the OpenAI ChatGPT App Directory.',
-  },
-  {
-    id: 'brand-search-accuracy',
-    name: 'Brand Apex Search Resolution',
-    layer: 'discovery',
-    points: 3,
-    isBonus: false,
-    tier: 'required',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Brand-name queries rank target apex domain as the definitive authoritative origin.',
-  },
-  {
-    id: 'agentic-search-specific',
-    name: 'Developer Keyword Discoverability',
-    layer: 'discovery',
-    points: 3,
-    isBonus: false,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Developer documentation, OpenAPI specs, and MCP endpoints are ranked in top search results.',
   },
   {
     id: 'wikipedia-presence',
@@ -191,20 +158,9 @@ export const ALL_CHECKS: CheckDefinition[] = [
     description: 'Permits answer bots (ClaudeBot, GPTBot, PerplexityBot) while regulating training crawlers.',
     remediationId: 'robots-txt',
   },
-  {
-    id: 'agentic-search-usecase',
-    name: 'Complex Agentic Query Resolution',
-    layer: 'discovery',
-    points: 6,
-    isBonus: false,
-    tier: 'beta',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Evaluates zero-shot search accuracy for multi-step agent queries (held at N/A in standard mode).',
-  },
 
   // ========================================================
-  // LAYER 2: ACCESS & UNDERSTANDING (41 Checks | 30 Base Pts)
+  // LAYER 2: ACCESS & UNDERSTANDING (43 checks | 46 base pts registered)
   // ========================================================
   {
     id: 'content-no-js',
@@ -318,7 +274,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'live_probe',
-    description: 'Homepage advertises a Markdown version via <link rel="alternate" type="text/markdown"> and the link resolves to Markdown.',
+    description: 'Homepage advertises a Markdown version via <link rel="alternate" type="text/markdown"> or an equivalent Link response header (rel="alternate"; type="text/markdown"), and it resolves to Markdown.',
   },
   {
     id: 'code-fence-validity',
@@ -375,17 +331,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     targetKind: 'generic',
     evaluatorMode: 'live_probe',
     description: 'All HTTP traffic permanently redirects (301/308) to HTTPS with valid TLS.',
-  },
-  {
-    id: 'http2-support',
-    name: 'HTTP/2 Protocol Support',
-    layer: 'access',
-    points: 1,
-    isBonus: false,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Web server supports multiplexed HTTP/2 or HTTP/3 transport for agent requests.',
   },
   {
     id: 'cors-headers',
@@ -553,17 +498,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     description: 'Prose text content represents >= 5% of overall page markup size.',
   },
   {
-    id: 'pagination-rel-links',
-    name: 'Machine Pagination (rel=next/prev)',
-    layer: 'access',
-    points: 1,
-    isBonus: false,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'List views and paginated feeds include rel="next" and rel="prev" links.',
-  },
-  {
     id: 'link-header-canonical',
     name: 'Link HTTP Header for Machine Twins',
     layer: 'access',
@@ -573,17 +507,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     targetKind: 'generic',
     evaluatorMode: 'both',
     description: 'Link header points agents to alternative representations (e.g. rel="alternate" type="text/markdown").',
-  },
-  {
-    id: 'dns-caa-record',
-    name: 'DNS CAA Security Records',
-    layer: 'access',
-    points: 1,
-    isBonus: false,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Domain has CAA records configured for authorized certificate authority issuance.',
   },
   {
     id: 'security-headers-csp',
@@ -627,18 +550,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'All markdown tables have matching header and body column counts.',
-  },
-  {
-    id: 'relative-link-resolution',
-    name: 'Strict Relative URL Resolution',
-    layer: 'access',
-    points: 1,
-    isBonus: false,
-    tier: 'required',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'Documentation markdown avoids unresolvable relative parent hops (../../).',
+    description: 'GFM tables in the Markdown the site serves (Accept: text/markdown or the .md twin) have matching header, delimiter and body column counts.',
   },
   {
     id: 'image-alt-prose',
@@ -649,18 +561,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Informative diagram and architectural images include descriptive alt prose.',
-  },
-  {
-    id: 'plain-text-accessible',
-    name: 'Raw Plain Text Endpoint (/raw or text/plain)',
-    layer: 'access',
-    points: 1,
-    isBonus: false,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'Key documentation articles can be consumed as plain UTF-8 text.',
+    description: 'At least 90% of non-decorative homepage <img> elements carry alt text (alt="", role="presentation" and aria-hidden images count as decorative).',
   },
   {
     id: 'anti-crawler-challenge-free',
@@ -684,9 +585,20 @@ export const ALL_CHECKS: CheckDefinition[] = [
     evaluatorMode: 'live_probe',
     description: 'Reported, not scored: flags sites whose robots.txt allows AI agents while the edge challenges or refuses the scanner (the refusal itself is scored by the anti-crawler gate).',
   },
+  {
+    id: 'content-signal-consistency',
+    name: 'Content-Signal Consistency',
+    layer: 'access',
+    points: 0,
+    isBonus: true,
+    tier: 'recommended',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Reported, not scored: the robots.txt Content-Signal for all agents agrees with the Content-Signal response header on the HTML response and on the Accept: text/markdown response.',
+  },
 
   // =============================================================
-  // LAYER 3: USABILITY & INTEROPERABILITY (56 Checks | 40 Base Pts)
+  // LAYER 3: USABILITY & INTEROPERABILITY (61 checks | 40 base pts registered)
   // =============================================================
   // 1. MCP Core & Transports
   {
@@ -811,7 +723,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'emerging',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Declares _meta.ui.resourceUri with ui:// schemes for in-agent visual rendering.',
+    description: 'A tool in tools/list declares _meta.ui.resourceUri with a ui:// resource (MCP Apps, io.modelcontextprotocol/ui).',
   },
   {
     id: 'mcp-apps-ui-quality',
@@ -822,7 +734,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'emerging',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Served UI resources adhere to text/html;profile=mcp-app specifications.',
+    description: 'The first declared ui:// resource, read with resources/read, is served as text/html;profile=mcp-app with non-empty content.',
   },
   {
     id: 'mcp-view-csp',
@@ -833,7 +745,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'emerging',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'CSP frame-ancestors permits chatgpt.com, claude.ai, and approved agent hosts.',
+    description: 'The UI resource declares the external origins it needs in _meta.ui.csp (connectDomains, resourceDomains, frameDomains or baseUriDomains).',
   },
   {
     id: 'mcp-prompts-listing',
@@ -878,28 +790,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     targetKind: 'generic',
     evaluatorMode: 'both',
     description: 'Client/Server handshake negotiates supported protocolVersion string.',
-  },
-  {
-    id: 'mcp-sampling-support',
-    name: 'MCP Sampling Capability',
-    layer: 'usability',
-    points: 0,
-    isBonus: true,
-    tier: 'emerging',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'Reported, not scored: deprecated in MCP 2026-07-28 (SEP-2577) and still functional for at least twelve months. Server declares sampling capability allowing server to request LLM generations via client.',
-  },
-  {
-    id: 'mcp-roots-support',
-    name: 'MCP Roots Capability',
-    layer: 'usability',
-    points: 0,
-    isBonus: true,
-    tier: 'emerging',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'Reported, not scored: deprecated in MCP 2026-07-28 (SEP-2577) and still functional for at least twelve months. Server advertises roots capability for workspace filesystem context.',
   },
   {
     id: 'mcp-logging-notifications',
@@ -1236,7 +1126,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'emerging',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Offers bulk create/update endpoints (/batch) to conserve agent roundtrips.',
+    description: 'The OpenAPI spec declares a bulk or batch operation (a path or operationId naming batch or bulk).',
   },
   {
     id: 'api-pagination-cursor',
@@ -1280,18 +1170,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'recommended',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'Provides a sandbox or mock environment (api.sandbox.acme.com) for safe agent experimentation.',
-  },
-  {
-    id: 'api-sdk-documentation',
-    name: 'SDK Setup & Installation Instructions',
-    layer: 'usability',
-    points: 1,
-    isBonus: false,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'Documentation documents npm/pip install commands and client initialization snippets.',
+    description: 'The OpenAPI spec lists a sandbox, test or staging server (servers[].url or description).',
   },
   {
     id: 'api-graphql-schema',
@@ -1302,22 +1181,11 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'emerging',
     targetKind: 'generic',
     evaluatorMode: 'both',
-    description: 'GraphQL endpoints provide introspection schema or published schema.graphql.',
-  },
-  {
-    id: 'api-grpc-reflection',
-    name: 'gRPC Server Reflection / Protobuf Definitions',
-    layer: 'usability',
-    points: 1,
-    isBonus: true,
-    tier: 'emerging',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'gRPC services provide server reflection or downloadable .proto files.',
+    description: 'A GraphQL endpoint at /graphql or /api/graphql answers an introspection query with a schema.',
   },
 
   // ==============================================================
-  // LAYER 4: PAYMENTS & MACHINE COMMERCE (6 Checks | 10 Base Pts)
+  // LAYER 4: PAYMENTS & MACHINE COMMERCE (6 checks | OR-scored)
   // (Subject to Payments "OR-Scoring" Rule)
   // ==============================================================
   {
@@ -1384,7 +1252,7 @@ export const ALL_CHECKS: CheckDefinition[] = [
     tier: 'emerging',
     targetKind: 'ecommerce',
     evaluatorMode: 'both',
-    description: 'Declares x-payment-info OpenAPI extensions for machine pricing tiers.',
+    description: 'Machine Payments Protocol: an OpenAPI operation declares x-payment-info offers (intent, method) and a 402 response, or the payment probe answers 402 with WWW-Authenticate: Payment.',
   },
 
   // ==========================================
@@ -1490,6 +1358,17 @@ export const ALL_CHECKS: CheckDefinition[] = [
     description: 'A valid Server Card ($schema, name, version, description) is listed in /.well-known/ai-catalog.json or served at <mcp-endpoint>/server-card.',
   },
   {
+    id: 'mcp-skills-extension',
+    name: 'Skills over MCP (SEP-2640)',
+    layer: 'usability',
+    points: 0,
+    isBonus: true,
+    tier: 'emerging',
+    targetKind: 'generic',
+    evaluatorMode: 'live_probe',
+    description: 'Reported, not scored: the server declares the io.modelcontextprotocol/skills extension and skills/list answers with a skills array (SEP-2640). Also lists every extension the server declares.',
+  },
+  {
     id: 'mcp-tools-menu-size',
     name: 'MCP Tool Menu Size',
     layer: 'usability',
@@ -1523,17 +1402,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     description: "An auth-gated MCP server's Bearer WWW-Authenticate challenge names the scope to request, so clients can step up consent.",
   },
   {
-    id: 'mcp-ssrf-guard',
-    name: 'MCP Endpoint Private Network Guard',
-    layer: 'usability',
-    points: 2,
-    isBonus: true,
-    tier: 'required',
-    targetKind: 'generic',
-    evaluatorMode: 'live_probe',
-    description: 'Verifies MCP tool schemas and endpoints reject private IP loopback/link-local ranges (127.0.0.1, 169.254.169.254).',
-  },
-  {
     id: 'mcp-honest-schemas',
     name: 'MCP Tool Schema Honesty',
     layer: 'usability',
@@ -1543,17 +1411,6 @@ export const ALL_CHECKS: CheckDefinition[] = [
     targetKind: 'generic',
     evaluatorMode: 'live_probe',
     description: 'Verifies declared tool schemas match runtime requirements without hidden undeclared parameters or surprise auth gates.',
-  },
-  {
-    id: 'api-error-actionability',
-    name: 'Agent-Actionable Error Payloads',
-    layer: 'usability',
-    points: 2,
-    isBonus: true,
-    tier: 'recommended',
-    targetKind: 'generic',
-    evaluatorMode: 'both',
-    description: 'Verifies API and MCP error messages name the specific missing parameter, remedial tool, or retry endpoint.',
   },
 ];
 
