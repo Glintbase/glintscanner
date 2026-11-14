@@ -1,0 +1,40 @@
+# Render Blueprint for scan.glintbase.dev (Next.js Node server).
+# Secrets are marked `sync: false`: Render asks for their values when the Blueprint is
+# created; they are never stored in this file. Every one of them is optional — leave a
+# value blank and the scanner runs without that integration (see .env.local.example).
+services:
+  - type: web
+    name: glintscanner
+    runtime: node
+    plan: free
+    region: frankfurt
+    # Render sets NODE_ENV=production during the build, which would make npm skip the
+    # devDependencies (typescript, tailwind, postcss) that `next build` needs.
+    buildCommand: npm ci --include=dev --legacy-peer-deps && npm run build
+    startCommand: npm run start
+    healthCheckPath: /.well-known/glama.json
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: MCP_PROXY_SECRET
+        sync: false
+      - key: GOOGLE_GENERATIVE_AI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false

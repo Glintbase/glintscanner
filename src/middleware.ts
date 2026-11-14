@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
+import { platformClientIp } from './lib/clientIp';
 
 // Memory fallback settings (configurable via env)
 const MEMORY_LIMIT = Number(process.env.MEMORY_LIMIT) || 10;
@@ -125,16 +126,11 @@ function getIpFromRequest(request: NextRequest) {
     if (proxied) return `proxy:${proxied}`;
   }
 
-  // Check common forward headers used on Vercel and other platforms.
-  const vf = request.headers.get('x-vercel-forwarded-for');
-  const xf = request.headers.get('x-forwarded-for');
-  const real = request.headers.get('x-real-ip');
-  const forwarded = vf || xf || real;
   return (
     // request.ip may be undefined in edge runtimes; keep as first choice when present
     // (Node runtime sets it sometimes, but not guaranteed for edge)
     (request as any).ip ||
-    forwarded?.split(',')[0]?.trim() ||
+    platformClientIp(request.headers) ||
     '127.0.0.1'
   );
 }
