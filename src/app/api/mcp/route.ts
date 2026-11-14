@@ -6,6 +6,7 @@ import { E2BRunner } from '@/lib/scanner/simulator/e2bRunner';
 import { generateJourneyTreeSvg, svgToBase64, generateJourneyMermaid, generateFlightHud } from '@/lib/scanner/simulator/journeyTreeSvg';
 import { deflateSync } from 'node:zlib';
 import { BUNDLED_SKILLS, BundledSkill } from '@/lib/scanner/mcp/skills';
+import { platformClientIp } from '@/lib/clientIp';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,11 +37,7 @@ function cleanupStaleSessions() {
 const TARGET_TOOLS = new Set(['get_score', 'audit', 'simulate_flight', 'discover_surfaces']);
 
 function getClientIp(req: NextRequest): string {
-  const forwarded =
-    req.headers.get('x-vercel-forwarded-for') ||
-    req.headers.get('x-real-ip') ||
-    req.headers.get('x-forwarded-for');
-  return forwarded?.split(',')[0]?.trim() || '127.0.0.1';
+  return platformClientIp(req.headers) || '127.0.0.1';
 }
 
 // Simple sliding window rate limiter (60 requests per minute per IP)

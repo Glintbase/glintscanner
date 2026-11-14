@@ -99,9 +99,13 @@ export default function Image() {
               color: '#F1F5F9',
               textTransform: 'uppercase' as const,
               maxWidth: '800px',
+              // Satori requires an explicit flex container for more than one child.
+              display: 'flex',
+              flexWrap: 'wrap',
+              columnGap: '18px',
             }}
           >
-            AI Agent Readiness{' '}
+            <span>AI Agent Readiness</span>
             <span style={{ color: '#FF3300' }}>Audit</span>
           </div>
 

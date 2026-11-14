@@ -153,7 +153,8 @@ export default async function Image({ params }: { params: { slug: string } }) {
                 textShadow: `0 0 60px ${band.colorHex}40`,
               }}
             >
-              {score}
+              {/* Satori rejects a non-string child on a non-flex div, so render the number as text. */}
+              {String(score)}
             </div>
             <div
               style={{
