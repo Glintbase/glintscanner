@@ -146,8 +146,8 @@ const TOOLS_CATALOG: ToolDefinition[] = [
     name: "glintbase_simulate_flight",
     category: "simulation",
     badge: "Multi-Modal",
-    summary: "Multi-agent flight simulator with visual graph",
-    description: "Simulates Claude Code, Cursor, or Perplexity navigating your API. Returns JSON telemetry, a dark-mode Journey Tree SVG image, and an instant replay link.",
+    summary: "Agent-readiness preview with a visual graph",
+    description: "Fetches your homepage and checks llms.txt, openapi.json, robots.txt and auth.md. Returns measured statuses, a Mermaid diagram and a replay link. No agent runs in this preview.",
     outputFormat: "JSON + SVG Image + Replay URL",
   },
   {

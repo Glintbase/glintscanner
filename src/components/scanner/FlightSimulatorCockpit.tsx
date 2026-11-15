@@ -39,8 +39,8 @@ interface FlightSimulatorCockpitProps {
 const PRESET_INTENTS = [
   "I'm a developer. Find the API docs and how to authenticate for this platform.",
   "Discover what this product does, its core value proposition, and main use cases.",
-  "Verify OpenAPI 3.x schema and Model Context Protocol (MCP) tool availability.",
-  "Probe non-existent routes to test for soft-404 anti-SPA hallucination traps.",
+  "Find the pricing page and what the free plan includes.",
+  "Find the SDK install instructions and a first working example.",
 ];
 
 const HARNESS_CHOICES: {
@@ -55,28 +55,28 @@ const HARNESS_CHOICES: {
     name: 'Claude Code',
     mascotImg: '/mascots/claude-code.png',
     badge: '3D Box-Bot',
-    desc: 'Anthropic AST parser & tool harness with high-signal intent extraction.',
+    desc: 'Navigates like a CLI coding agent: docs, quickstarts, setup guides, llms.txt.',
   },
   {
     id: 'openclaw',
     name: 'OpenClaw',
     mascotImg: '/mascots/openclaw.png',
     badge: '3D Sphere-Bot',
-    desc: 'Autonomous web agent with agile reactive probing and tool calling.',
+    desc: 'Navigates like a general web agent: homepage links, onboarding, pricing.',
   },
   {
     id: 'hermes',
     name: 'Hermes Agent',
     mascotImg: '/mascots/hermes.png',
     badge: 'Nous Avatar',
-    desc: 'NousResearch tool agent specialized in autonomous multi-step reasoning.',
+    desc: 'Navigates like a tool-calling agent: openapi.json, .well-known files, llms.txt.',
   },
   {
     id: 'opencode',
     name: 'OpenCode',
     mascotImg: '/mascots/opencode.png',
     badge: 'Terminal Drone',
-    desc: 'Specialized SWE agent inspecting protocol schemas and endpoints.',
+    desc: 'Navigates like a terminal coding agent: API pages, auth docs, SDK samples.',
   },
 ];
 
@@ -86,7 +86,9 @@ export default function FlightSimulatorCockpit({
   const [target, setTarget] = useState(initialTarget || 'https://stripe.com');
   const [harness, setHarness] = useState<HarnessType>('claude-code');
   const [intent, setIntent] = useState(
-    "I'm a developer. Find the API docs and how to authenticate for stripe.com."
+    `I'm a developer. Find the API docs and how to authenticate for ${
+      (initialTarget || 'https://stripe.com').replace(/^https?:\/\//i, '').replace(/\/$/, '') || 'stripe.com'
+    }.`
   );
   const [stage, setStage] = useState<'setup' | 'flight'>('setup');
   const [isRunning, setIsRunning] = useState(false);
@@ -142,7 +144,7 @@ export default function FlightSimulatorCockpit({
         setLiveTelemetry(result.telemetry);
         setLiveTerminalLogs(result.terminalLogs || []);
         setStatus(result.status);
-        setCurrentActionText(`Replaying flight from Glintbase MCP (${session.persona})`);
+        setCurrentActionText(`Replaying a Glintbase preview (${result.mode})`);
         setStage('flight');
         if (result.nodes.length > 0) {
           const lastNode = result.nodes[result.nodes.length - 1];
@@ -170,7 +172,7 @@ export default function FlightSimulatorCockpit({
 
     setAgentCoord({ x: 40, y: 90 });
     setAgentReaction('idle');
-    setCurrentActionText('Booting sandbox & dispatching agent flight...');
+    setCurrentActionText('Starting run...');
     setIsRunning(true);
     setStatus('running');
 
@@ -206,6 +208,7 @@ export default function FlightSimulatorCockpit({
       const decoder = new TextDecoder();
       let buffer = '';
       const gatheredLines: ProceduralLine[] = [];
+      let finished = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -264,12 +267,17 @@ export default function FlightSimulatorCockpit({
                 stepsCount: event.stepsCount,
                 durationSeconds: event.durationSeconds,
                 tokensBurned: event.tokensBurned,
-                costUsd: event.costUsd,
-                reasoningStepsCount: 1,
+                reasoningStepsCount: event.reasoningStepsCount ?? 0,
               });
             } else if (event.type === 'terminal_log') {
               setLiveTerminalLogs((prev) => [...prev, event.log]);
+            } else if (event.type === 'error') {
+              finished = true;
+              setStatus('failed');
+              setAgentReaction('nope');
+              setCurrentActionText(`Run failed: ${event.message || 'unknown error'}`);
             } else if (event.type === 'complete' && event.result) {
+              finished = true;
               setJourneyResult(event.result);
               setLiveNodes(event.result.nodes);
               setAllCompletedNodes(event.result.nodes);
@@ -277,28 +285,42 @@ export default function FlightSimulatorCockpit({
               setLiveLines(finalLines);
               setAllCompletedLines(finalLines);
               setLiveTerminalLogs(event.result.terminalLogs || []);
-              setStatus('success');
-              setAgentReaction('success');
+              setStatus(event.result.status === 'failed' ? 'failed' : 'success');
+              setAgentReaction(event.result.status === 'failed' ? 'nope' : 'success');
               if (event.result.nodes?.length) {
                 setActiveNodeId(event.result.nodes[event.result.nodes.length - 1].id);
               }
-              setCurrentActionText('Agent mission successfully executed.');
+              setCurrentActionText(
+                event.result.status === 'failed' ? 'Run finished: the homepage did not answer.' : 'Run finished.'
+              );
             }
           } catch {
             // ignore partial line parsing
           }
         }
       }
+      if (!finished) {
+        setStatus('failed');
+        setCurrentActionText('Run ended before a result arrived.');
+      }
     } catch (err: any) {
       console.error('Simulation run failed:', err);
       setStatus('failed');
-      setCurrentActionText('Simulation run encountered network error.');
+      setCurrentActionText(`Run failed: ${err?.message || 'network error'}`);
     } finally {
       setIsRunning(false);
     }
   };
 
   const [replaySpeed, setReplaySpeed] = useState<number>(1);
+
+  /** Replay telemetry from the recorded nodes: summed request times, never a made-up pace. */
+  const telemetryUpTo = (visible: JourneyPillNode[]): JourneyTelemetryStats => ({
+    stepsCount: visible.length,
+    durationSeconds: Number((visible.reduce((sum, n) => sum + (n.latencyMs || 0), 0) / 1000).toFixed(1)),
+    tokensBurned: visible.reduce((sum, n) => sum + n.tokens, 0),
+    reasoningStepsCount: visible.filter((n) => n.decidedBy === 'llm').length,
+  });
 
   // ─── Procedural Replay & Scrubbing Logic ────────────────────────────────────
   const handleToggleReplay = async () => {
@@ -376,7 +398,7 @@ export default function FlightSimulatorCockpit({
             if (replayAbortRef.current) break;
 
             setAgentReaction('thinking');
-            setCurrentActionText('Evaluating alternate documentation paths...');
+            setCurrentActionText('Choosing the next page...');
             await delay(400 / replaySpeed);
             if (replayAbortRef.current) break;
           }
@@ -399,27 +421,20 @@ export default function FlightSimulatorCockpit({
         }
       } else {
         setAgentReaction('nod');
-        setCurrentActionText(`Validated ${node.label} [HTTP ${node.httpStatus || 200}]`);
+        setCurrentActionText(`${node.label}: ${node.httpStatus ? `HTTP ${node.httpStatus}` : 'no status recorded'}`);
         await delay(350 / replaySpeed);
         if (replayAbortRef.current) break;
       }
 
       // Phase D: Update telemetry for this step
-      const cumulativeTokens = currentNodes.reduce((sum, n) => sum + n.tokens, 0);
-      setLiveTelemetry({
-        stepsCount: i + 1,
-        durationSeconds: Number(((i + 1) * 0.9).toFixed(1)),
-        tokensBurned: cumulativeTokens,
-        costUsd: 0.00,
-        reasoningStepsCount: 1,
-      });
+      setLiveTelemetry(telemetryUpTo(currentNodes));
 
       await delay(150 / replaySpeed);
     }
 
     if (!replayAbortRef.current) {
-      setAgentReaction('success');
-      setCurrentActionText('Agent mission successfully executed.');
+      setAgentReaction(status === 'failed' ? 'nope' : 'success');
+      setCurrentActionText('Replay finished.');
     }
     setIsReplaying(false);
   };
@@ -473,14 +488,7 @@ export default function FlightSimulatorCockpit({
     setLiveLines(visibleLines);
 
     // Update telemetry to this step
-    const cumulativeTokens = visibleNodes.reduce((sum, n) => sum + n.tokens, 0);
-    setLiveTelemetry({
-      stepsCount: bounded + 1,
-      durationSeconds: Number(((bounded + 1) * 0.9).toFixed(1)),
-      tokensBurned: cumulativeTokens,
-      costUsd: 0.00,
-      reasoningStepsCount: 1,
-    });
+    setLiveTelemetry(telemetryUpTo(visibleNodes));
   };
 
   useEffect(() => {
@@ -503,14 +511,14 @@ export default function FlightSimulatorCockpit({
               </span>
               <span className="text-stone-500 font-mono text-xs">•</span>
               <span className="text-xs font-mono text-stone-400">
-                E2B Isolated MicroVM Sandbox
+                Navigation probe · real HTTP requests
               </span>
             </div>
             <h1 className="text-xl sm:text-2xl font-mono font-bold text-white tracking-tight">
-              Configure Autonomous Agent Flight
+              Configure a navigation run
             </h1>
             <p className="text-xs sm:text-sm font-mono text-stone-400 max-w-2xl leading-relaxed">
-              Launch an autonomous agent flight to trace real multi-step trajectory retrieval, BPE token consumption, and machine schema compliance on your platform.
+              A planner walks your site the way the chosen agent tends to look for docs. Every step is a real request, so you see actual statuses, sizes, times and dead ends. The planner sees only URLs and status codes, not page content, so this measures how navigable your site is, not whether an agent finishes the task. Tokens are estimated from response size.
             </p>
           </div>
 
@@ -611,19 +619,18 @@ export default function FlightSimulatorCockpit({
               <span className="text-[10px] uppercase text-stone-500 font-bold">Execution Sandbox</span>
               <div className="text-white font-bold flex items-center gap-1.5">
                 <Cpu className="w-3 h-3 text-[#FF3300]" />
-                <span>E2B MicroVM Container</span>
+                <span>E2B sandbox if configured, else server</span>
               </div>
             </div>
             <div className="bg-black/40 border border-white/[0.05] rounded-xl p-3 text-xs font-mono space-y-1">
-              <span className="text-[10px] uppercase text-stone-500 font-bold">Autonomous Engine</span>
-              <div className="text-emerald-400 font-bold flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span>Autonomous Mesh (Auto-Failover)</span>
+              <span className="text-[10px] uppercase text-stone-500 font-bold">Planner</span>
+              <div className="text-white font-bold flex items-center gap-1.5">
+                <span>Free-tier LLM, fixed path list as fallback</span>
               </div>
             </div>
             <div className="bg-black/40 border border-white/[0.05] rounded-xl p-3 text-xs font-mono space-y-1">
-              <span className="text-[10px] uppercase text-stone-500 font-bold">Simulation Cost</span>
-              <div className="text-white font-bold">$0.00 (Zero Token Fee)</div>
+              <span className="text-[10px] uppercase text-stone-500 font-bold">Steps</span>
+              <div className="text-white font-bold">Homepage + up to 4 pages</div>
             </div>
           </div>
 
@@ -638,7 +645,7 @@ export default function FlightSimulatorCockpit({
               className="w-full bg-[#FF3300] hover:bg-[#FF3300]/90 text-white font-mono text-sm font-bold uppercase tracking-wider py-4 rounded-xl transition active:scale-[0.98] cursor-pointer disabled:opacity-50 flex items-center justify-center gap-3 shadow-[0_0_24px_rgba(255,51,0,0.4)]"
             >
               <Play className="w-4 h-4 fill-current" />
-              <span>Launch Simulation Flight</span>
+              <span>Run navigation probe</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
@@ -657,6 +664,7 @@ export default function FlightSimulatorCockpit({
         harness={harness}
         status={status}
         telemetry={liveTelemetry || journeyResult?.telemetry}
+        mode={journeyResult?.mode}
         onRunNewJourney={() => {
           if (status === 'idle') {
             handleLaunchSimulation();
@@ -699,7 +707,7 @@ export default function FlightSimulatorCockpit({
         <div className="text-[11px] font-mono text-stone-500 flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <span className="text-stone-400 truncate max-w-sm">
-            {currentActionText || (isRunning ? 'Autonomous Flight Active' : 'Mission Standby')}
+            {currentActionText || (isRunning ? 'Running…' : 'Ready')}
           </span>
         </div>
       </div>

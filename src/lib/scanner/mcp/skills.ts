@@ -378,35 +378,38 @@ LLMs hallucinate parameters when schemas lack explicit descriptions or use loose
 
   'flight-simulator-replay': {
     name: 'flight-simulator-replay',
-    title: 'Agent Flight Simulator Diagnostic & Replay',
-    description: 'Interpreting synthetic coding agent runs across Claude Code, Cursor, Perplexity, and Swarm personas.',
+    title: 'Simulate Preview: Reading the Results',
+    description: 'How to read glintbase_simulate_flight output: measured statuses for the homepage and standard agent files.',
     uri: 'skill://glintbase/flight-simulator',
-    tags: ['flight-simulator', 'personas', 'claude-code', 'cursor', 'perplexity'],
+    tags: ['simulate', 'llms-txt', 'openapi', 'agent-files'],
     content: `---
 name: flight-simulator-replay
-title: Agent Flight Simulator Diagnostic & Replay
-version: 3.0.0
+title: Simulate Preview: Reading the Results
+version: 4.0.0
 ---
 
-# Agent Flight Simulator Diagnostic & Replay
+# Simulate Preview: Reading the Results
 
-The Glintbase Flight Simulator executes synthetic agent personas against documentation and API endpoints to identify failure states before real users encounter them.
+\`glintbase_simulate_flight\` is a preview. It fetches the target's homepage and checks four standard agent files at the site root: \`/llms.txt\`, \`/openapi.json\`, \`/robots.txt\` and \`/auth.md\`. No agent runs in this preview.
 
-## The 4 Personas
-1. **Claude Code**: Rigorous command-line agent. Relies on \`llms.txt\` and fast grep/curl exploration. Fails when SPA 404 routes return HTTP 200.
-2. **Cursor Agent**: IDE context-driven agent. Reads local rule files (\`.cursor/\`) and prefers concise API signatures. Fails on undocumented auth headers.
-3. **Perplexity Agent**: Answer-engine retrieval persona. Scans documentation headers and searches for quickstart code blocks. Fails on JavaScript-rendered text shells.
-4. **Autonomous Swarm**: Parallel multi-agent swarm. Executes multiple sub-tasks simultaneously. Fails when rate-limit headers are missing or endpoints lack idempotency.
+## What is measured
+- HTTP status, response size and time for every request.
+- Whether each file is really there: a 200 that serves an HTML page or a generic "not found" page counts as missing.
 
-## How to Run
-Use the MCP tool \`glintbase_simulate_flight\`:
+## What is estimated
+- Tokens: response bytes ÷ 4. Treat them as a rough size signal, not a model bill.
+
+## What it does not tell you
+- Whether a real agent could complete a task on the site. The \`persona\` argument is a label for the replay view and does not change the checks.
+
+## How to run
 \`\`\`json
 {
-  "target": ".",
-  "persona": "claude-code",
-  "intent": "Authenticate with API and query resource"
+  "target": "https://example.com",
+  "intent": "Find the API docs and how to authenticate"
 }
 \`\`\`
+The intent only decides which fixes are relevant (for example, an OpenAPI suggestion for API-related intents).
 `,
   },
 

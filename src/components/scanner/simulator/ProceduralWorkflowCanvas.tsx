@@ -469,7 +469,7 @@ export default function ProceduralWorkflowCanvas({
           <span className="inline-block w-1.5 h-3.5 bg-white/70 animate-pulse ml-0.5" />
         </div>
         <div className="text-xs text-stone-500 mt-1 font-mono tracking-wide">
-          {tickerSubText || `${nodes.length} steps   ${nodes.length > 2 ? '1 reasoning step' : ''}`}
+          {tickerSubText || `${nodes.length} steps`}
         </div>
       </div>
 
@@ -573,7 +573,7 @@ export default function ProceduralWorkflowCanvas({
                 {agentReaction === 'thinking' && <span>🤔 Thinking...</span>}
                 {agentReaction === 'backtrack' && <span>↩ Backtracking</span>}
                 {agentReaction === 'scanning' && <span>⚡ Probing...</span>}
-                {agentReaction === 'success' && <span>🎉 Mission Done</span>}
+                {agentReaction === 'success' && <span>Run finished</span>}
               </div>
             </motion.div>
           </div>

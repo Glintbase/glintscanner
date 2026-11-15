@@ -4,13 +4,13 @@ import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 
 export const metadata: Metadata = {
-  title: 'Agent Flight Simulator — Glintbase',
+  title: 'Simulate',
   description:
-    'Test, validate, and debug autonomous agent trajectories across Claude Code, Cursor, and Perplexity with zero cost.',
+    'Walk your site the way coding agents look for docs. Every step is a real request: see statuses, dead ends and which agent files are missing.',
   openGraph: {
-    title: 'Agent Flight Simulator — Glintbase',
+    title: 'Simulate — Glintbase',
     description:
-      'Autonomous agent flight cockpit: replay trajectories, quantify token taxes and schema friction, and prove counterfactual What-If fixes.',
+      'A navigation probe for agent readiness: real requests, measured statuses and times, dead ends and missing agent files, with suggested fixes.',
     url: 'https://scan.glintbase.dev/simulate',
     siteName: 'Glintbase Scanner',
   },
