@@ -171,6 +171,34 @@ export interface AgentFileCheck {
   note: string;
 }
 
+/**
+ * Did the pages the run opened contain an answer to the intent? A model proposes an answer and
+ * a quote; the quote is then checked mechanically against the text that was actually fetched.
+ */
+export interface AnswerCheck {
+  verdict:
+    /** The quote was found word for word in a fetched page. */
+    | 'found_with_evidence'
+    /** The model claimed an answer, but its quote is not in any fetched page. */
+    | 'claimed_unsupported'
+    /** The model said the fetched pages do not answer the intent. */
+    | 'not_found'
+    /** No model was available, or no readable text was fetched. */
+    | 'not_checked';
+  answer?: string;
+  quote?: string;
+  /** The page the quote was verified on (or the one the model cited, if unverified). */
+  sourceUrl?: string;
+  model?: string;
+  note: string;
+}
+
+/** Measured from provider usage reports for the planner and answer calls. */
+export interface PlannerUsage {
+  calls: number;
+  totalTokens: number;
+}
+
 export interface JourneyExecutionResult {
   target: string;
   intent: string;
@@ -186,6 +214,9 @@ export interface JourneyExecutionResult {
   lines?: ProceduralLine[];
   kpis: JourneyKPIMetrics;
   agentFileChecks: AgentFileCheck[];
+  /** Absent in preview mode (no agent, no answer step). */
+  answerCheck?: AnswerCheck;
+  plannerUsage?: PlannerUsage;
   insight: JourneyInsight;
   terminalLogs: string[];
 }

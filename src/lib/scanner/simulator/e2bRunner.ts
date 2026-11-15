@@ -1,19 +1,21 @@
 /**
  * Glintbase Simulate: navigation probe.
  *
- * What this is: a planner walks the target site the way a given harness tends to look for docs.
- * Every step is a real HTTP request (from an E2B sandbox when E2B_API_KEY is set, otherwise from
- * this server). The planner (a free-tier LLM via InferenceRouter, or a fixed path list when none
- * answers) sees only URLs and status codes, never page content, so a run shows how navigable the
- * site is. It does NOT show whether a real agent could complete the intent; real harness runs
- * live in the private Sim Service.
+ * A planner walks the target site the way a given harness tends to look for docs. Every step is a
+ * real HTTP request (from an E2B sandbox when E2B_API_KEY is set, otherwise from this server).
+ * The planner (a free-tier LLM via InferenceRouter, or a fixed path list when none answers) reads
+ * each page's title, headings and same-site links, and picks the next page from them.
+ * At the end, a model answers the intent from the fetched text and quotes its source; the quote is
+ * then checked word for word against what was actually fetched.
  *
- * Nothing here is invented: statuses, sizes and times are measured; tokens are estimated from
- * response size (TOKEN_BASIS) and labelled as estimates.
+ * This is a lightweight stand-in for an agent, not a real harness run (those live in the private
+ * Sim Service). Nothing is invented: statuses, sizes, times and model usage are measured; page
+ * tokens are estimated from response size (TOKEN_BASIS) and labelled as estimates.
  */
 
 import {
   AgentFileCheck,
+  AnswerCheck,
   CanvasCoord,
   HarnessType,
   JourneyExecutionResult,
@@ -22,6 +24,7 @@ import {
   JourneyInsightRemediation,
   JourneyKPIMetrics,
   JourneyPillNode,
+  PlannerUsage,
   ProceduralLine,
   RunMode,
   SimulationOptions,
@@ -30,12 +33,7 @@ import {
 } from './types';
 import { InferenceRouter } from './inferenceRouter';
 import { currentScannerUserAgent, fetchResource } from '../v2/fetchResource';
-
-interface DiscoveredSiteMeta {
-  title: string;
-  description: string;
-  discoveredLinks: string[];
-}
+import { PageOutline, outlinePage, quoteAppearsIn, relevantPassages } from './pageOutline';
 
 interface ProbeExecutionResult {
   url: string;
@@ -43,14 +41,22 @@ interface ProbeExecutionResult {
   status: number;
   ms: number;
   bytes: number;
-  snippet?: string;
+  /** Response body (capped), used to read the page. Never returned to clients. */
+  body?: string;
   error?: string;
 }
 
-const MAX_AGENT_STEPS = 4;
+interface ReadPage {
+  path: string;
+  url: string;
+  outline: PageOutline;
+}
+
+const MAX_AGENT_STEPS = 5;
 const START: CanvasCoord = { x: 85, y: 135 };
-const COL_SPACING = 145;
+const COL_SPACING = 125;
 const ROW_SPACING = 115;
+const ANSWER_BUDGET_CHARS = 7000;
 
 const STANDARD_FILES: Array<{ path: string; label: string; iconType: JourneyIconType; expectsText: boolean }> = [
   { path: '/llms.txt', label: 'llms.txt', iconType: 'llms', expectsText: true },
@@ -68,6 +74,7 @@ const HARNESS_STYLE: Record<HarnessType, { label: string; focus: string; fallbac
       { path: '/llms.txt', label: 'llms.txt', icon: 'llms' },
       { path: '/docs/quickstart', label: 'quickstart', icon: 'docs' },
       { path: '/docs/authentication', label: 'auth', icon: 'auth' },
+      { path: '/docs/api', label: 'api-docs', icon: 'docs' },
     ],
   },
   cursor: {
@@ -78,6 +85,7 @@ const HARNESS_STYLE: Record<HarnessType, { label: string; focus: string; fallbac
       { path: '/openapi.json', label: 'openapi', icon: 'openapi' },
       { path: '/api', label: 'api', icon: 'api' },
       { path: '/docs/api', label: 'api-docs', icon: 'docs' },
+      { path: '/reference', label: 'reference', icon: 'docs' },
     ],
   },
   perplexity: {
@@ -88,6 +96,7 @@ const HARNESS_STYLE: Record<HarnessType, { label: string; focus: string; fallbac
       { path: '/guides', label: 'guides', icon: 'docs' },
       { path: '/faq', label: 'faq', icon: 'docs' },
       { path: '/llms.txt', label: 'llms.txt', icon: 'llms' },
+      { path: '/about', label: 'about', icon: 'docs' },
     ],
   },
   openclaw: {
@@ -98,6 +107,7 @@ const HARNESS_STYLE: Record<HarnessType, { label: string; focus: string; fallbac
       { path: '/docs', label: 'docs', icon: 'docs' },
       { path: '/getting-started', label: 'onboarding', icon: 'docs' },
       { path: '/about', label: 'about', icon: 'docs' },
+      { path: '/faq', label: 'faq', icon: 'docs' },
     ],
   },
   hermes: {
@@ -108,6 +118,7 @@ const HARNESS_STYLE: Record<HarnessType, { label: string; focus: string; fallbac
       { path: '/.well-known/ard.json', label: 'ard.json', icon: 'openapi' },
       { path: '/llms.txt', label: 'llms.txt', icon: 'llms' },
       { path: '/docs/api', label: 'api-docs', icon: 'docs' },
+      { path: '/docs', label: 'docs', icon: 'docs' },
     ],
   },
   opencode: {
@@ -118,6 +129,7 @@ const HARNESS_STYLE: Record<HarnessType, { label: string; focus: string; fallbac
       { path: '/docs/authentication', label: 'auth', icon: 'auth' },
       { path: '/developers', label: 'developers', icon: 'docs' },
       { path: '/docs', label: 'docs', icon: 'docs' },
+      { path: '/docs/api', label: 'api-docs', icon: 'docs' },
     ],
   },
 };
@@ -127,6 +139,23 @@ const VALID_ICONS: JourneyIconType[] = ['docs', 'api', 'openapi', 'auth', 'llms'
 const isReachable = (status: number) => status >= 200 && status < 400;
 const formatKb = (bytes: number) => (bytes >= 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${bytes} B`);
 const seconds = (startMs: number) => Number(((Date.now() - startMs) / 1000).toFixed(1));
+const pathOf = (url: string) => {
+  try {
+    return new URL(url).pathname.replace(/\/+$/, '') || '/';
+  } catch {
+    return url;
+  }
+};
+
+function parseJsonObject(text: string): any | null {
+  const m = (text || '').match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    return JSON.parse(m[0]);
+  } catch {
+    return null;
+  }
+}
 
 export class E2BRunner {
   /**
@@ -184,6 +213,7 @@ export class E2BRunner {
     }
 
     p = p.replace(/\/+/g, '/');
+    if (p.length > 1) p = p.replace(/\/+$/, '');
 
     return p || '/';
   }
@@ -244,12 +274,12 @@ import base64, json, time, urllib.request, urllib.error
 u = base64.b64decode("${urlB64}").decode('utf-8')
 ua = base64.b64decode("${uaB64}").decode('utf-8')
 start = time.time()
-out = {"url": u, "status": 0, "bytes": 0, "snippet": ""}
+out = {"url": u, "status": 0, "bytes": 0, "body": ""}
 try:
-    req = urllib.request.Request(u, headers={'User-Agent': ua, 'Accept': 'text/html,text/plain,application/json;q=0.9,*/*;q=0.8'})
+    req = urllib.request.Request(u, headers={'User-Agent': ua, 'Accept': 'text/html,text/plain,text/markdown,application/json;q=0.9,*/*;q=0.8'})
     with urllib.request.urlopen(req, timeout=6) as resp:
-        body = resp.read(2000000)
-        out.update(status=resp.status, bytes=len(body), snippet=body[:120].decode('utf-8', errors='ignore').strip())
+        raw = resp.read(2000000)
+        out.update(status=resp.status, bytes=len(raw), body=raw[:300000].decode('utf-8', errors='ignore'))
 except urllib.error.HTTPError as e:
     out.update(status=e.code)
 except Exception as e:
@@ -259,25 +289,16 @@ print("PROBE_RESULT:" + json.dumps(out))
 `;
         const execResult = await sbx.runCode(probeScript);
         const outputText = execResult.logs?.stdout?.join('') || execResult.text || '';
-        const match = outputText.match(/PROBE_RESULT:(.*)/);
-        if (match) {
+        const idx = outputText.indexOf('PROBE_RESULT:');
+        if (idx >= 0) {
           try {
-            return JSON.parse(match[1]);
+            return JSON.parse(outputText.slice(idx + 'PROBE_RESULT:'.length).trim().split('\n')[0]);
           } catch {}
         }
         return { url, status: 0, ms: 0, bytes: 0, error: 'sandbox probe produced no result' };
       };
 
-      return await this.executeNavigationLoop({
-        target,
-        intent,
-        harness,
-        mode: 'e2b',
-        bootMs,
-        probeExecutor,
-        startTime,
-        onProgress,
-      });
+      return await this.executeNavigationLoop({ target, intent, harness, mode: 'e2b', bootMs, probeExecutor, startTime, onProgress });
     } finally {
       if (sbx) {
         try {
@@ -314,7 +335,7 @@ print("PROBE_RESULT:" + json.dumps(out))
       status: res?.httpStatus || 0,
       ms: Date.now() - start,
       bytes: res?.bytes ?? (res?.body ? Buffer.byteLength(res.body) : 0),
-      snippet: (res?.body || '').slice(0, 120).trim(),
+      body: res?.body,
       error: res?.httpStatus ? undefined : res?.error || res?.status,
     };
   }
@@ -367,6 +388,7 @@ print("PROBE_RESULT:" + json.dumps(out))
     const style = HARNESS_STYLE[harness] || HARNESS_STYLE['claude-code'];
     const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
     const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, isTest ? 1 : ms));
+    const usage: PlannerUsage = { calls: 0, totalTokens: 0 };
 
     const terminalLogs: string[] = [];
     const emitLog = (log: string) => {
@@ -382,22 +404,18 @@ print("PROBE_RESULT:" + json.dumps(out))
     emitLog(`[glintbase] Navigation style: ${style.label} (${style.focus})`);
     emitLog(`[glintbase] Target: ${target}`);
     emitLog(`[glintbase] Intent: "${intent}"`);
-    emitLog(`[glintbase] The planner sees URLs and status codes only, not page content.\n`);
+    emitLog(`[glintbase] The planner reads each page's title, headings and links, then picks the next page.\n`);
 
     onProgress?.({ type: 'agent_spawn', harness, startCoord: START, timestamp: Date.now() });
     onProgress?.({ type: 'ticker_update', text: '● Starting run...', subText: '1 step' });
 
-    // Step 1: homepage (agent request) + link discovery and agent-file checks (Glintbase requests).
-    const [apexProbe, siteMeta, agentFileChecks] = await Promise.all([
-      probeExecutor(target),
-      this.extractSiteMetadata(target),
-      this.checkAgentFiles(baseUrl),
-    ]);
+    // Step 1: homepage (agent request) + agent-file checks (Glintbase requests).
+    const [apexProbe, agentFileChecks] = await Promise.all([probeExecutor(target), this.checkAgentFiles(baseUrl)]);
     const apexOk = isReachable(apexProbe.status);
+    const homeOutline = outlinePage(apexOk ? apexProbe.body || '' : '', target);
     emitLog(
-      `[${harness}@step-1] GET / -> ${apexProbe.status ? `HTTP ${apexProbe.status}` : `network error${apexProbe.error ? ` (${apexProbe.error})` : ''}`} (${apexProbe.ms}ms, ${formatKb(apexProbe.bytes)})`
+      `[${harness}@step-1] GET / -> ${apexProbe.status ? `HTTP ${apexProbe.status}` : `network error${apexProbe.error ? ` (${apexProbe.error})` : ''}`} (${apexProbe.ms}ms, ${formatKb(apexProbe.bytes)}, ${homeOutline.links.length} same-site links)`
     );
-    emitLog(`[glintbase] Homepage links found: ${siteMeta.discoveredLinks.length}`);
     for (const c of agentFileChecks) emitLog(`[glintbase] Check ${c.path}: ${c.note}`);
 
     const rootNode: JourneyPillNode = {
@@ -414,7 +432,7 @@ print("PROBE_RESULT:" + json.dumps(out))
       col: 0,
       coord: { ...START },
       thought: apexOk
-        ? `Opened the ${domain} homepage (HTTP ${apexProbe.status}, ${formatKb(apexProbe.bytes)}); found ${siteMeta.discoveredLinks.length} same-site links.`
+        ? `Opened the ${domain} homepage${homeOutline.title ? ` ("${homeOutline.title.slice(0, 60)}")` : ''}: HTTP ${apexProbe.status}, ${formatKb(apexProbe.bytes)}, ${homeOutline.links.length} same-site links.`
         : `The ${domain} homepage did not answer (${apexProbe.status ? `HTTP ${apexProbe.status}` : 'network error'}).`,
       isDeadEnd: !apexOk,
       decidedBy: 'standard_check',
@@ -425,6 +443,15 @@ print("PROBE_RESULT:" + json.dumps(out))
     let runningTokens = rootNode.tokens;
     let llmSteps = 0;
     const planners = new Set<string>();
+    const pagesRead: ReadPage[] = [];
+    if (apexOk) pagesRead.push({ path: '/', url: target, outline: homeOutline });
+
+    // Where each link was first seen, so a dead end can be traced to the page that links to it.
+    const linkSource = new Map<string, string>();
+    const registerLinks = (outline: PageOutline, sourcePath: string) => {
+      for (const l of outline.links) if (!linkSource.has(l.path) && l.path !== sourcePath) linkSource.set(l.path, sourcePath);
+    };
+    registerLinks(homeOutline, '/');
 
     onProgress?.({ type: 'node_materialized', node: rootNode });
     onProgress?.({ type: 'agent_reaction', reaction: apexOk ? 'nod' : 'nope', thought: rootNode.thought, targetNodeId: rootNode.id });
@@ -434,25 +461,33 @@ print("PROBE_RESULT:" + json.dumps(out))
     onProgress?.({ type: 'telemetry_tick', stepsCount: 1, durationSeconds: seconds(startTime), tokensBurned: runningTokens, reasoningStepsCount: 0 });
     await pause(250);
 
-    const visitedPaths: Array<{ path: string; status: number; ms: number }> = [{ path: '/', status: apexProbe.status, ms: apexProbe.ms }];
-    const candidateLinks = siteMeta.discoveredLinks.filter((l) => l.startsWith('/')).slice(0, 15);
+    const visitedPaths: Array<{ path: string; status: number }> = [{ path: '/', status: apexProbe.status }];
     let hub = rootNode;
+    let hubPage: ReadPage = { path: '/', url: target, outline: homeOutline };
 
     if (apexOk) {
       for (let step = 1; step <= MAX_AGENT_STEPS; step++) {
-        onProgress?.({ type: 'ticker_update', text: '● Choosing next page...', subText: `${step + 1} steps` });
-        onProgress?.({ type: 'agent_reaction', reaction: 'thinking', thought: `Choosing the next page (${style.label} style)...` });
+        onProgress?.({ type: 'ticker_update', text: '● Reading the page and choosing the next one...', subText: `${step + 1} steps` });
+        onProgress?.({ type: 'agent_reaction', reaction: 'thinking', thought: `Reading ${hubPage.path} and choosing the next page (${style.label} style)...`, targetNodeId: hub.id });
 
-        const decision = await this.decideNextStep({ harness, domain, target, intent, step, visitedPaths, candidateLinks });
+        const decision = await this.decideNextStep({ harness, domain, target, intent, step, visitedPaths, hubPage, homeOutline, usage });
+
+        if (decision.action === 'stop') {
+          if (decision.planner) planners.add(decision.planner);
+          llmSteps++;
+          emitLog(`[${harness}@step-${step + 1}] Planner stopped: ${decision.thought}`);
+          break;
+        }
+
         let cleanPath = this.sanitizeNextPath(decision.nextPath, domain);
 
-        // Never re-request a page: take the next unvisited fallback or homepage link instead.
+        // Never re-request a page: take the next unvisited fallback or page link instead.
         if (visitedPaths.some((v) => v.path === cleanPath)) {
-          const alt = [...style.fallback.map((f) => f.path), ...candidateLinks].find(
-            (p) => !visitedPaths.some((v) => v.path === this.sanitizeNextPath(p, domain))
-          );
+          const alt = [...style.fallback.map((f) => f.path), ...hubPage.outline.links.map((l) => l.path), ...homeOutline.links.map((l) => l.path)]
+            .map((p) => this.sanitizeNextPath(p, domain))
+            .find((p) => !visitedPaths.some((v) => v.path === p));
           if (!alt) break;
-          cleanPath = this.sanitizeNextPath(alt, domain);
+          cleanPath = alt;
           decision.decidedBy = 'fallback_list';
           decision.label = cleanPath.replace(/^\//, '').slice(0, 14) || 'page';
           decision.thought = `Planner repeated a visited page; trying ${cleanPath} instead.`;
@@ -469,25 +504,30 @@ print("PROBE_RESULT:" + json.dumps(out))
 
         const probeUrl = `${baseUrl}${cleanPath}`;
         const probeRes = await probeExecutor(probeUrl);
-        visitedPaths.push({ path: cleanPath, status: probeRes.status, ms: probeRes.ms });
+        visitedPaths.push({ path: cleanPath, status: probeRes.status });
 
         const isPass = isReachable(probeRes.status);
-        const isLinked = candidateLinks.includes(cleanPath);
+        const source = linkSource.get(cleanPath);
         const statusText = probeRes.status ? `HTTP ${probeRes.status}` : 'network error';
-        const origin = isLinked ? 'linked from the homepage' : 'guessed path, not linked from the homepage';
+        const origin = source ? `linked from ${source}` : 'guessed path, not linked from any page opened';
+        const outline = isPass ? outlinePage(probeRes.body || '', probeUrl) : null;
+        if (outline) {
+          registerLinks(outline, cleanPath);
+          pagesRead.push({ path: cleanPath, url: probeUrl, outline });
+        }
 
         emitLog(
-          `[${harness}@step-${step + 1}] GET ${cleanPath} -> ${statusText} (${probeRes.ms}ms, ${formatKb(probeRes.bytes)}) [${decision.decidedBy === 'llm' ? 'planner' : 'fallback list'}; ${origin}]`
+          `[${harness}@step-${step + 1}] GET ${cleanPath} -> ${statusText} (${probeRes.ms}ms, ${formatKb(probeRes.bytes)}${outline ? `, ${outline.links.length} links` : ''}) [${decision.decidedBy === 'llm' ? 'planner' : 'fallback list'}; ${origin}]`
         );
 
         const row = isPass ? 0 : 1;
         const coord: CanvasCoord = { x: START.x + step * COL_SPACING, y: START.y + row * ROW_SPACING };
 
         let remediation: JourneyPillNode['remediation'];
-        if (!isPass && isLinked) {
+        if (!isPass && source) {
           remediation = {
-            title: `Fix the broken homepage link to ${cleanPath}`,
-            manualInstruction: `Your homepage links to ${cleanPath}, which answered ${statusText}. Fix or redirect that page so agents following your own links don't hit a dead end.`,
+            title: `Fix the broken link to ${cleanPath}`,
+            manualInstruction: `Your page ${source} links to ${cleanPath}, which answered ${statusText}. Fix or redirect it so agents following your own links don't hit a dead end.`,
           };
         }
 
@@ -505,7 +545,7 @@ print("PROBE_RESULT:" + json.dumps(out))
           row,
           col: step,
           coord,
-          thought: `${decision.thought} ${statusText}, ${formatKb(probeRes.bytes)} (${origin}).`,
+          thought: `${decision.thought} ${statusText}, ${formatKb(probeRes.bytes)}${outline?.title ? `, "${outline.title.slice(0, 60)}"` : ''} (${origin}).`,
           isDeadEnd: !isPass,
           backtrackToId: isPass ? undefined : hub.id,
           decidedBy: decision.decidedBy,
@@ -531,10 +571,11 @@ print("PROBE_RESULT:" + json.dumps(out))
         onProgress?.({ type: 'agent_navigate', fromCoord: hub.coord || START, toCoord: coord, targetNodeId: node.id, action: `Opening ${cleanPath}`, durationMs: 400 });
         await pause(350);
 
-        if (isPass) {
+        if (isPass && outline) {
           onProgress?.({ type: 'agent_reaction', reaction: 'nod', thought: node.thought, targetNodeId: node.id });
           onProgress?.({ type: 'agent_nod', targetNodeId: node.id, message: `${cleanPath}: ${statusText}` });
           hub = node;
+          hubPage = { path: cleanPath, url: probeUrl, outline };
         } else {
           emitLog(`[${harness}@backtrack] ${cleanPath} was a dead end (${statusText}); going back to ${hub.label}.`);
           onProgress?.({ type: 'agent_reaction', reaction: 'nope', thought: node.thought, targetNodeId: node.id });
@@ -555,10 +596,20 @@ print("PROBE_RESULT:" + json.dumps(out))
       }
     }
 
-    const planner = planners.size > 0 ? [...planners].join(' + ') : 'none (homepage unreachable)';
-    emitLog(`\n[glintbase] Run finished in ${seconds(startTime)}s. Planner: ${planner}.`);
+    // Answer step: can the pages the run opened answer the intent? Checked against fetched text.
+    let answerCheck: AnswerCheck | undefined;
+    if (apexOk) {
+      onProgress?.({ type: 'ticker_update', text: '● Checking whether the pages answer the intent...', subText: `${nodes.length} steps` });
+      onProgress?.({ type: 'agent_reaction', reaction: 'thinking', thought: 'Checking the opened pages for an answer...', targetNodeId: hub.id });
+      answerCheck = await this.checkAnswer(intent, domain, pagesRead, usage);
+      emitLog(`[glintbase] Answer check: ${answerCheck.verdict} (${answerCheck.note})`);
+    }
 
-    onProgress?.({ type: 'agent_reaction', reaction: apexOk ? 'success' : 'nope', thought: 'Run finished.' });
+    const planner = planners.size > 0 ? [...planners].join(' + ') : apexOk ? 'none' : 'none (homepage unreachable)';
+    emitLog(`\n[glintbase] Run finished in ${seconds(startTime)}s. Planner: ${planner}. Model calls: ${usage.calls}, ${usage.totalTokens.toLocaleString()} tokens (provider-reported).`);
+
+    const goodEnd = answerCheck?.verdict === 'found_with_evidence';
+    onProgress?.({ type: 'agent_reaction', reaction: !apexOk ? 'nope' : goodEnd ? 'success' : 'friction', thought: 'Run finished.' });
     onProgress?.({ type: 'ticker_update', text: '● Finished', subText: `${nodes.length} steps` });
 
     return this.buildResult({
@@ -573,7 +624,9 @@ print("PROBE_RESULT:" + json.dumps(out))
       llmSteps,
       startTime,
       terminalLogs,
-      homepageLinks: siteMeta.discoveredLinks.length,
+      homepageLinks: homeOutline.links.length,
+      answerCheck,
+      plannerUsage: usage,
     });
   }
 
@@ -596,12 +649,9 @@ print("PROBE_RESULT:" + json.dumps(out))
       `[glintbase] Target: ${target}`,
     ];
 
-    const [apex, siteMeta, agentFileChecks] = await Promise.all([
-      this.fetchProbe(target, 5000),
-      this.extractSiteMetadata(target),
-      this.checkAgentFiles(baseUrl),
-    ]);
+    const [apex, agentFileChecks] = await Promise.all([this.fetchProbe(target, 5000), this.checkAgentFiles(baseUrl)]);
     const apexOk = isReachable(apex.status);
+    const homeOutline = outlinePage(apexOk ? apex.body || '' : '', target);
 
     const nodes: JourneyPillNode[] = [
       {
@@ -618,7 +668,7 @@ print("PROBE_RESULT:" + json.dumps(out))
         col: 0,
         coord: { ...START },
         thought: apexOk
-          ? `Homepage answered HTTP ${apex.status} (${formatKb(apex.bytes)}); ${siteMeta.discoveredLinks.length} same-site links.`
+          ? `Homepage answered HTTP ${apex.status} (${formatKb(apex.bytes)}); ${homeOutline.links.length} same-site links.`
           : `Homepage did not answer (${apex.status ? `HTTP ${apex.status}` : 'network error'}).`,
         isDeadEnd: !apexOk,
         decidedBy: 'standard_check',
@@ -642,7 +692,7 @@ print("PROBE_RESULT:" + json.dumps(out))
         url: c.url,
         row: 0,
         col,
-        coord: { x: START.x + col * COL_SPACING, y: START.y },
+        coord: { x: START.x + col * 145, y: START.y },
         thought: `Checked ${c.path}: ${c.note}.`,
         isDeadEnd: !c.found,
         decidedBy: 'standard_check',
@@ -688,7 +738,7 @@ print("PROBE_RESULT:" + json.dumps(out))
       llmSteps: 0,
       startTime,
       terminalLogs,
-      homepageLinks: siteMeta.discoveredLinks.length,
+      homepageLinks: homeOutline.links.length,
     });
   }
 
@@ -707,15 +757,15 @@ print("PROBE_RESULT:" + json.dumps(out))
     startTime: number;
     terminalLogs: string[];
     homepageLinks: number;
+    answerCheck?: AnswerCheck;
+    plannerUsage?: PlannerUsage;
   }): JourneyExecutionResult {
     const { nodes, agentFileChecks } = p;
     const domain = p.target.replace(/^https?:\/\//i, '').replace(/\/$/, '');
-    // KPIs count pages the run requested as navigation steps; in preview, the checks are the steps.
-    const stepNodes = nodes;
-    const reached = stepNodes.filter((n) => isReachable(n.httpStatus || 0) && n.status === 'pass').length;
+    const reached = nodes.filter((n) => n.status === 'pass').length;
     const kpis: JourneyKPIMetrics = {
-      pagesReachedPct: stepNodes.length ? Math.round((reached / stepNodes.length) * 100) : 0,
-      deadEnds: stepNodes.filter((n) => n.status === 'fail').length,
+      pagesReachedPct: nodes.length ? Math.round((reached / nodes.length) * 100) : 0,
+      deadEnds: nodes.filter((n) => n.status === 'fail').length,
       agentFilesFound: agentFileChecks.filter((c) => c.found).length,
       agentFilesChecked: agentFileChecks.length,
     };
@@ -740,6 +790,8 @@ print("PROBE_RESULT:" + json.dumps(out))
       lines: p.lines,
       kpis,
       agentFileChecks,
+      answerCheck: p.answerCheck,
+      plannerUsage: p.plannerUsage,
       insight: this.buildInsight({ ...p, domain, kpis, tokensBurned }),
       terminalLogs: p.terminalLogs,
     };
@@ -756,11 +808,21 @@ print("PROBE_RESULT:" + json.dumps(out))
     kpis: JourneyKPIMetrics;
     tokensBurned: number;
     homepageLinks: number;
+    answerCheck?: AnswerCheck;
+    plannerUsage?: PlannerUsage;
   }): JourneyInsight {
-    const { domain, mode, nodes, agentFileChecks, kpis } = p;
+    const { domain, mode, nodes, agentFileChecks, kpis, answerCheck } = p;
     const style = HARNESS_STYLE[p.harness] || HARNESS_STYLE['claude-code'];
-    const where = mode === 'e2b' ? 'from an E2B sandbox' : mode === 'in_process' ? 'from the Glintbase server' : '';
+    const where = mode === 'e2b' ? 'from an E2B sandbox' : 'from the Glintbase server';
     const homepage = nodes[0];
+    const deadEndWord = kpis.deadEnds === 1 ? 'dead end' : 'dead ends';
+
+    const answerSentence: Record<AnswerCheck['verdict'], string> = {
+      found_with_evidence: 'The pages it opened answer the intent, and the supporting quote was found word for word in a fetched page.',
+      claimed_unsupported: 'A model claimed an answer, but its quote does not appear in any fetched page, so the answer is unsupported.',
+      not_found: 'The pages it opened do not answer the intent.',
+      not_checked: 'Whether the pages answer the intent was not checked (no model available).',
+    };
 
     let summary: string;
     if (homepage?.status !== 'pass') {
@@ -770,20 +832,31 @@ print("PROBE_RESULT:" + json.dumps(out))
     } else {
       summary =
         `${style.label}-style navigation of ${domain}: ${nodes.length} pages requested ${where}, ` +
-        `${nodes.length - kpis.deadEnds} reachable and ${kpis.deadEnds} dead end${kpis.deadEnds === 1 ? "" : "s"}. ` +
-        `Pages were chosen by ${p.planner}, which sees only URLs and status codes, not page content. ` +
-        `This shows how navigable the site is; it does not show whether an agent could complete "${p.intent}".`;
+        `${nodes.length - kpis.deadEnds} reachable and ${kpis.deadEnds} ${deadEndWord}. ` +
+        `Pages were chosen by ${p.planner}, reading each page's title, headings and links. ` +
+        (answerCheck ? answerSentence[answerCheck.verdict] + ' ' : '') +
+        `This is a lightweight stand-in for an agent, not a real ${style.label} run.`;
     }
 
     const bullets: string[] = [];
+    if (answerCheck) {
+      if (answerCheck.verdict === 'found_with_evidence') {
+        bullets.push(`Answer: ${answerCheck.answer} (quote verified on ${pathOf(answerCheck.sourceUrl || '')}).`);
+      } else {
+        bullets.push(`Answer check: ${answerCheck.note}`);
+      }
+    }
     for (const c of agentFileChecks) bullets.push(`${c.path}: ${c.note}.`);
     if (homepage?.status === 'pass') bullets.push(`Homepage: ${p.homepageLinks} same-site links found.`);
     for (const n of nodes.slice(1)) {
       if (n.status === 'fail' && n.decidedBy !== 'standard_check') {
-        bullets.push(`Dead end: ${n.url?.replace(/^https?:\/\/[^/]+/, '') || n.label} answered ${n.httpStatus ? `HTTP ${n.httpStatus}` : 'with a network error'}.`);
+        bullets.push(`Dead end: ${n.url ? pathOf(n.url) : n.label} answered ${n.httpStatus ? `HTTP ${n.httpStatus}` : 'with a network error'}.`);
       }
     }
-    bullets.push(`Tokens (${p.tokensBurned.toLocaleString()}) are estimates: response bytes ÷ 4. Times and statuses are measured.`);
+    if (p.plannerUsage && p.plannerUsage.calls > 0) {
+      bullets.push(`Model usage: ${p.plannerUsage.calls} calls, ${p.plannerUsage.totalTokens.toLocaleString()} tokens (reported by the provider).`);
+    }
+    bullets.push(`Page tokens (${p.tokensBurned.toLocaleString()}) are estimates: response bytes ÷ 4. Times and statuses are measured.`);
 
     const remediations: JourneyInsightRemediation[] = [];
     const llms = agentFileChecks.find((c) => c.path === '/llms.txt');
@@ -824,29 +897,52 @@ print("PROBE_RESULT:" + json.dumps(out))
 
   // ─── Planner ───────────────────────────────────────────────────────────────
 
+  private static recordUsage(usage: PlannerUsage, res: any) {
+    usage.calls++;
+    usage.totalTokens += Number(res?.usage?.total_tokens) || 0;
+  }
+
   private static async decideNextStep(params: {
     harness: HarnessType;
     domain: string;
     target: string;
     intent: string;
     step: number;
-    visitedPaths: Array<{ path: string; status: number; ms: number }>;
-    candidateLinks: string[];
-  }): Promise<{ nextPath: string; label: string; iconType: JourneyIconType; thought: string; decidedBy: 'llm' | 'fallback_list'; planner?: string }> {
-    const { harness, domain, target, intent, step, visitedPaths, candidateLinks } = params;
+    visitedPaths: Array<{ path: string; status: number }>;
+    hubPage: ReadPage;
+    homeOutline: PageOutline;
+    usage: PlannerUsage;
+  }): Promise<{
+    action: 'open' | 'stop';
+    nextPath: string;
+    label: string;
+    iconType: JourneyIconType;
+    thought: string;
+    decidedBy: 'llm' | 'fallback_list';
+    planner?: string;
+  }> {
+    const { harness, domain, target, intent, step, visitedPaths, hubPage, homeOutline, usage } = params;
     const style = HARNESS_STYLE[harness] || HARNESS_STYLE['claude-code'];
+    const visited = new Set(visitedPaths.map((v) => v.path));
+    const pageLinks = hubPage.outline.links.filter((l) => !visited.has(l.path)).slice(0, 40);
+    const pageLinkSet = new Set(pageLinks.map((l) => l.path));
+    const homeExtra = hubPage.path === '/' ? [] : homeOutline.links.filter((l) => !visited.has(l.path) && !pageLinkSet.has(l.path)).slice(0, 20);
 
-    const systemPrompt = `You plan the next page to open on ${target}, imitating how a ${style.label}-style agent searches: it favours ${style.focus}.
-Goal: "${intent}".
+    const systemPrompt = `You plan navigation on ${target}, imitating how a ${style.label}-style agent searches: it favours ${style.focus}.
+Goal: "${intent}"
 
-Already requested (do not repeat):
+Pages opened so far (do not repeat):
 ${visitedPaths.map((v) => `  - ${v.path} [${v.status ? `HTTP ${v.status}` : 'network error'}]`).join('\n')}
 
-Links found on the homepage: ${candidateLinks.join(', ') || '(none)'}
+You are on ${hubPage.path}${hubPage.outline.title ? ` — "${hubPage.outline.title.slice(0, 100)}"` : ''}
+Headings: ${hubPage.outline.headings.slice(0, 12).join(' | ') || '(none)'}
+Links on this page:
+${pageLinks.map((l) => `  - ${l.path}${l.text ? ` — ${l.text}` : ''}`).join('\n') || '  (none)'}
+${homeExtra.length ? `Also linked from the homepage: ${homeExtra.map((l) => l.path).join(', ')}` : ''}
 
-Pick ONE path on this site to open next. Prefer homepage links when relevant.
-Return ONLY JSON:
-{"nextPath": "/docs", "label": "docs", "iconType": "docs", "thought": "one short sentence on why"}
+Prefer links that appear above. Reply with JSON only, one of:
+{"action": "open", "nextPath": "/docs", "label": "docs", "iconType": "docs", "thought": "one short sentence on why"}
+{"action": "stop", "thought": "why the pages already opened should answer the goal"}
 iconType is one of: docs, api, openapi, auth, llms, sparkles. label is 1-2 words.`;
 
     try {
@@ -854,7 +950,7 @@ iconType is one of: docs, api, openapi, auth, llms, sparkles. label is 1-2 words
         {
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: `Step ${step + 1} on ${domain}. Next path?` },
+            { role: 'user', content: `Step ${step + 1} on ${domain}. What next?` },
           ],
           max_tokens: 200,
           temperature: 0.2,
@@ -862,26 +958,29 @@ iconType is one of: docs, api, openapi, auth, llms, sparkles. label is 1-2 words
         { timeoutMs: 8000 }
       );
       if (res.provider !== 'local_fallback') {
-        const text = res?.message?.content || '';
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (parsed?.nextPath && typeof parsed.nextPath === 'string') {
-            return {
-              nextPath: parsed.nextPath,
-              label: String(parsed.label || '').slice(0, 14),
-              iconType: VALID_ICONS.includes(parsed.iconType) ? parsed.iconType : 'docs',
-              thought: String(parsed.thought || 'Planner chose this page.').slice(0, 240),
-              decidedBy: 'llm',
-              planner: `${res.model} (${res.provider})`,
-            };
-          }
+        this.recordUsage(usage, res);
+        const parsed = parseJsonObject(res?.message?.content || '');
+        const planner = `${res.model} (${res.provider})`;
+        if (parsed?.action === 'stop' && step >= 2) {
+          return { action: 'stop', nextPath: '', label: '', iconType: 'docs', thought: String(parsed.thought || 'Enough pages opened.').slice(0, 240), decidedBy: 'llm', planner };
+        }
+        if (parsed?.nextPath && typeof parsed.nextPath === 'string') {
+          return {
+            action: 'open',
+            nextPath: parsed.nextPath,
+            label: String(parsed.label || '').slice(0, 14),
+            iconType: VALID_ICONS.includes(parsed.iconType) ? parsed.iconType : 'docs',
+            thought: String(parsed.thought || 'Planner chose this page.').slice(0, 240),
+            decidedBy: 'llm',
+            planner,
+          };
         }
       }
     } catch {}
 
     const choice = style.fallback[step - 1] || { path: '/docs', label: 'docs', icon: 'docs' as JourneyIconType };
     return {
+      action: 'open',
       nextPath: choice.path,
       label: choice.label,
       iconType: choice.icon,
@@ -890,50 +989,80 @@ iconType is one of: docs, api, openapi, auth, llms, sparkles. label is 1-2 words
     };
   }
 
+  // ─── Answer check ──────────────────────────────────────────────────────────
+
   /**
-   * Reads the homepage (Glintbase request) for its title, description and same-site links.
+   * Asks a model to answer the intent from the opened pages and quote its source, then verifies
+   * the quote word for word against the fetched text. The verdict never relies on the model alone.
    */
-  private static async extractSiteMetadata(target: string): Promise<DiscoveredSiteMeta> {
-    try {
-      const pageRes = await fetchResource(target, { timeoutMs: 5000 });
-      if (!pageRes || !pageRes.body) {
-        return { title: target, description: '', discoveredLinks: [] };
-      }
-
-      const html = pageRes.body;
-      const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-      const title = titleMatch ? titleMatch[1].trim() : target;
-
-      const descMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["']/i);
-      const description = descMatch ? descMatch[1].trim() : '';
-
-      const host = new URL(target).hostname;
-      const linkRegex = /<a[^>]+href=["']([^"']+)["'][^>]*>/gi;
-      const linksSet = new Set<string>();
-      let match: RegExpExecArray | null;
-
-      while ((match = linkRegex.exec(html)) !== null) {
-        let href = match[1].trim();
-        if (/^https?:\/\//i.test(href)) {
-          try {
-            const u = new URL(href);
-            if (u.hostname !== host) continue;
-            href = u.pathname;
-          } catch {
-            continue;
-          }
-        }
-        if (href.startsWith('/') && !href.startsWith('//') && !/\.(css|js|png|jpe?g|svg|ico|woff2?|webp|gif)$/i.test(href)) {
-          const cleanPath = href.split('?')[0].split('#')[0];
-          if (cleanPath.length > 1 && cleanPath.length < 60) {
-            linksSet.add(cleanPath);
-          }
-        }
-      }
-
-      return { title, description, discoveredLinks: Array.from(linksSet).slice(0, 20) };
-    } catch {
-      return { title: target, description: '', discoveredLinks: [] };
+  private static async checkAnswer(intent: string, domain: string, pages: ReadPage[], usage: PlannerUsage): Promise<AnswerCheck> {
+    const readable = pages.filter((p) => p.outline.text.length > 0);
+    if (readable.length === 0) {
+      return { verdict: 'not_checked', note: 'No readable page text was fetched.' };
     }
+
+    let budget = ANSWER_BUDGET_CHARS;
+    const blocks: string[] = [];
+    readable.forEach((p, i) => {
+      if (budget <= 0) return;
+      const passages = relevantPassages(p.outline.text, intent, 2, 600).map((s) => s.slice(0, Math.max(0, budget)));
+      const block = `[${i + 1}] ${p.url}\n${passages.join('\n…\n')}`;
+      budget -= block.length;
+      blocks.push(block);
+    });
+
+    const prompt = `Goal: "${intent}"
+Below are passages from pages opened on ${domain}. Using ONLY these passages, answer the goal.
+Return JSON only:
+{"found": true, "answer": "short answer", "quote": "one exact sentence copied character for character from a passage that supports the answer", "sourceUrl": "the URL of that passage"}
+If the passages do not answer the goal, return {"found": false, "answer": "", "quote": "", "sourceUrl": ""}.
+
+${blocks.join('\n\n')}`;
+
+    let res: any;
+    try {
+      res = await InferenceRouter.chatCompletions(
+        { messages: [{ role: 'user', content: prompt }], max_tokens: 300, temperature: 0 },
+        { timeoutMs: 12000 }
+      );
+    } catch {
+      return { verdict: 'not_checked', note: 'No model was available to read the pages.' };
+    }
+    if (!res || res.provider === 'local_fallback') {
+      return { verdict: 'not_checked', note: 'No model was available to read the pages.' };
+    }
+    this.recordUsage(usage, res);
+    const model = `${res.model} (${res.provider})`;
+    const parsed = parseJsonObject(res?.message?.content || '');
+    if (!parsed) {
+      return { verdict: 'not_checked', model, note: 'The model did not return a readable answer.' };
+    }
+    if (!parsed.found) {
+      return { verdict: 'not_found', model, note: 'The model found no answer in the pages the run opened.' };
+    }
+
+    const answer = String(parsed.answer || '').slice(0, 400);
+    const quote = String(parsed.quote || '').slice(0, 600);
+    const cited = String(parsed.sourceUrl || '');
+    const ordered = [...readable].sort((a, b) => (a.url === cited ? -1 : b.url === cited ? 1 : 0));
+    const verifiedOn = ordered.find((p) => quoteAppearsIn(quote, p.outline.text));
+    if (verifiedOn) {
+      return {
+        verdict: 'found_with_evidence',
+        answer,
+        quote,
+        sourceUrl: verifiedOn.url,
+        model,
+        note: `Quote found word for word on ${verifiedOn.path}.`,
+      };
+    }
+    return {
+      verdict: 'claimed_unsupported',
+      answer,
+      quote,
+      sourceUrl: cited || undefined,
+      model,
+      note: 'The model gave an answer, but its quote does not appear in any page the run fetched.',
+    };
   }
 }
