@@ -194,7 +194,7 @@ describe('MCP Client & Server E2E Verification', () => {
       expect(promptMsg.messages).toHaveLength(1);
       const pText = (promptMsg.messages[0].content as { text: string }).text;
       expect(pText).toContain('https://demo.glintbase.xyz');
-      expect(pText).toContain('Agent Flight Simulator Diagnostic & Replay');
+      expect(pText).toContain('Simulate Preview: Reading the Results');
 
       // 7. Verify resources list
       const resourceList = await client.listResources();
