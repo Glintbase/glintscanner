@@ -132,13 +132,13 @@ const TOOLS_MANIFEST = [
   },
   {
     name: 'glintbase_simulate_flight',
-    description: 'Run the Glintbase Agent Flight Simulator across synthetic coding personas. Returns multi-modal output with a visual Journey Tree graphic, telemetry, and replay link.',
+    description: 'Preview how agent-ready a site is for navigation: fetches the homepage and checks the standard agent files (llms.txt, openapi.json, robots.txt, auth.md). Every status, size and time is measured; tokens are estimated from response size. No agent runs in this preview. Returns a Mermaid diagram, a summary and a replay link.',
     inputSchema: {
       type: 'object',
       properties: {
-        target: { type: 'string', description: 'Target URL to simulate (e.g. "https://stripe.com")' },
-        persona: { type: 'string', enum: ['claude-code', 'cursor', 'perplexity'], description: 'Agent persona (default: claude-code)' },
-        intent: { type: 'string', description: 'User intent to simulate (e.g. "Find API reference and create an API key")' },
+        target: { type: 'string', description: 'Target URL (e.g. "https://stripe.com")' },
+        persona: { type: 'string', enum: ['claude-code', 'cursor', 'perplexity', 'openclaw', 'hermes', 'opencode'], description: 'Label for the replay view only; it does not change the preview checks (default: claude-code)' },
+        intent: { type: 'string', description: 'What an agent would be trying to do; used to decide which fixes are relevant' },
       },
       required: ['target'],
     },
@@ -147,15 +147,18 @@ const TOOLS_MANIFEST = [
       properties: {
         persona: { type: 'string' },
         target: { type: 'string' },
+        mode: { type: 'string', enum: ['preview'] },
         outcome: { type: 'string', enum: ['completed', 'blocked'] },
         success: { type: 'boolean' },
         totalHops: { type: 'number' },
         totalTokensBurned: { type: 'number' },
-        schemaFrictionScore: { type: 'number' },
+        tokenBasis: { type: 'string' },
+        agentFilesFound: { type: 'number' },
+        agentFilesChecked: { type: 'number' },
         replayUrl: { type: 'string' },
         failureBottleneck: { type: 'string' },
       },
-      required: ['target', 'outcome', 'success', 'totalTokensBurned', 'replayUrl'],
+      required: ['target', 'mode', 'outcome', 'success', 'totalTokensBurned', 'replayUrl'],
     },
     annotations: {
       readOnlyHint: true,
@@ -658,7 +661,7 @@ export async function POST(req: NextRequest) {
         const persona = toolArgs.persona || 'claude-code';
         const intent = toolArgs.intent || `Find the API docs and authenticate for ${targetUrl}`;
 
-        // Run simulation probe
+        // Preview: homepage + standard agent files, all measured. No agent runs here.
         const simResult = await E2BRunner.runMission(
           {
             target: targetUrl,
@@ -670,47 +673,44 @@ export async function POST(req: NextRequest) {
           () => {}
         );
 
+        const ACTIONS: Record<string, string> = {
+          home: 'INDEX',
+          'llms.txt': 'LLMS.TXT',
+          'openapi.json': 'API SPEC',
+          'robots.txt': 'ROBOTS',
+          'auth.md': 'AUTH',
+        };
         const telemetry = {
+          mode: simResult.mode,
           outcome: simResult.status === 'success' ? 'completed' : 'blocked',
-          totalDurationMs: (simResult.telemetry?.durationSeconds || 3) * 1000,
-          totalTokensBurned: simResult.telemetry?.tokensBurned || 4200,
-          schemaFrictionScore: Math.round(100 - (simResult.kpis?.answerEfficiency || 70)),
-          steps: (simResult.nodes || []).map((n, idx, arr) => {
-            const raw = ((n as any).action || (n as any).type || n.iconType || n.label || 'step').toLowerCase();
-            let action = raw.toUpperCase();
-            if (raw === 'sparkles' || raw === 'ready' || raw === 'success') {
-              action = idx === arr.length - 1 ? 'GOAL' : 'READY';
-            } else if (raw === 'home') {
-              action = 'INDEX';
-            } else if (raw === 'openapi') {
-              action = 'API SPEC';
-            } else if (raw === 'llms' || raw === 'llms.txt') {
-              action = 'LLMS.TXT';
-            } else if (raw === 'auth') {
-              action = 'AUTH';
-            } else if (raw === 'api') {
-              action = 'API';
-            } else if (raw === 'docs') {
-              action = 'DOCS';
-            }
-
-            return {
-              action,
-              details: n.label,
-              status: n.status === 'pass' ? 'ok' : n.status === 'warn' ? 'warn' : 'error',
-              tokensConsumed: n.tokens,
-            };
-          }),
-          failureBottleneck: simResult.status === 'failed' ? simResult.insight?.summary : undefined,
-          suggestedRemediation: simResult.insight?.remediations?.[0]?.description,
+          totalDurationMs: Math.round(simResult.telemetry.durationSeconds * 1000),
+          totalTokensBurned: simResult.telemetry.tokensBurned,
+          tokenBasis: simResult.tokenBasis,
+          agentFilesFound: simResult.kpis.agentFilesFound,
+          agentFilesChecked: simResult.kpis.agentFilesChecked,
+          steps: simResult.nodes.map((n) => ({
+            action: ACTIONS[n.label] || n.label.toUpperCase(),
+            details: n.label,
+            status: n.status === 'pass' ? 'ok' : n.status === 'warn' ? 'warn' : 'error',
+            httpStatus: n.httpStatus ?? 0,
+            url: n.url,
+            bytes: n.bytes ?? 0,
+            durationMs: n.latencyMs,
+            tokensConsumed: n.tokens,
+            note: n.thought,
+          })),
+          summary: simResult.insight.summary,
+          failureBottleneck: simResult.status === 'failed' ? simResult.insight.summary : undefined,
+          suggestedRemediation: simResult.insight.remediations[0]?.title,
         };
 
-        // Create compressed replay state (#data=...)
+        // Create compressed replay state (#data=...). v2 carries measured fields only.
         const payload = {
-          v: 1,
+          v: 2,
           timestamp: Date.now(),
           target: targetUrl,
           persona,
+          intent,
           telemetry,
         };
         const compressed = deflateSync(Buffer.from(JSON.stringify(payload), 'utf-8'), { level: 9 }).toString('base64url');
@@ -722,11 +722,15 @@ export async function POST(req: NextRequest) {
         const summaryText = {
           persona,
           target: targetUrl,
+          mode: telemetry.mode,
           outcome: telemetry.outcome,
           success: telemetry.outcome === 'completed',
           totalHops: telemetry.steps.length,
           totalTokensBurned: telemetry.totalTokensBurned,
-          schemaFrictionScore: telemetry.schemaFrictionScore,
+          tokenBasis: telemetry.tokenBasis,
+          agentFilesFound: telemetry.agentFilesFound,
+          agentFilesChecked: telemetry.agentFilesChecked,
+          summary: telemetry.summary,
           replayUrl,
           failureBottleneck: telemetry.failureBottleneck || null,
         };

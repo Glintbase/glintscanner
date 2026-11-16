@@ -3,7 +3,7 @@
 import React from 'react';
 import Image from 'next/image';
 import { Sparkles, RotateCw, Play } from 'lucide-react';
-import type { HarnessType, JourneyTelemetryStats } from '@/lib/scanner/simulator/types';
+import type { HarnessType, JourneyTelemetryStats, RunMode } from '@/lib/scanner/simulator/types';
 
 interface JourneyTelemetryHeaderProps {
   target: string;
@@ -11,6 +11,8 @@ interface JourneyTelemetryHeaderProps {
   harness: HarnessType;
   status: 'success' | 'failed' | 'running' | 'idle';
   telemetry?: JourneyTelemetryStats;
+  /** Where the requests were made; shown so nothing claims a sandbox that wasn't used. */
+  mode?: RunMode;
   onRunNewJourney: () => void;
   onReconfigure?: () => void;
   onRerunFlight?: () => void;
@@ -23,6 +25,7 @@ export default function JourneyTelemetryHeader({
   harness,
   status,
   telemetry,
+  mode,
   onRunNewJourney,
   onReconfigure,
   onRerunFlight,
@@ -84,7 +87,7 @@ export default function JourneyTelemetryHeader({
                 : 'text-stone-400 bg-stone-900 border border-stone-800'
             }`}
           >
-            {status === 'idle' ? 'STANDBY' : status}
+            {status === 'idle' ? 'STANDBY' : status === 'success' ? 'FINISHED' : status}
           </div>
         </div>
 
@@ -119,7 +122,7 @@ export default function JourneyTelemetryHeader({
             {isRunning ? (
               <>
                 <RotateCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Simulating...</span>
+                <span>Running...</span>
               </>
             ) : (
               <span>{status === 'idle' ? 'Launch Simulation' : 'Run new journey'}</span>
@@ -164,17 +167,13 @@ export default function JourneyTelemetryHeader({
           </div>
         </div>
 
-        {/* Metric 3: Cost */}
+        {/* Metric 3: Where the requests ran */}
         <div className="space-y-1 md:px-6 md:border-r md:border-white/[0.08]">
-          <div className="text-2xl sm:text-3xl font-mono font-black text-emerald-400 tabular-nums">
-            {telemetry?.costUsd !== undefined
-              ? `$${telemetry.costUsd.toFixed(4)}`
-              : status === 'running'
-              ? '$0.0000'
-              : '--'}
+          <div className="text-lg sm:text-xl font-mono font-black text-white leading-9">
+            {mode === 'e2b' ? 'E2B sandbox' : mode === 'in_process' ? 'Server fetch' : mode === 'preview' ? 'Preview' : status === 'running' ? '…' : '--'}
           </div>
           <div className="text-[10px] font-mono uppercase tracking-wider text-stone-400 font-semibold">
-            COST
+            RAN FROM
           </div>
         </div>
 
@@ -187,8 +186,8 @@ export default function JourneyTelemetryHeader({
               ? '0'
               : '--'}
           </div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-stone-400 font-semibold">
-            TOKENS
+          <div className="text-[10px] font-mono uppercase tracking-wider text-stone-400 font-semibold" title="Estimated: response bytes ÷ 4">
+            EST. TOKENS
           </div>
         </div>
       </div>

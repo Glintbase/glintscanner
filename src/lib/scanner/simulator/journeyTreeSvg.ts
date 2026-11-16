@@ -21,6 +21,14 @@ function truncate(val: any, maxLen: number): string {
   return str.length > maxLen ? str.slice(0, maxLen - 1) + '…' : str;
 }
 
+/** Status label from the measured HTTP status; never assumes 200. */
+function httpStatusText(step: any): string {
+  if (typeof step.httpStatus === 'number') {
+    return step.httpStatus > 0 ? `HTTP ${step.httpStatus}` : 'NETWORK ERROR';
+  }
+  return step.status === 'ok' ? 'OK' : String(step.status || 'FAIL').toUpperCase();
+}
+
 export function generateJourneyTreeSvg(
   telemetry: any,
   persona: string,
@@ -34,9 +42,12 @@ export function generateJourneyTreeSvg(
   const outcomeColor = isSuccess ? '#10B981' : telemetry.outcome === 'partial' ? '#F59E0B' : '#EF4444';
   const outcomeLabel = (telemetry.outcome || 'FAILED').toUpperCase();
 
-  const frictionScore = telemetry.schemaFrictionScore ?? 0;
-  const riskLevel = frictionScore > 50 ? 'HIGH' : frictionScore > 25 ? 'MEDIUM' : 'LOW';
-  const riskColor = riskLevel === 'LOW' ? '#10B981' : riskLevel === 'MEDIUM' ? '#F59E0B' : '#EF4444';
+  const filesFound = telemetry.agentFilesFound;
+  const filesChecked = telemetry.agentFilesChecked;
+  const filesText = typeof filesFound === 'number' && typeof filesChecked === 'number' ? `${filesFound}/${filesChecked}` : 'n/a';
+  const deadEnds = (telemetry.steps || []).filter((s: any) => s.status !== 'ok').length;
+  const filesColor = typeof filesFound === 'number' && filesFound > 0 ? '#10B981' : '#F59E0B';
+  const deadEndColor = deadEnds > 0 ? '#EF4444' : '#10B981';
 
   const tokensBurned = (telemetry.totalTokensBurned ?? 0).toLocaleString();
   const hopsCount = telemetry.steps?.length ?? 0;
@@ -89,7 +100,7 @@ export function generateJourneyTreeSvg(
       : rawAction;
     const actionBadge = truncate(sanitizedAction || 'STEP', 12);
     const detailLabel = truncate(step.details || '', 22);
-    const statusText = step.status === 'ok' ? '200 OK' : step.status?.toUpperCase() || 'FAIL';
+    const statusText = httpStatusText(step);
 
     nodesMarkup += `
       <g transform="translate(${cx}, ${cy})">
@@ -108,7 +119,7 @@ export function generateJourneyTreeSvg(
   if (!isSuccess && (telemetry.failureBottleneck || telemetry.failureMode || telemetry.failureDetails)) {
     const rawBottleneck = telemetry.failureBottleneck || telemetry.failureDetails?.message || telemetry.failureMode || 'Agent halted at boundary';
     const bottleneckText = truncate(rawBottleneck, 75);
-    const rawRemediation = telemetry.suggestedRemediation || telemetry.failureDetails?.remediation || 'Generate required living artifacts to resolve friction.';
+    const rawRemediation = telemetry.suggestedRemediation || telemetry.failureDetails?.remediation || 'Check that the homepage is reachable.';
     const remediationText = truncate(rawRemediation, 75);
     calloutMarkup = `
       <g transform="translate(40, 365)">
@@ -125,7 +136,7 @@ export function generateJourneyTreeSvg(
         <rect width="800" height="46" rx="8" fill="#18181B" stroke="#10B981" stroke-opacity="0.4" stroke-width="1.2" />
         <circle cx="20" cy="23" r="8" fill="#10B981" fill-opacity="0.2" />
         <text x="20" y="27" text-anchor="middle" fill="#10B981" font-family="-apple-system, sans-serif" font-size="11" font-weight="700">✓</text>
-        <text x="36" y="26" fill="#10B981" font-family="-apple-system, sans-serif" font-size="11" font-weight="600">ZERO-FRICTION FLIGHT: <tspan fill="#A1A1AA" font-weight="400">Agent reached mission goal autonomously with optimal context efficiency.</tspan></text>
+        <text x="36" y="26" fill="#10B981" font-family="-apple-system, sans-serif" font-size="11" font-weight="600">HOMEPAGE REACHABLE: <tspan fill="#A1A1AA" font-weight="400">${escapeXml(truncate(telemetry.summary || `${deadEnds} of ${hopsCount} requests were dead ends.`, 90))}</tspan></text>
       </g>
     `;
   }
@@ -164,20 +175,20 @@ export function generateJourneyTreeSvg(
 
   <g transform="translate(40, 115)">
     <rect x="0" y="0" width="188" height="52" rx="8" fill="#141416" stroke="#27272A" stroke-width="1" />
-    <text x="14" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">TOKENS BURNED</text>
+    <text x="14" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">EST. TOKENS (BYTES ÷ 4)</text>
     <text x="14" y="41" fill="#FFFFFF" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${tokensBurned}</text>
 
     <rect x="204" y="0" width="188" height="52" rx="8" fill="#141416" stroke="#27272A" stroke-width="1" />
-    <text x="218" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">SCHEMA FRICTION</text>
-    <text x="218" y="41" fill="${riskColor}" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${frictionScore}<tspan fill="#71717A" font-size="12">/100</tspan></text>
+    <text x="218" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">AGENT FILES FOUND</text>
+    <text x="218" y="41" fill="${filesColor}" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${escapeXml(filesText)}</text>
 
     <rect x="408" y="0" width="188" height="52" rx="8" fill="#141416" stroke="#27272A" stroke-width="1" />
-    <text x="422" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">NAVIGATION HOPS</text>
-    <text x="422" y="41" fill="#FFFFFF" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${hopsCount} <tspan fill="#71717A" font-size="12">hops</tspan></text>
+    <text x="422" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">REQUESTS</text>
+    <text x="422" y="41" fill="#FFFFFF" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${hopsCount}</text>
 
     <rect x="612" y="0" width="188" height="52" rx="8" fill="#141416" stroke="#27272A" stroke-width="1" />
-    <text x="626" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">HALLUCINATION RISK</text>
-    <text x="626" y="41" fill="${riskColor}" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${riskLevel}</text>
+    <text x="626" y="20" fill="#71717A" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="0.5">DEAD ENDS</text>
+    <text x="626" y="41" fill="${deadEndColor}" font-family="ui-monospace, monospace" font-size="17" font-weight="700">${deadEnds}</text>
   </g>
 
   <g>
@@ -238,7 +249,7 @@ export function generateJourneyMermaid(
     const shortDetail = detail.length > 22 ? detail.slice(0, 21) + '…' : detail;
     const isPass = step.status === 'ok' || step.status === 'pass';
     const isWarn = step.status === 'warn';
-    const statusText = isPass ? '200 OK' : isWarn ? 'WARN' : 'FAIL';
+    const statusText = typeof step.httpStatus === 'number' ? httpStatusText(step) : isPass ? 'OK' : isWarn ? 'WARN' : 'FAIL';
     const nodeClass = isLast && isCompleted ? 'goal' : isPass ? 'pass' : isWarn ? 'warn' : 'fail';
 
     const nodeLabel = `"${stepNum}. ${escapeXml(action)}<br/>${escapeXml(shortDetail)}<br/>${statusText}"`;
@@ -263,27 +274,36 @@ export function generateFlightHud(
   replayUrl?: string
 ): string {
   const isCompleted = telemetry.outcome === 'completed';
-  const outcomeBadge = isCompleted ? '🟢 COMPLETED' : telemetry.outcome === 'partial' ? '🟡 PARTIAL' : '🔴 BLOCKED';
-  const friction = telemetry.schemaFrictionScore ?? 0;
-  const riskBadge = friction > 50 ? '🔴 HIGH RISK' : friction > 25 ? '🟡 MEDIUM' : '🟢 LOW RISK';
-  const hops = telemetry.steps?.length || 0;
+  const outcomeBadge = isCompleted ? '🟢 HOMEPAGE REACHABLE' : '🔴 HOMEPAGE UNREACHABLE';
+  const steps: any[] = telemetry.steps || [];
   const tokens = (telemetry.totalTokensBurned || 0).toLocaleString();
+  const files =
+    typeof telemetry.agentFilesFound === 'number' ? `${telemetry.agentFilesFound}/${telemetry.agentFilesChecked}` : 'n/a';
+  const modeLabel = telemetry.mode === 'preview' ? 'Preview (no agent run)' : telemetry.mode || 'unknown';
 
-  let md = `### 🕹️ Glintbase Visual Flight Simulator (${persona})\n\n`;
-  md += `| Target | Mission Outcome | Navigation Hops | Tokens Burned | Schema Friction | Risk Assessment |\n`;
-  md += `| :--- | :--- | :--- | :--- | :--- | :--- |\n`;
-  md += `| \`${target}\` | **${outcomeBadge}** | **${hops} hops** | **${tokens}** | **${friction}/100** | **${riskBadge}** |\n\n`;
+  let md = `### Glintbase Simulate: ${modeLabel}\n\n`;
+  md += `| Target | Result | Requests | Agent files found | Est. tokens |\n`;
+  md += `| :--- | :--- | :--- | :--- | :--- |\n`;
+  md += `| \`${target}\` | **${outcomeBadge}** | **${steps.length}** | **${files}** | ${tokens} |\n\n`;
 
-  if (replayUrl) {
-    md += `[🕹️ Open Full Interactive Cockpit Replay](${replayUrl})\n\n`;
-  }
-
-  if (!isCompleted && telemetry.failureBottleneck) {
-    md += `> ⚠️ **Bottleneck**: ${telemetry.failureBottleneck}\n`;
-    if (telemetry.suggestedRemediation) {
-      md += `> 💡 **Suggested Fix**: \`${telemetry.suggestedRemediation}\`\n`;
+  if (steps.length > 0) {
+    md += `| Request | Status | Size | Time |\n| :--- | :--- | :--- | :--- |\n`;
+    for (const s of steps) {
+      const path = (s.url || '').replace(/^https?:\/\/[^/]+/, '') || '/';
+      md += `| \`${path}\` | ${httpStatusText(s)} | ${typeof s.bytes === 'number' ? `${s.bytes} B` : '–'} | ${typeof s.durationMs === 'number' ? `${s.durationMs} ms` : '–'} |\n`;
     }
     md += `\n`;
+  }
+
+  if (telemetry.summary) md += `${telemetry.summary}\n\n`;
+  md += `_Statuses, sizes and times are measured. Tokens are estimated as bytes ÷ 4. Persona "${persona}" is a label only in preview mode._\n\n`;
+
+  if (replayUrl) {
+    md += `[Open the replay](${replayUrl})\n\n`;
+  }
+
+  if (telemetry.suggestedRemediation) {
+    md += `> **Suggested fix**: ${telemetry.suggestedRemediation}\n\n`;
   }
 
   return md;

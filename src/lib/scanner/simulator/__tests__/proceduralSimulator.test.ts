@@ -1,115 +1,165 @@
-import { describe, it, expect, vi } from 'vitest';
-import { E2BRunner } from '../e2bRunner';
-import type { ProceduralStreamEvent, HarnessType } from '../types';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-describe('Procedural Agent Flight Simulator & 3D Mascot Coordination', () => {
-  it('streams procedural events step-by-step with authentic coordinates and telemetry', async () => {
-    const events: any[] = [];
-    const onProgress = (event: any) => {
-      events.push(event);
+// Every request goes through this fake site, so tests can check that each node maps to a real request.
+type FakeResponse = { httpStatus: number; body?: string; contentType?: string; soft404?: boolean };
+let site: Record<string, FakeResponse> = {};
+const requested: string[] = [];
+
+vi.mock('../../v2/fetchResource', () => ({
+  currentScannerUserAgent: () => 'GlintbaseTest/1.0',
+  fetchResource: vi.fn(async (url: string) => {
+    requested.push(url);
+    const r = site[url];
+    if (!r) return { ok: false, status: 'unreachable', url };
+    const ok = r.httpStatus >= 200 && r.httpStatus < 400 && !r.soft404;
+    return {
+      ok,
+      status: r.soft404 ? 'soft_404' : ok ? 'ok' : 'unreachable',
+      httpStatus: r.httpStatus,
+      body: ok || r.soft404 ? r.body ?? '' : undefined,
+      bytes: ok || r.soft404 ? Buffer.byteLength(r.body ?? '') : 0,
+      contentType: r.contentType ?? 'text/plain',
+      url,
     };
+  }),
+}));
 
+// No planner model: the runner must fall back to the fixed path list and say so.
+vi.mock('../inferenceRouter', () => ({
+  InferenceRouter: { chatCompletions: vi.fn(async () => { throw new Error('no model in tests'); }) },
+}));
+
+import { E2BRunner } from '../e2bRunner';
+import { estimateTokensFromBytes } from '../types';
+
+const HOME_HTML = '<html><head><title>Acme</title></head><body><a href="/docs">Docs</a><a href="/pricing">Pricing</a><a href="/broken">Broken</a></body></html>';
+const LLMS = '# Acme\n> Acme API\n- [Docs](/docs)\n';
+
+beforeEach(() => {
+  requested.length = 0;
+  delete process.env.E2B_API_KEY;
+  site = {
+    'https://acme.test': { httpStatus: 200, body: HOME_HTML, contentType: 'text/html' },
+    'https://acme.test/llms.txt': { httpStatus: 200, body: LLMS },
+    'https://acme.test/openapi.json': { httpStatus: 404 },
+    'https://acme.test/robots.txt': { httpStatus: 200, body: 'User-agent: *\nAllow: /\n' },
+    // A 200 that serves an HTML page is not a real auth.md.
+    'https://acme.test/auth.md': { httpStatus: 200, body: '<!doctype html><html>app shell</html>', contentType: 'text/html' },
+    'https://acme.test/docs': { httpStatus: 200, body: '<html>docs</html>', contentType: 'text/html' },
+  };
+});
+
+describe('Simulate preview mode', () => {
+  it('reports only measured requests: homepage plus the four agent files', async () => {
+    const events: any[] = [];
     const result = await E2BRunner.runMission(
-      {
-        target: 'https://stripe.com',
-        harness: 'claude-code',
-        intent: 'Find API docs and authentication specifications for stripe.com',
-        mode: 'deterministic',
-      },
-      onProgress
+      { target: 'https://acme.test', harness: 'claude-code', intent: 'Find the API docs', mode: 'deterministic' },
+      (e) => events.push(e)
     );
 
-    // Verify initial lifecycle events
-    expect(events.length).toBeGreaterThan(10);
-    const spawnEvent = events.find((e) => e.type === 'agent_spawn');
-    expect(spawnEvent).toBeDefined();
-    expect(spawnEvent.harness).toBe('claude-code');
-    expect(spawnEvent.startCoord).toHaveProperty('x');
-    expect(spawnEvent.startCoord).toHaveProperty('y');
-
-    // Verify navigation and reaction steps
-    const navEvents = events.filter((e) => e.type === 'agent_navigate');
-    expect(navEvents.length).toBeGreaterThanOrEqual(4);
-    expect(navEvents.length).toBe(result.nodes.length);
-    expect(navEvents[0].toCoord.x).toBeGreaterThan(0);
-    expect(navEvents[0].toCoord.y).toBeGreaterThan(0);
-
-    const reactionEvents = events.filter((e) => e.type === 'agent_reaction');
-    expect(reactionEvents.length).toBeGreaterThanOrEqual(4);
-    expect(['scanning', 'success', 'friction', 'idle', 'nod', 'nope', 'backtrack']).toContain(reactionEvents[0].reaction);
-
-    // Verify materialized nodes
-    const nodeEvents = events.filter((e) => e.type === 'node_materialized');
-    expect(nodeEvents.length).toBe(result.nodes.length);
-    nodeEvents.forEach((ne) => {
-      expect(ne.node).toHaveProperty('id');
-      expect(ne.node).toHaveProperty('label');
-      expect(ne.node.coord.x).toBeGreaterThan(0);
-      expect(ne.node.coord.y).toBeGreaterThan(0);
-    });
-
-    // Verify connected lines
-    const lineEvents = events.filter((e) => e.type === 'line_connected');
-    expect(lineEvents.length).toBeGreaterThan(0);
-    lineEvents.forEach((le) => {
-      expect(le.line.fromCoord).toBeDefined();
-      expect(le.line.toCoord).toBeDefined();
-      expect(le.line.status).toMatch(/pass|warn|fail/);
-    });
-
-    // Verify telemetry ticks
-    const tickEvents = events.filter((e) => e.type === 'telemetry_tick');
-    expect(tickEvents.length).toBeGreaterThan(5);
-    const lastTick = tickEvents[tickEvents.length - 1];
-    expect(lastTick.stepsCount).toBe(result.nodes.length);
-    expect(lastTick.tokensBurned).toBeGreaterThan(0);
-    expect(lastTick.durationSeconds).toBeGreaterThan(0);
-
-    // Verify final result structure
+    expect(result.mode).toBe('preview');
     expect(result.status).toBe('success');
-    expect(result.kpis.answerFromSite).toBe(100);
-    expect(result.kpis.answerEfficiency).toBeGreaterThanOrEqual(50);
-    expect(result.insight.summary).toBeTruthy();
-    expect(result.insight.bulletPoints.length).toBeGreaterThan(0);
-    expect(result.lines).toBeDefined();
-    expect(result.lines!.length).toBeGreaterThan(0);
-  }, 15000);
+    expect(result.nodes.map((n) => n.url)).toEqual([
+      'https://acme.test',
+      'https://acme.test/llms.txt',
+      'https://acme.test/openapi.json',
+      'https://acme.test/robots.txt',
+      'https://acme.test/auth.md',
+    ]);
+    for (const n of result.nodes) expect(requested).toContain(n.url);
 
-  it('supports all 4 agent harnesses for 3D mascot navigation', async () => {
-    const harnesses: HarnessType[] = ['claude-code', 'openclaw', 'hermes', 'opencode'];
+    const byLabel = Object.fromEntries(result.nodes.map((n) => [n.label, n]));
+    expect(byLabel['llms.txt'].status).toBe('pass');
+    expect(byLabel['openapi.json'].status).toBe('fail');
+    expect(byLabel['openapi.json'].httpStatus).toBe(404);
+    expect(byLabel['auth.md'].status).toBe('fail');
+    expect(byLabel['auth.md'].thought).toMatch(/HTML page/);
+    expect(byLabel['llms.txt'].tokens).toBe(estimateTokensFromBytes(Buffer.byteLength(LLMS)));
 
-    for (const harness of harnesses) {
-      let spawned = false;
-      const result = await E2BRunner.runMission(
-        {
-          target: 'https://example.com',
-          harness,
-          intent: 'Quick test',
-          mode: 'deterministic',
-        },
-        (e) => {
-          if (e.type === 'agent_spawn' && e.harness === harness) spawned = true;
-        }
-      );
+    expect(result.kpis).toEqual({ pagesReachedPct: 60, deadEnds: 2, agentFilesFound: 2, agentFilesChecked: 4 });
+    expect(result.telemetry.reasoningStepsCount).toBe(0);
+    expect(result.insight.summary).toMatch(/No agent ran/);
+    expect(result.tokenBasis).toMatch(/bytes/);
 
-      expect(spawned).toBe(true);
-      expect(result.harness).toBe(harness);
-      expect(result.nodes.length).toBeGreaterThan(0);
-    }
-  }, 35000);
+    expect(events.filter((e) => e.type === 'node_materialized')).toHaveLength(5);
+    expect(events.find((e) => e.type === 'agent_spawn')?.harness).toBe('claude-code');
+  });
 
-  it('correctly resolves target URLs generically without hardcoded domain overrides', async () => {
-    // Exact domains must be preserved directly
+  it('suggests llms.txt only when it is really missing', async () => {
+    site['https://acme.test/llms.txt'] = { httpStatus: 404 };
+    const result = await E2BRunner.runMission({ target: 'https://acme.test', mode: 'deterministic' });
+    expect(result.insight.remediations.map((r) => r.id)).toContain('rem-llms');
+    expect(result.insight.remediations.every((r) => r.fixCommand === undefined)).toBe(true);
+  });
+
+  it('marks the run failed when the homepage does not answer', async () => {
+    site['https://acme.test'] = { httpStatus: 503 };
+    const result = await E2BRunner.runMission({ target: 'https://acme.test', mode: 'deterministic' });
+    expect(result.status).toBe('failed');
+    expect(result.nodes[0].status).toBe('fail');
+    expect(result.insight.summary).toMatch(/did not answer/);
+    expect(result.insight.remediations).toHaveLength(0);
+  });
+});
+
+describe('Simulate navigation run (server-side fetches)', () => {
+  it('requests every page it shows, labels the planner, and backtracks from dead ends', async () => {
+    const events: any[] = [];
+    const result = await E2BRunner.runMission(
+      { target: 'https://acme.test', harness: 'claude-code', intent: 'Find the API docs', mode: 'e2b' },
+      (e) => events.push(e)
+    );
+
+    // No E2B key, so it must say it ran on the server, not in a sandbox.
+    expect(result.mode).toBe('in_process');
+    expect(result.planner).toBe('fixed path list');
+    expect(result.telemetry.reasoningStepsCount).toBe(0);
+
+    // Claude Code fallback list: /docs, /llms.txt, /docs/quickstart, /docs/authentication
+    expect(result.nodes.map((n) => n.url)).toEqual([
+      'https://acme.test',
+      'https://acme.test/docs',
+      'https://acme.test/llms.txt',
+      'https://acme.test/docs/quickstart',
+      'https://acme.test/docs/authentication',
+    ]);
+    for (const n of result.nodes) expect(requested).toContain(n.url);
+
+    const quickstart = result.nodes[3];
+    expect(quickstart.status).toBe('fail');
+    expect(quickstart.httpStatus).toBe(0); // unreachable in the fake site: reported as a network error, not a 404
+    expect(quickstart.backtrackToId).toBeDefined();
+    expect(quickstart.thought).toMatch(/guessed path/);
+    expect(quickstart.remediation).toBeUndefined(); // guessed paths are not the site's fault
+
+    expect(result.status).toBe('success'); // homepage answered; says nothing about the intent
+    expect(result.insight.summary).toMatch(/does not show whether an agent could complete/);
+    expect(events.some((e) => e.type === 'agent_backtrack')).toBe(true);
+
+    const lastTick = events.filter((e) => e.type === 'telemetry_tick').pop();
+    expect(lastTick.stepsCount).toBe(result.nodes.length);
+    expect(lastTick.tokensBurned).toBe(result.telemetry.tokensBurned);
+  });
+
+  it('suggests fixing a broken link only when the homepage links to it', async () => {
+    const result = await E2BRunner.runMission({ target: 'https://acme.test', harness: 'openclaw', mode: 'e2b' });
+    // OpenClaw fallback starts with /pricing (linked, unreachable in the fake site).
+    const pricing = result.nodes.find((n) => n.url === 'https://acme.test/pricing');
+    expect(pricing?.status).toBe('fail');
+    expect(pricing?.remediation?.title).toMatch(/broken homepage link/);
+  });
+});
+
+describe('URL handling', () => {
+  it('resolves bare names and keeps exact domains', async () => {
     expect(await E2BRunner.resolveTargetUrl('tastelabs.com')).toBe('https://tastelabs.com');
     expect(await E2BRunner.resolveTargetUrl('https://tastelabs.com')).toBe('https://tastelabs.com');
     expect(await E2BRunner.resolveTargetUrl('tastelabs')).toBe('https://tastelabs.com');
-    expect(await E2BRunner.resolveTargetUrl('stripe.com')).toBe('https://stripe.com');
-    expect(await E2BRunner.resolveTargetUrl('stripe')).toBe('https://stripe.com');
     expect(await E2BRunner.resolveTargetUrl('docs.github.com')).toBe('https://docs.github.com');
     expect(await E2BRunner.resolveTargetUrl('')).toBe('https://stripe.com');
   });
 
-  it('sanitizes nextPath to prevent localhost or domain leaks in simulator steps', () => {
+  it('keeps planner paths on the target host', () => {
     expect(E2BRunner.sanitizeNextPath('tastelabs.com/docs', 'tastelabs.com')).toBe('/docs');
     expect(E2BRunner.sanitizeNextPath('https://tastelabs.com/api/v1', 'tastelabs.com')).toBe('/api/v1');
     expect(E2BRunner.sanitizeNextPath('localhost:3000/pricing', 'tastelabs.com')).toBe('/pricing');
@@ -117,4 +167,3 @@ describe('Procedural Agent Flight Simulator & 3D Mascot Coordination', () => {
     expect(E2BRunner.sanitizeNextPath('example.com/llms.txt', 'example.com')).toBe('/llms.txt');
   });
 });
-

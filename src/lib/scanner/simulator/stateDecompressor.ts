@@ -1,14 +1,26 @@
 /**
- * Glintbase Simulator State Decompressor
- * Client-side and server-side utility to decode and decompress
- * #data= URL hashes into full JourneyExecutionResult telemetry.
+ * Glintbase Simulate replay decoder.
+ * Decodes the #data= URL hash written by the hosted MCP `simulate_flight` tool into a
+ * JourneyExecutionResult for the replay view. Only fields present in the payload are shown;
+ * nothing is filled in with assumed statuses or scores.
  */
+
+import type {
+  AgentFileCheck,
+  HarnessType,
+  JourneyExecutionResult,
+  JourneyIconType,
+  JourneyPillNode,
+  ProceduralLine,
+} from './types';
+import { TOKEN_BASIS } from './types';
 
 export interface DecompressedFlightSession {
   v: number;
   timestamp: number;
   target: string;
   persona: string;
+  intent?: string;
   telemetry: any;
 }
 
@@ -21,13 +33,11 @@ export async function decompressFlightHash(rawHash: string): Promise<Decompresse
     const clean = (rawHash || '').replace(/^[#?]?data=/, '').trim();
     if (!clean) return null;
 
-    // Convert URL-safe base64 to standard base64
     let base64 = clean.replace(/-/g, '+').replace(/_/g, '/');
     while (base64.length % 4 !== 0) {
       base64 += '=';
     }
 
-    // Decode base64 to binary byte array
     let bytes: Uint8Array;
     if (typeof Buffer !== 'undefined') {
       bytes = Buffer.from(base64, 'base64');
@@ -39,7 +49,6 @@ export async function decompressFlightHash(rawHash: string): Promise<Decompresse
       }
     }
 
-    // Decompress using Web Streams DecompressionStream('deflate') (Supported in modern browsers and Node 18+)
     if (typeof DecompressionStream !== 'undefined') {
       const stream = new Response(new Blob([bytes as any])).body!.pipeThrough(new DecompressionStream('deflate'));
       const decompressedBuffer = await new Response(stream).arrayBuffer();
@@ -54,123 +63,117 @@ export async function decompressFlightHash(rawHash: string): Promise<Decompresse
   }
 }
 
-import type {
-  JourneyExecutionResult,
-  JourneyPillNode,
-  ProceduralLine,
-  HarnessType,
-  JourneyIconType,
-} from './types';
+const KNOWN_HARNESSES: HarnessType[] = ['claude-code', 'openclaw', 'hermes', 'opencode', 'cursor', 'perplexity'];
+
+function iconFor(label: string, ok: boolean): JourneyIconType {
+  const l = label.toLowerCase();
+  if (!ok) return 'error';
+  if (l === 'home' || l === 'index') return 'home';
+  if (l.includes('llms')) return 'llms';
+  if (l.includes('openapi') || l.includes('api spec')) return 'openapi';
+  if (l.includes('auth')) return 'auth';
+  if (l.includes('mcp')) return 'mcp';
+  if (l.includes('api')) return 'api';
+  return 'docs';
+}
 
 /**
- * Transforms decompressed MCP flight telemetry into complete JourneyExecutionResult
- * with visual canvas coordinates, lines, and KPI metrics.
+ * Builds a replay view from a decoded session. v2 payloads carry measured statuses, sizes and
+ * times. v1 payloads (older links) only carry labels and pass/fail, so statuses are left unknown.
  */
 export function convertSessionToJourneyResult(session: DecompressedFlightSession): JourneyExecutionResult {
   const tel = session.telemetry || {};
-  const steps: any[] = tel.steps || [];
-  const isSuccess = tel.outcome === 'completed';
+  const steps: any[] = Array.isArray(tel.steps) ? tel.steps : [];
+  const isV2 = (session.v || 1) >= 2;
 
   const nodes: JourneyPillNode[] = steps.map((step, idx) => {
-    const isStepSuccess = step.status === 'ok';
-    const isAuth = step.action?.toLowerCase().includes('auth') || step.details?.toLowerCase().includes('auth');
-    const statusType = isStepSuccess ? 'pass' : isAuth ? 'fail' : 'warn';
-
-    const actionLower = (step.action || '').toLowerCase();
-    const iconType: JourneyIconType = actionLower.includes('auth')
-      ? 'auth'
-      : actionLower.includes('mcp')
-      ? 'mcp'
-      : actionLower.includes('llm')
-      ? 'llms'
-      : actionLower.includes('doc')
-      ? 'docs'
-      : actionLower.includes('api') || actionLower.includes('call')
-      ? 'api'
-      : isStepSuccess
-      ? 'sparkles'
-      : 'error';
-
+    const ok = step.status === 'ok';
+    const label = String(step.details || step.action || `step ${idx + 1}`);
+    const httpStatus = typeof step.httpStatus === 'number' ? step.httpStatus : undefined;
     return {
       id: `step_${idx + 1}`,
-      label: step.details || step.action || `Step ${idx + 1}`,
-      iconType,
-      status: statusType,
-      row: Math.floor(idx / 4),
-      col: idx % 4,
-      tokens: step.tokensConsumed || Math.round((tel.totalTokensBurned || 1000) / Math.max(1, steps.length)),
-      latencyMs: step.durationMs || 120,
-      httpStatus: isStepSuccess ? 200 : isAuth ? 401 : 404,
-      thought: step.details,
-      coord: {
-        x: 80 + (idx * 160) % 640,
-        y: 100 + Math.floor(idx / 4) * 120,
-      },
-      reaction: isStepSuccess ? 'nod' : 'nope',
+      parentId: idx > 0 ? `step_${idx}` : undefined,
+      label,
+      iconType: iconFor(label, ok),
+      status: ok ? 'pass' : step.status === 'warn' ? 'warn' : 'fail',
+      row: 0,
+      col: idx,
+      tokens: typeof step.tokensConsumed === 'number' ? step.tokensConsumed : 0,
+      latencyMs: typeof step.durationMs === 'number' ? step.durationMs : 0,
+      httpStatus,
+      bytes: typeof step.bytes === 'number' ? step.bytes : undefined,
+      url: step.url,
+      thought: step.note || (isV2 ? undefined : 'Older replay link: no measured status was saved for this step.'),
+      coord: { x: 85 + idx * 145, y: 135 },
+      isDeadEnd: !ok,
+      decidedBy: 'standard_check',
     };
   });
 
-  const lines: ProceduralLine[] = [];
-  for (let i = 0; i < nodes.length - 1; i++) {
-    lines.push({
-      id: `line_${i + 1}`,
-      fromId: nodes[i].id,
-      toId: nodes[i + 1].id,
-      fromCoord: nodes[i].coord || { x: 80, y: 100 },
-      toCoord: nodes[i + 1].coord || { x: 240, y: 100 },
-      status: nodes[i + 1].status,
-      isDrawn: true,
-    });
-  }
+  const lines: ProceduralLine[] = nodes.slice(1).map((n, i) => ({
+    id: `line_${i + 1}`,
+    fromId: nodes[i].id,
+    toId: n.id,
+    fromCoord: nodes[i].coord!,
+    toCoord: n.coord!,
+    status: n.status,
+    lineType: n.status === 'pass' ? 'solid' : 'dead_end',
+    isDrawn: true,
+  }));
 
-  const friction = tel.schemaFrictionScore ?? 30;
-  const answerEfficiency = Math.max(10, Math.min(100, Math.round(100 - friction)));
-  const followedLinks = isSuccess ? 92 : 45;
+  const agentFileChecks: AgentFileCheck[] = nodes.slice(1).map((n) => ({
+    path: '/' + n.label,
+    url: n.url || '',
+    httpStatus: n.httpStatus ?? 0,
+    found: n.status === 'pass',
+    bytes: n.bytes ?? 0,
+    ms: n.latencyMs,
+    note: n.thought || (n.status === 'pass' ? 'found' : 'not found'),
+  }));
 
-  const harnessName = (session.persona || 'claude-code').toLowerCase().replace(/\s+/g, '-');
-  const validHarness: HarnessType = ['claude-code', 'openclaw', 'hermes', 'opencode'].includes(harnessName)
-    ? (harnessName as HarnessType)
-    : 'claude-code';
+  const harnessName = (session.persona || 'claude-code').toLowerCase().replace(/\s+/g, '-') as HarnessType;
+  const harness: HarnessType = KNOWN_HARNESSES.includes(harnessName) ? harnessName : 'claude-code';
+  const reached = nodes.filter((n) => n.status === 'pass').length;
+  const homepageOk = nodes[0]?.status === 'pass' || tel.outcome === 'completed';
 
   return {
     target: session.target,
-    intent: `Replaying MCP flight simulation for ${session.target}`,
-    harness: validHarness,
-    status: isSuccess ? 'success' : 'failed',
+    intent: session.intent || `Replay of a Glintbase preview for ${session.target}`,
+    harness,
+    status: homepageOk ? 'success' : 'failed',
+    mode: 'preview',
+    planner: 'none (preview: fixed checks only)',
+    tokenBasis: TOKEN_BASIS,
     telemetry: {
-      stepsCount: steps.length,
-      reasoningStepsCount: Math.ceil(steps.length * 1.5),
-      durationSeconds: Math.round((tel.totalDurationMs || 3500) / 1000),
-      costUsd: tel.dollarTaxUsd || 0.012,
-      tokensBurned: tel.totalTokensBurned || 4200,
+      stepsCount: nodes.length,
+      reasoningStepsCount: 0,
+      durationSeconds: typeof tel.totalDurationMs === 'number' ? Number((tel.totalDurationMs / 1000).toFixed(1)) : 0,
+      tokensBurned: nodes.reduce((s, n) => s + n.tokens, 0),
     },
     nodes,
     lines,
     kpis: {
-      answerFromSite: isSuccess ? 95 : 30,
-      answerEfficiency,
-      followedSiteLinks: followedLinks,
+      pagesReachedPct: nodes.length ? Math.round((reached / nodes.length) * 100) : 0,
+      deadEnds: nodes.length - reached,
+      agentFilesFound: typeof tel.agentFilesFound === 'number' ? tel.agentFilesFound : agentFileChecks.filter((c) => c.found).length,
+      agentFilesChecked: typeof tel.agentFilesChecked === 'number' ? tel.agentFilesChecked : agentFileChecks.length,
     },
+    agentFileChecks,
     insight: {
-      summary: isSuccess
-        ? 'Agent achieved mission goal autonomously with zero-friction traversal.'
-        : `Agent halted at ${tel.failureBottleneck || tel.failureMode || 'unauthenticated or soft-404 boundary'}.`,
-      bulletPoints: [
-        `Tokens Burned: ${(tel.totalTokensBurned || 0).toLocaleString()} tokens across ${steps.length} hops.`,
-        `Schema Friction: ${friction}/100 (${friction > 50 ? 'High' : friction > 25 ? 'Moderate' : 'Low'} hallucination risk).`,
-        ...(tel.suggestedRemediation ? [typeof tel.suggestedRemediation === 'object' ? tel.suggestedRemediation.description : tel.suggestedRemediation] : []),
-      ],
+      summary:
+        tel.summary ||
+        (isV2 ? `Replay of a Glintbase preview for ${session.target}.` : `Older replay link for ${session.target}: it saved only step labels and pass/fail, not measured statuses.`),
+      bulletPoints: nodes.map((n) => `${n.label}: ${n.httpStatus !== undefined ? (n.httpStatus > 0 ? `HTTP ${n.httpStatus}` : 'network error') : n.status}`),
       remediations: tel.suggestedRemediation
         ? [
             {
               id: 'rem_1',
-              title: typeof tel.suggestedRemediation === 'object' ? tel.suggestedRemediation.command : 'Agent Readiness Fix',
-              description: typeof tel.suggestedRemediation === 'object' ? tel.suggestedRemediation.description : String(tel.suggestedRemediation),
-              fixCommand: typeof tel.suggestedRemediation === 'object' ? tel.suggestedRemediation.command : 'npx glintbase audit --fix',
+              title: typeof tel.suggestedRemediation === 'string' ? tel.suggestedRemediation : 'Suggested fix',
+              description: typeof tel.suggestedRemediation === 'string' ? '' : String(tel.suggestedRemediation?.description || ''),
             },
           ]
         : [],
     },
-    terminalLogs: steps.map((s, i) => `[Hop ${i + 1}] ${s.action?.toUpperCase()}: ${s.details} (${s.status})`),
+    terminalLogs: nodes.map((n, i) => `[step ${i + 1}] ${n.url || n.label} -> ${n.httpStatus !== undefined ? (n.httpStatus > 0 ? `HTTP ${n.httpStatus}` : 'network error') : n.status}`),
   };
 }

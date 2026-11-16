@@ -65,24 +65,24 @@ export default function JourneyInsightSection({ insight }: JourneyInsightSection
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-mono uppercase tracking-wider text-amber-400 font-bold flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-              RECOMMENDED AGENTIC REMEDIATIONS ({remediations.length})
+              SUGGESTED FIXES ({remediations.length})
             </span>
             <span className="text-[10px] font-mono text-stone-400">
-              MANUAL FIX & OPTIONAL AUTOMATION
+              BASED ON THIS RUN'S REQUESTS
             </span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {remediations.map((rem) => {
               const isCopied = copiedId === rem.id;
-              const cliCmd = rem.fixCommand.startsWith('npx ') ? rem.fixCommand : `npx ${rem.fixCommand}`;
+              const cliCmd = rem.fixCommand ? (rem.fixCommand.startsWith('npx ') ? rem.fixCommand : `npx ${rem.fixCommand}`) : null;
               const defaultManual = rem.id.includes('llms')
-                ? 'Create a static markdown file at public/llms.txt with an H1 title, summary of your platform, and bulleted links to key documentation sections (/docs/quickstart, /docs/api). This enables agents to ingest your documentation in ~400 tokens instead of 30,000+ HTML tokens.'
+                ? 'Create a plain-text /llms.txt with an H1 title, a short summary of your platform, and a list of links to your key documentation pages.'
                 : rem.id.includes('openapi')
-                ? 'Export your REST API routes to an OpenAPI 3.1 JSON schema at public/openapi.json (or add a route handler). Declare valid endpoint paths, parameters, and response schemas so AI coding agents can generate type-safe tool calls.'
+                ? 'If you have a public API, serve its OpenAPI document at /openapi.json (or link it from llms.txt) so agents can read endpoints and parameters directly.'
                 : rem.id.includes('auth')
-                ? 'Create public/.well-known/auth.md specifying your API key header formats (e.g. Authorization: Bearer <KEY>), token generation URLs, and error semantics so agents can authenticate autonomously.'
-                : 'Configure this declaration directly in your repository to resolve agent discovery friction.';
+                ? 'Document how to authenticate (header format, where to get a key) on a page agents can reach from your docs or llms.txt.'
+                : '';
 
               const manualText = rem.manualInstruction || defaultManual;
 
@@ -110,7 +110,7 @@ export default function JourneyInsightSection({ insight }: JourneyInsightSection
                     {/* Classic Manual Technical Instruction Fix */}
                     <div className="bg-black/40 rounded-lg p-3 border border-white/[0.05] space-y-1">
                       <div className="text-[10px] font-mono font-semibold uppercase tracking-wider text-stone-400">
-                        Classic Manual Fix:
+                        How to fix:
                       </div>
                       <p className="text-[11px] font-mono text-stone-200 leading-relaxed">
                         {manualText}
@@ -119,6 +119,7 @@ export default function JourneyInsightSection({ insight }: JourneyInsightSection
                   </div>
 
                   {/* Subtle, non-distracting CLI Automation Hint */}
+                  {cliCmd && (
                   <div className="pt-2 border-t border-white/[0.04] flex items-center justify-between text-[10px] font-mono text-stone-400">
                     <div className="flex items-center gap-1.5 truncate mr-2">
                       <span className="text-amber-400">💡</span>
@@ -128,7 +129,7 @@ export default function JourneyInsightSection({ insight }: JourneyInsightSection
                       </code>
                     </div>
                     <button
-                      onClick={() => handleCopy(rem.id, cliCmd)}
+                      onClick={() => handleCopy(rem.id, cliCmd!)}
                       title="Copy CLI command"
                       className="p-1.5 rounded bg-white/[0.06] hover:bg-white/[0.12] text-stone-300 hover:text-white transition cursor-pointer shrink-0"
                     >
@@ -139,6 +140,7 @@ export default function JourneyInsightSection({ insight }: JourneyInsightSection
                       )}
                     </button>
                   </div>
+                  )}
                 </div>
               );
             })}

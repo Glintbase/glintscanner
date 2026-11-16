@@ -1,14 +1,26 @@
 /**
- * Core Types & Interfaces for the Glintbase Flight Simulator.
- * Implements trajectory telemetry, persona constraints, and counterfactual testing.
+ * Types for the Glintbase Simulate navigation probe.
+ *
+ * Every number in a JourneyExecutionResult comes from a real HTTP request made during the run,
+ * except token figures, which are estimates (see TOKEN_BASIS) and are labelled as such.
  */
 
-export type PersonaType = 'claude-code' | 'cursor' | 'perplexity';
 export type HarnessType = 'claude-code' | 'hermes' | 'openclaw' | 'opencode' | 'cursor' | 'perplexity';
 export type SimulationMode = 'deterministic' | 'live' | 'e2b';
-export type StepStatus = 'pass' | 'warn' | 'fail' | 'skip';
-export type TrajectoryOutcome = 'completed' | 'blocked' | 'hallucinated' | 'timed_out' | 'failed' | 'partial';
-export type StepPhase = 'discovery' | 'ingestion' | 'auth' | 'execution' | 'recovery';
+
+/** Where the run's requests were actually made. */
+export type RunMode =
+  /** Agent steps fetched from inside an E2B sandbox. */
+  | 'e2b'
+  /** Agent steps fetched by the Glintbase server (no sandbox). */
+  | 'in_process'
+  /** No agent: homepage plus the standard agent files only. */
+  | 'preview';
+
+/** How token figures are derived. They are never reported by a model. */
+export const TOKEN_BASIS = 'Estimated: response bytes ÷ 4';
+
+export const estimateTokensFromBytes = (bytes: number): number => Math.ceil(Math.max(0, bytes) / 4);
 
 export type JourneyIconType =
   | 'home'
@@ -47,9 +59,14 @@ export interface JourneyPillNode {
   status: 'pass' | 'warn' | 'fail';
   row: number;
   col: number;
+  /** Estimated tokens of the response body (see TOKEN_BASIS). */
   tokens: number;
+  /** Measured request time. */
   latencyMs: number;
+  /** Measured HTTP status; 0 when the request failed at the network level. */
   httpStatus?: number;
+  /** Measured response size in bytes. */
+  bytes?: number;
   url?: string;
   thought?: string;
   rawSnippet?: string;
@@ -58,6 +75,8 @@ export interface JourneyPillNode {
   isDeadEnd?: boolean;
   isDisconnectedSession?: boolean;
   backtrackToId?: string;
+  /** Who chose this step: the LLM planner, the fixed fallback list, or a standard Glintbase check. */
+  decidedBy?: 'llm' | 'fallback_list' | 'standard_check';
   remediation?: {
     title: string;
     description?: string;
@@ -95,22 +114,28 @@ export type ProceduralStreamEvent =
   | { type: 'ticker_update'; text: string; subText?: string }
   | { type: 'node_materialized'; node: JourneyPillNode }
   | { type: 'line_connected'; line: ProceduralLine }
-  | { type: 'telemetry_tick'; stepsCount: number; durationSeconds: number; tokensBurned: number; costUsd: number }
+  | { type: 'telemetry_tick'; stepsCount: number; durationSeconds: number; tokensBurned: number; reasoningStepsCount: number }
   | { type: 'terminal_log'; log: string }
   | { type: 'complete'; result: JourneyExecutionResult }
   | { type: 'error'; message: string };
 
+/** All measured from the run's own requests. */
 export interface JourneyKPIMetrics {
-  answerFromSite: number; // 0-100%
-  answerEfficiency: number; // 0-100%
-  followedSiteLinks: number; // 0-100%
+  /** Share of requested pages that answered 2xx/3xx (0–100). */
+  pagesReachedPct: number;
+  /** Requested pages that answered 4xx/5xx or failed at the network level. */
+  deadEnds: number;
+  /** Standard agent files found (llms.txt, openapi.json, robots.txt, auth.md). */
+  agentFilesFound: number;
+  agentFilesChecked: number;
 }
 
 export interface JourneyInsightRemediation {
   id: string;
   title: string;
   description: string;
-  fixCommand: string;
+  /** Only set when the command really exists. */
+  fixCommand?: string;
   manualInstruction?: string;
   targetFile?: string;
   diffSnippet?: string;
@@ -124,28 +149,50 @@ export interface JourneyInsight {
 
 export interface JourneyTelemetryStats {
   stepsCount: number;
+  /** Steps whose next page was chosen by an LLM (not the fallback list). */
   reasoningStepsCount: number;
+  /** Measured wall time of the run. */
   durationSeconds: number;
-  costUsd: number;
+  /** Estimated tokens of all fetched responses (see TOKEN_BASIS). */
   tokensBurned: number;
+  /** Not measured by this probe; kept optional for old replay links. */
+  costUsd?: number;
+}
+
+/** Result of one standard agent-file check made by Glintbase (not by the agent). */
+export interface AgentFileCheck {
+  path: string;
+  url: string;
+  httpStatus: number;
+  found: boolean;
+  bytes: number;
+  ms: number;
+  /** Plain-English reason, e.g. "found", "not found (HTTP 404)", "returned an HTML page". */
+  note: string;
 }
 
 export interface JourneyExecutionResult {
   target: string;
   intent: string;
   harness: HarnessType;
+  /** 'success' = the homepage answered and the run finished; it does NOT mean the intent was achieved. */
   status: 'success' | 'failed';
+  mode: RunMode;
+  /** What chose the next pages, e.g. "groq/compound-mini (groq)" or "fixed path list". */
+  planner: string;
+  tokenBasis: string;
   telemetry: JourneyTelemetryStats;
   nodes: JourneyPillNode[];
   lines?: ProceduralLine[];
   kpis: JourneyKPIMetrics;
+  agentFileChecks: AgentFileCheck[];
   insight: JourneyInsight;
   terminalLogs: string[];
 }
 
 export interface SimulationOptions {
   target: string;
-  agent?: PersonaType | HarnessType;
+  agent?: HarnessType;
   harness?: HarnessType;
   mode?: SimulationMode;
   intent?: string;
@@ -154,96 +201,4 @@ export interface SimulationOptions {
   timeoutMs?: number;
   json?: boolean;
   ci?: boolean;
-}
-
-export interface TrajectoryStep {
-  stepIndex: number;
-  phase: StepPhase;
-  action: string;
-  status: StepStatus;
-  durationMs: number;
-  tokensConsumed: number;
-  details: string;
-  evidence?: Record<string, any>;
-  error?: {
-    code: string;
-    message: string;
-    schemaPath?: string;
-    expectedType?: string;
-    receivedType?: string;
-  };
-}
-
-export type IntentFailureMode =
-  | 'INTENT_UNMATCHED_ENDPOINT'
-  | 'AUTH_HANDSHAKE_MISSING'
-  | 'MUTATION_SAFETY_MISSING'
-  | 'RATE_LIMIT_VULNERABLE'
-  | 'SCHEMA_TYPE_MISMATCH'
-  | 'SOFT_404_TRAP'
-  | 'NONE';
-
-export interface SimulationTelemetry {
-  outcome: TrajectoryOutcome;
-  totalDurationMs: number;
-  ttftcMs?: number; // Time-To-First-Tool-Call
-  totalTokensBurned: number;
-  dollarTaxUsd: number; // Cost at standard Tier-1 model rates ($3/M in, $15/M out)
-  schemaFrictionScore: number; // 0 (flawless) to 100 (hostile)
-  steps: TrajectoryStep[];
-  failureBottleneck?: string;
-  failureMode?: IntentFailureMode;
-  failureDetails?: {
-    code: IntentFailureMode;
-    message: string;
-    phase: StepPhase;
-    expected: string;
-    remediation: string;
-    closestMatches?: string[];
-  };
-  suggestedRemediation?: {
-    command: string;
-    file: string;
-    fixSnippet: string[];
-    rationale: string;
-  };
-}
-
-export interface CounterfactualComparison {
-  before: SimulationTelemetry;
-  after: SimulationTelemetry;
-  tokensSavedPercent: number;
-  latencySavedPercent: number;
-  fixedBottlenecks: string[];
-  resolved: boolean;
-}
-
-export interface MissionDefinition {
-  id: string;
-  name: string;
-  goal: string;
-  targetPhases: StepPhase[];
-  intentPrompt?: string;
-}
-
-export interface TargetContext {
-  targetUrl: string;
-  isUrl: boolean;
-  codebaseDir?: string;
-  robotsTxt?: string;
-  llmsTxt?: string;
-  authMd?: string;
-  ardJson?: any;
-  mcpManifest?: any;
-  mcpEndpoint?: string;
-  mcpTools?: Array<{
-    name: string;
-    description: string;
-    inputSchema?: any;
-    readOnlyHint?: boolean;
-    destructiveHint?: boolean;
-  }>;
-  openApiSpec?: any;
-  hasCanaryLeak?: boolean;
-  has404Handler?: boolean;
 }

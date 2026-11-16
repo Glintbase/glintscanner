@@ -32,7 +32,7 @@ export default function LiveTerminalFeed({
           <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
           <span className="text-[11px] font-mono text-stone-400 font-semibold ml-2 flex items-center gap-1.5">
             <Terminal className="w-3.5 h-3.5 text-[#FF3300]" />
-            <span>e2b-sandbox:agent-harness</span>
+            <span>glintbase:simulate</span>
           </span>
         </div>
 
