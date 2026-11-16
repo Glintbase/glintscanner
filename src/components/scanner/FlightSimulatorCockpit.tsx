@@ -518,7 +518,7 @@ export default function FlightSimulatorCockpit({
               Configure a navigation run
             </h1>
             <p className="text-xs sm:text-sm font-mono text-stone-400 max-w-2xl leading-relaxed">
-              A planner walks your site the way the chosen agent tends to look for docs. Every step is a real request, so you see actual statuses, sizes, times and dead ends. The planner sees only URLs and status codes, not page content, so this measures how navigable your site is, not whether an agent finishes the task. Tokens are estimated from response size.
+              A planner walks your site the way the chosen agent tends to look for docs, reading each page's title, headings and links. Every step is a real request, so you see actual statuses, sizes, times and dead ends. At the end it checks whether the pages it opened answer your intent, and verifies the quoted answer word for word against what was fetched. It is a lightweight stand-in for an agent, not a full agent run. Page tokens are estimated from response size.
             </p>
           </div>
 
@@ -630,7 +630,7 @@ export default function FlightSimulatorCockpit({
             </div>
             <div className="bg-black/40 border border-white/[0.05] rounded-xl p-3 text-xs font-mono space-y-1">
               <span className="text-[10px] uppercase text-stone-500 font-bold">Steps</span>
-              <div className="text-white font-bold">Homepage + up to 4 pages</div>
+              <div className="text-white font-bold">Homepage + up to 5 pages, then an answer check</div>
             </div>
           </div>
 
@@ -741,7 +741,7 @@ export default function FlightSimulatorCockpit({
 
       {/* ─── Bottom Section: 3 KPI Gauges (Displayed upon or during completion) */}
       {journeyResult?.kpis && (
-        <JourneyKPICards kpis={journeyResult.kpis} />
+        <JourneyKPICards kpis={journeyResult.kpis} answerCheck={journeyResult.answerCheck} />
       )}
 
       {/* ─── Footer Section: Executive INSIGHT & Step Breakdown ─────────────── */}

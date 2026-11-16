@@ -59,6 +59,9 @@ function isCoolingDown(provider: string): boolean {
   return true;
 }
 
+/** Models a provider said do not exist (HTTP 404 model_not_found); skipped for the life of the process. */
+const missingModels = new Set<string>();
+
 function markCooldown(provider: string, durationMs: number = 60000) {
   providerCooldowns[provider] = Date.now() + durationMs;
   console.warn(`[InferenceRouter] ${provider} tripped circuit breaker. Cooling down for ${durationMs / 1000}s`);
@@ -78,11 +81,10 @@ export class InferenceRouter {
 
     // ─── 1. Attempt Groq Cloud (Primary Free Tier) ───────────────────────────
     if (groqKey && !isCoolingDown('groq')) {
+      // qwen/qwen3.8-27b answers on our key; groq/compound-mini returned model_not_found (2026-11-14).
       const groqModels = [
-        process.env.GROQ_MODEL || 'groq/compound-mini',
-        'qwen/qwen3.8-27b',
-        'groq/compound',
-      ];
+        ...new Set([process.env.GROQ_MODEL, 'qwen/qwen3.8-27b', 'groq/compound'].filter(Boolean) as string[]),
+      ].filter((m) => !missingModels.has(`groq:${m}`));
       for (const groqModel of groqModels) {
         try {
           const start = Date.now();
@@ -102,6 +104,9 @@ export class InferenceRouter {
           };
         } catch (err: any) {
           console.warn(`[InferenceRouter] Groq (${groqModel}) failed:`, err?.message || err);
+          if (err?.status === 404 && /model_not_found|does not exist/i.test(String(err?.message))) {
+            missingModels.add(`groq:${groqModel}`);
+          }
           // Try next model before marking cooldown on Groq
         }
       }

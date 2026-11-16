@@ -1,10 +1,47 @@
 "use client";
 
 import React from 'react';
-import type { JourneyKPIMetrics } from '@/lib/scanner/simulator/types';
+import type { AnswerCheck, JourneyKPIMetrics } from '@/lib/scanner/simulator/types';
 
 interface JourneyKPICardsProps {
   kpis?: JourneyKPIMetrics;
+  answerCheck?: AnswerCheck;
+}
+
+const VERDICT: Record<AnswerCheck['verdict'], { label: string; tone: string; dot: string }> = {
+  found_with_evidence: { label: 'Answer found, quote verified', tone: 'border-emerald-700/60 text-emerald-400', dot: 'bg-emerald-400' },
+  claimed_unsupported: { label: 'Answer claimed, quote not on any fetched page', tone: 'border-amber-700/60 text-amber-400', dot: 'bg-amber-400' },
+  not_found: { label: 'No answer in the pages opened', tone: 'border-red-800/60 text-red-400', dot: 'bg-red-400' },
+  not_checked: { label: 'Answer not checked', tone: 'border-white/[0.08] text-stone-400', dot: 'bg-stone-500' },
+};
+
+function AnswerCard({ check }: { check: AnswerCheck }) {
+  const v = VERDICT[check.verdict];
+  let sourcePath = '';
+  try {
+    sourcePath = check.sourceUrl ? new URL(check.sourceUrl).pathname : '';
+  } catch {}
+  return (
+    <div className={`bg-[#121214] border rounded-xl p-5 space-y-3 md:col-span-3 ${v.tone}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs font-mono font-bold uppercase tracking-wider">
+          <span className={`w-2 h-2 rounded-full ${v.dot}`} />
+          <span>{v.label}</span>
+        </div>
+        {check.model && <span className="text-[10px] font-mono text-stone-500">checked with {check.model}</span>}
+      </div>
+      {check.answer && <p className="text-sm text-stone-100 leading-relaxed">{check.answer}</p>}
+      {check.quote && (
+        <blockquote className="border-l-2 border-white/[0.15] pl-3 text-[12px] font-mono text-stone-300 leading-relaxed">
+          “{check.quote}”
+          {sourcePath && <span className="block pt-1 text-[10px] text-stone-500">{check.sourceUrl}</span>}
+        </blockquote>
+      )}
+      <p className="text-[10px] font-mono text-stone-500 leading-snug">
+        {check.note} The verdict is decided by matching the quote against the text the run actually fetched, not by the model.
+      </p>
+    </div>
+  );
 }
 
 function Card({ value, pct, label, detail, tone }: { value: string; pct: number; label: string; detail: string; tone: 'good' | 'warn' | 'bad' }) {
@@ -23,12 +60,13 @@ function Card({ value, pct, label, detail, tone }: { value: string; pct: number;
 }
 
 /** All three cards are computed from the run's own requests; nothing is defaulted. */
-export default function JourneyKPICards({ kpis }: JourneyKPICardsProps) {
+export default function JourneyKPICards({ kpis, answerCheck }: JourneyKPICardsProps) {
   if (!kpis) return null;
   const filesPct = kpis.agentFilesChecked ? (kpis.agentFilesFound / kpis.agentFilesChecked) * 100 : 0;
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+      {answerCheck && <AnswerCard check={answerCheck} />}
       <Card
         value={`${kpis.pagesReachedPct}%`}
         pct={kpis.pagesReachedPct}

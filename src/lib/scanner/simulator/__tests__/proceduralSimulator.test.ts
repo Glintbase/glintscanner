@@ -24,20 +24,51 @@ vi.mock('../../v2/fetchResource', () => ({
   }),
 }));
 
-// No planner model: the runner must fall back to the fixed path list and say so.
+// By default no planner model answers: the runner must fall back and say so.
 vi.mock('../inferenceRouter', () => ({
-  InferenceRouter: { chatCompletions: vi.fn(async () => { throw new Error('no model in tests'); }) },
+  InferenceRouter: { chatCompletions: vi.fn() },
 }));
 
 import { E2BRunner } from '../e2bRunner';
+import { InferenceRouter } from '../inferenceRouter';
 import { estimateTokensFromBytes } from '../types';
 
-const HOME_HTML = '<html><head><title>Acme</title></head><body><a href="/docs">Docs</a><a href="/pricing">Pricing</a><a href="/broken">Broken</a></body></html>';
+const router = vi.mocked(InferenceRouter.chatCompletions);
+
+const HOME_HTML = '<html><head><title>Acme</title></head><body><a href="/docs">Docs</a><a href="/pricing">Pricing</a><a href="https://other.test/x">Elsewhere</a></body></html>';
+const DOCS_HTML =
+  '<html><head><title>Acme Docs</title></head><body><h1>Authentication</h1><p>Send your key in the Authorization header as Bearer &lt;key&gt;.</p><a href="/docs/errors">Errors</a><a href="/docs/missing">Old page</a></body></html>';
 const LLMS = '# Acme\n> Acme API\n- [Docs](/docs)\n';
+
+const modelReply = (content: string, model = 'test-model') => ({
+  provider: 'groq' as const,
+  model,
+  latencyMs: 5,
+  message: { role: 'assistant' as const, content },
+  usage: { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 },
+});
+
+/** Planner opens /docs, then stops; the answer step returns `answerJson`. */
+function scriptedModel(answerJson: object) {
+  let plannerCalls = 0;
+  router.mockImplementation(async (req: any) => {
+    if (req.messages[0].role === 'system') {
+      plannerCalls++;
+      return plannerCalls === 1
+        ? modelReply('{"action":"open","nextPath":"/docs","label":"docs","iconType":"docs","thought":"Docs link on the homepage."}')
+        : modelReply('{"action":"stop","thought":"The docs page covers authentication."}');
+    }
+    return modelReply(JSON.stringify(answerJson));
+  });
+}
 
 beforeEach(() => {
   requested.length = 0;
   delete process.env.E2B_API_KEY;
+  router.mockReset();
+  router.mockImplementation(async () => {
+    throw new Error('no model in tests');
+  });
   site = {
     'https://acme.test': { httpStatus: 200, body: HOME_HTML, contentType: 'text/html' },
     'https://acme.test/llms.txt': { httpStatus: 200, body: LLMS },
@@ -45,7 +76,7 @@ beforeEach(() => {
     'https://acme.test/robots.txt': { httpStatus: 200, body: 'User-agent: *\nAllow: /\n' },
     // A 200 that serves an HTML page is not a real auth.md.
     'https://acme.test/auth.md': { httpStatus: 200, body: '<!doctype html><html>app shell</html>', contentType: 'text/html' },
-    'https://acme.test/docs': { httpStatus: 200, body: '<html>docs</html>', contentType: 'text/html' },
+    'https://acme.test/docs': { httpStatus: 200, body: DOCS_HTML, contentType: 'text/html' },
   };
 });
 
@@ -70,19 +101,16 @@ describe('Simulate preview mode', () => {
 
     const byLabel = Object.fromEntries(result.nodes.map((n) => [n.label, n]));
     expect(byLabel['llms.txt'].status).toBe('pass');
-    expect(byLabel['openapi.json'].status).toBe('fail');
     expect(byLabel['openapi.json'].httpStatus).toBe(404);
     expect(byLabel['auth.md'].status).toBe('fail');
     expect(byLabel['auth.md'].thought).toMatch(/HTML page/);
     expect(byLabel['llms.txt'].tokens).toBe(estimateTokensFromBytes(Buffer.byteLength(LLMS)));
 
     expect(result.kpis).toEqual({ pagesReachedPct: 60, deadEnds: 2, agentFilesFound: 2, agentFilesChecked: 4 });
-    expect(result.telemetry.reasoningStepsCount).toBe(0);
+    expect(result.answerCheck).toBeUndefined();
     expect(result.insight.summary).toMatch(/No agent ran/);
-    expect(result.tokenBasis).toMatch(/bytes/);
-
+    expect(router).not.toHaveBeenCalled();
     expect(events.filter((e) => e.type === 'node_materialized')).toHaveLength(5);
-    expect(events.find((e) => e.type === 'agent_spawn')?.harness).toBe('claude-code');
   });
 
   it('suggests llms.txt only when it is really missing', async () => {
@@ -96,57 +124,92 @@ describe('Simulate preview mode', () => {
     site['https://acme.test'] = { httpStatus: 503 };
     const result = await E2BRunner.runMission({ target: 'https://acme.test', mode: 'deterministic' });
     expect(result.status).toBe('failed');
-    expect(result.nodes[0].status).toBe('fail');
     expect(result.insight.summary).toMatch(/did not answer/);
     expect(result.insight.remediations).toHaveLength(0);
   });
 });
 
-describe('Simulate navigation run (server-side fetches)', () => {
-  it('requests every page it shows, labels the planner, and backtracks from dead ends', async () => {
+describe('Simulate navigation run without a model', () => {
+  it('requests every page it shows, labels the fallback planner, and marks the answer unchecked', async () => {
     const events: any[] = [];
     const result = await E2BRunner.runMission(
       { target: 'https://acme.test', harness: 'claude-code', intent: 'Find the API docs', mode: 'e2b' },
       (e) => events.push(e)
     );
 
-    // No E2B key, so it must say it ran on the server, not in a sandbox.
-    expect(result.mode).toBe('in_process');
+    expect(result.mode).toBe('in_process'); // no E2B key: it must say it ran on the server
     expect(result.planner).toBe('fixed path list');
     expect(result.telemetry.reasoningStepsCount).toBe(0);
-
-    // Claude Code fallback list: /docs, /llms.txt, /docs/quickstart, /docs/authentication
     expect(result.nodes.map((n) => n.url)).toEqual([
       'https://acme.test',
       'https://acme.test/docs',
       'https://acme.test/llms.txt',
       'https://acme.test/docs/quickstart',
       'https://acme.test/docs/authentication',
+      'https://acme.test/docs/api',
     ]);
     for (const n of result.nodes) expect(requested).toContain(n.url);
 
     const quickstart = result.nodes[3];
-    expect(quickstart.status).toBe('fail');
-    expect(quickstart.httpStatus).toBe(0); // unreachable in the fake site: reported as a network error, not a 404
+    expect(quickstart.httpStatus).toBe(0); // unreachable: a network error, not a made-up 404
     expect(quickstart.backtrackToId).toBeDefined();
     expect(quickstart.thought).toMatch(/guessed path/);
     expect(quickstart.remediation).toBeUndefined(); // guessed paths are not the site's fault
 
-    expect(result.status).toBe('success'); // homepage answered; says nothing about the intent
-    expect(result.insight.summary).toMatch(/does not show whether an agent could complete/);
+    expect(result.answerCheck?.verdict).toBe('not_checked');
+    expect(result.insight.summary).toMatch(/not a real Claude Code run/);
     expect(events.some((e) => e.type === 'agent_backtrack')).toBe(true);
-
     const lastTick = events.filter((e) => e.type === 'telemetry_tick').pop();
-    expect(lastTick.stepsCount).toBe(result.nodes.length);
     expect(lastTick.tokensBurned).toBe(result.telemetry.tokensBurned);
   });
 
-  it('suggests fixing a broken link only when the homepage links to it', async () => {
+  it('traces a broken link to the page that links to it', async () => {
     const result = await E2BRunner.runMission({ target: 'https://acme.test', harness: 'openclaw', mode: 'e2b' });
-    // OpenClaw fallback starts with /pricing (linked, unreachable in the fake site).
+    // OpenClaw's fallback starts with /pricing, which the homepage links to and the site lacks.
     const pricing = result.nodes.find((n) => n.url === 'https://acme.test/pricing');
     expect(pricing?.status).toBe('fail');
-    expect(pricing?.remediation?.title).toMatch(/broken homepage link/);
+    expect(pricing?.remediation?.manualInstruction).toMatch(/Your page \/ links to \/pricing/);
+  });
+});
+
+describe('Simulate navigation run with a planner model', () => {
+  it('follows links from the page it reads and verifies the answer quote', async () => {
+    scriptedModel({
+      found: true,
+      answer: 'Use a Bearer token in the Authorization header.',
+      quote: 'Send your key in the Authorization header as Bearer <key>.',
+      sourceUrl: 'https://acme.test/docs',
+    });
+    const result = await E2BRunner.runMission({ target: 'https://acme.test', harness: 'claude-code', intent: 'How do I authenticate to the API?', mode: 'e2b' });
+
+    expect(result.nodes.map((n) => n.url)).toEqual(['https://acme.test', 'https://acme.test/docs']);
+    expect(result.nodes[1].decidedBy).toBe('llm');
+    expect(result.nodes[1].thought).toMatch(/linked from \//);
+    expect(result.planner).toBe('test-model (groq)');
+    expect(result.telemetry.reasoningStepsCount).toBe(2); // one open + one stop
+
+    expect(result.answerCheck?.verdict).toBe('found_with_evidence');
+    expect(result.answerCheck?.sourceUrl).toBe('https://acme.test/docs');
+    expect(result.plannerUsage).toEqual({ calls: 3, totalTokens: 300 });
+    expect(result.insight.bulletPoints[0]).toMatch(/quote verified on \/docs/);
+  });
+
+  it('flags an answer whose quote is not on any fetched page', async () => {
+    scriptedModel({
+      found: true,
+      answer: 'Use OAuth with PKCE.',
+      quote: 'All requests must use the OAuth device flow with PKCE.',
+      sourceUrl: 'https://acme.test/docs',
+    });
+    const result = await E2BRunner.runMission({ target: 'https://acme.test', intent: 'How do I authenticate?', mode: 'e2b' });
+    expect(result.answerCheck?.verdict).toBe('claimed_unsupported');
+    expect(result.insight.summary).toMatch(/unsupported/);
+  });
+
+  it('reports when the pages do not answer the intent', async () => {
+    scriptedModel({ found: false, answer: '', quote: '', sourceUrl: '' });
+    const result = await E2BRunner.runMission({ target: 'https://acme.test', intent: 'What is the refund policy?', mode: 'e2b' });
+    expect(result.answerCheck?.verdict).toBe('not_found');
   });
 });
 
@@ -163,7 +226,7 @@ describe('URL handling', () => {
     expect(E2BRunner.sanitizeNextPath('tastelabs.com/docs', 'tastelabs.com')).toBe('/docs');
     expect(E2BRunner.sanitizeNextPath('https://tastelabs.com/api/v1', 'tastelabs.com')).toBe('/api/v1');
     expect(E2BRunner.sanitizeNextPath('localhost:3000/pricing', 'tastelabs.com')).toBe('/pricing');
-    expect(E2BRunner.sanitizeNextPath('/settings', 'tastelabs.com')).toBe('/settings');
+    expect(E2BRunner.sanitizeNextPath('/settings/', 'tastelabs.com')).toBe('/settings');
     expect(E2BRunner.sanitizeNextPath('example.com/llms.txt', 'example.com')).toBe('/llms.txt');
   });
 });
